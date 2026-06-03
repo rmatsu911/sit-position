@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>宴会座席抽選</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <main class="page page-main">
+    <header class="hero">
+      <h1>宴会座席抽選</h1>
+      <p>登録されたメンバーを、全員の画面に同じタイミングで抽選表示します。</p>
+    </header>
+
+    <section class="controls" aria-label="抽選操作">
+      <button id="startButton" class="button button-primary">抽選を開始</button>
+      <button id="refreshButton" class="button button-tertiary">最新を反映</button>
+    </section>
+
+    <section class="status" aria-live="polite">
+      <p id="statusText">メンバーを読み込み中...</p>
+    </section>
+
+    <section class="grid-container" id="seatGrid" aria-label="座席表"></section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>

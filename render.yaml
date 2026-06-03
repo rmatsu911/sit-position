@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: sit-position
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: HOST_TOKEN
+        generateValue: true

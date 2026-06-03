@@ -1,0 +1,100 @@
+﻿<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>座席表 管理者画面</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <main class="page page-admin">
+    <header class="hero">
+      <h1>管理者画面</h1>
+      <p>メンバー、座席表、先に決めておく固定席を設定して保存します。</p>
+    </header>
+
+    <section class="admin-panel">
+      <div class="row">
+        <label for="seatCount">座席数</label>
+        <input id="seatCount" type="number" min="1" value="12" />
+      </div>
+      <div class="row">
+        <label for="memberName">メンバー名を追加</label>
+        <div class="input-group">
+          <input id="memberName" type="text" placeholder="山田太郎" />
+          <button id="addMemberButton" class="button button-primary">追加</button>
+        </div>
+      </div>
+
+      <div class="list-panel">
+        <h2>メンバー一覧</h2>
+        <ul id="memberList"></ul>
+      </div>
+
+      <div class="seat-panel">
+        <div class="section-heading">
+          <h2>座席表</h2>
+          <p>席名を編集し、先に決めたい席だけメンバーを固定できます。</p>
+        </div>
+        <div id="adminSeatGrid" class="admin-seat-grid"></div>
+      </div>
+
+      <div class="actions">
+        <button id="saveButton" class="button button-primary">保存</button>
+        <button id="clearButton" class="button button-tertiary">全クリア</button>
+      </div>
+
+      <p id="adminStatus" class="admin-status" aria-live="polite"></p>
+
+      <div class="note">
+        <p>保存すると、抽選ページで最新メンバー、座席表、固定席が反映されます。</p>
+        <p>Nodeサーバーで開いている場合は、同じURLにアクセスしている別端末にもリアルタイムで反映されます。</p>
+      </div>
+
+      <section class="line-section">
+        <div class="section-heading">
+          <h2>LINE Bot 連携</h2>
+          <p>抽選結果をLINEグループへ自動送信します。</p>
+        </div>
+
+        <div class="row">
+          <label for="lineToken">チャンネルアクセストークン</label>
+          <input id="lineToken" type="password" placeholder="（変更する場合のみ入力）" autocomplete="off" />
+        </div>
+
+        <div class="row">
+          <label for="lineSecret">チャンネルシークレット（Webhook署名検証用）</label>
+          <input id="lineSecret" type="password" placeholder="（変更する場合のみ入力）" autocomplete="off" />
+        </div>
+
+        <div class="row">
+          <label for="lineGroupId">送信先グループID</label>
+          <input id="lineGroupId" type="text" placeholder="BotをLINEグループに追加すると自動入力されます" />
+        </div>
+
+        <div class="row">
+          <label for="linePublicUrl">サーバー公開URL <span class="label-note">（任意・画像送信に必要）</span></label>
+          <input id="linePublicUrl" type="url" placeholder="https://xxxx.onrender.com" />
+        </div>
+
+        <button id="saveLineButton" class="button button-primary" type="button">LINE設定を保存</button>
+        <p id="lineStatus" class="admin-status" aria-live="polite"></p>
+
+        <div class="note">
+          <p><strong>設定手順：</strong></p>
+          <p>① <a href="https://developers.line.biz/" target="_blank" rel="noopener">LINE Developers</a> でMessaging APIチャンネルを作成し、チャンネルアクセストークンとチャンネルシークレットを取得。</p>
+          <p>② Webhook URLを <code>https://あなたのサーバーURL/webhook</code> に設定。</p>
+          <p>③ BotをLINEグループに追加すると、グループIDが自動設定されます。</p>
+          <p>④ 画像送信する場合は、Renderなどの公開URLを入力してください。未設定の場合はFlexメッセージで送信されます。</p>
+        </div>
+      </section>
+
+      <div class="row">
+        <a class="button button-secondary" href="index.html">抽選ページへ</a>
+      </div>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>

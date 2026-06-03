@@ -1,0 +1,6 @@
+node_modules/
+.host-token
+seating-data.json
+line-config.json
+localtunnel.log
+localtunnel.err.log
