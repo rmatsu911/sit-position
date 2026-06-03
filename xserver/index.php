@@ -1,6 +1,7 @@
 <?php
 $renderUrl = 'https://sit-position.onrender.com';
-$target = rtrim($renderUrl, '/');
+$requestUri = $_SERVER['REQUEST_URI'] ?? '/';
+$target = rtrim($renderUrl, '/') . $requestUri;
 ?>
 <!DOCTYPE html>
 <html lang="ja">
