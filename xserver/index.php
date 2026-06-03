@@ -47,9 +47,13 @@ if (in_array($_SERVER['REQUEST_METHOD'] ?? 'GET', ['POST', 'PUT', 'PATCH', 'DELE
 curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
 curl_setopt($ch, CURLOPT_HEADERFUNCTION, function ($curl, $headerLine) {
   $header = trim($headerLine);
+  if (preg_match('/^HTTP\/\S+\s+(\d+)/', $header, $matches)) {
+    http_response_code((int) $matches[1]);
+    return strlen($headerLine);
+  }
+
   if (
     $header === '' ||
-    stripos($header, 'HTTP/') === 0 ||
     stripos($header, 'Transfer-Encoding:') === 0 ||
     stripos($header, 'Connection:') === 0 ||
     stripos($header, 'Content-Length:') === 0 ||
