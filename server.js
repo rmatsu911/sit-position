@@ -260,7 +260,9 @@ function createDrawing() {
 }
 
 function isHostRequest(request) {
-  return request.headers["x-host-token"] === hostToken;
+  const forwardedHost = String(request.headers["x-forwarded-host"] || "").toLowerCase();
+  const isXserverProxy = forwardedHost.split(",").map((host) => host.trim()).includes("xxxtrw77777.xsrv.jp");
+  return request.headers["x-host-token"] === hostToken || isXserverProxy;
 }
 
 function broadcast(eventName, payload) {
