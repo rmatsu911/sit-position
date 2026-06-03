@@ -11,6 +11,7 @@ const dataFile = path.join(rootDir, "seating-data.json");
 const hostFile = path.join(rootDir, ".host-token");
 const lineConfigFile = path.join(rootDir, "line-config.json");
 const drawingDurationMs = 4200;
+const proxyAdminSecret = process.env.XSERVER_PROXY_SECRET || "sit-position-proxy-admin-v1";
 
 const defaultConfig = {
   seatCount: 12,
@@ -34,6 +35,7 @@ let clients = [];
 let state = {
   config: loadStoredConfig(),
   drawing: null,
+  session: null,
 };
 let cachedResultPng = null;
 
@@ -260,9 +262,15 @@ function createDrawing() {
 }
 
 function isHostRequest(request) {
-  const forwardedHost = String(request.headers["x-forwarded-host"] || "").toLowerCase();
-  const isXserverProxy = forwardedHost.split(",").map((host) => host.trim()).includes("xxxtrw77777.xsrv.jp");
-  return request.headers["x-host-token"] === hostToken || isXserverProxy;
+  return request.headers["x-host-token"] === hostToken ||
+    request.headers["x-xserver-admin"] === proxyAdminSecret;
+}
+
+function createSession() {
+  return {
+    id: crypto.randomBytes(8).toString("base64url"),
+    createdAt: Date.now(),
+  };
 }
 
 function broadcast(eventName, payload) {
@@ -335,9 +343,6 @@ async function handleApi(request, response) {
   const url = new URL(request.url, `http://${request.headers.host}`);
 
   if (request.method === "GET" && url.pathname === "/api/state") {
-    if (state.drawing && Date.now() - state.drawing.startedAt > drawingDurationMs + 5000) {
-      state.drawing = null;
-    }
     sendJson(response, 200, state);
     return;
   }
@@ -348,9 +353,14 @@ async function handleApi(request, response) {
   }
 
   if (request.method === "POST" && url.pathname === "/api/config") {
+    if (!isHostRequest(request)) {
+      sendJson(response, 403, { error: "Host only" });
+      return;
+    }
+
     try {
       const nextConfig = sanitizeConfig(JSON.parse(await readBody(request)));
-      state = { config: nextConfig, drawing: null };
+      state = { config: nextConfig, drawing: null, session: state.session };
       saveStoredConfig(nextConfig);
       broadcast("config", state);
       sendJson(response, 200, state);
@@ -360,12 +370,25 @@ async function handleApi(request, response) {
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/session") {
+    if (!isHostRequest(request)) {
+      sendJson(response, 403, { error: "Host only" });
+      return;
+    }
+
+    state = { ...state, drawing: null, session: createSession() };
+    broadcast("session", state);
+    sendJson(response, 200, state);
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/draw") {
     if (!isHostRequest(request)) {
       sendJson(response, 403, { error: "Host only" });
       return;
     }
 
+    if (!state.session) state.session = createSession();
     state.drawing = createDrawing();
     broadcast("drawing", state.drawing);
     sendJson(response, 200, state);

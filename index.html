@@ -9,17 +9,17 @@
 <body>
   <main class="page page-main">
     <header class="hero">
-      <h1>宴会座席抽選</h1>
-      <p>登録されたメンバーを、全員の画面に同じタイミングで抽選表示します。</p>
+      <p class="page-kicker">Seating lottery</p>
+      <h1>座席抽選</h1>
+      <p>管理者が抽選を開始すると、この画面に同じ結果が表示されます。</p>
     </header>
 
-    <section class="controls" aria-label="抽選操作">
-      <button id="startButton" class="button button-primary">抽選を開始</button>
-      <button id="refreshButton" class="button button-tertiary">最新を反映</button>
-    </section>
-
-    <section class="status" aria-live="polite">
-      <p id="statusText">メンバーを読み込み中...</p>
+    <section class="viewer-panel" aria-label="抽選状態">
+      <div class="viewer-status">
+        <span class="status-dot" aria-hidden="true"></span>
+        <p id="statusText">抽選画面の準備を確認しています...</p>
+      </div>
+      <button id="refreshButton" class="button button-secondary" type="button">最新を確認</button>
     </section>
 
     <section class="grid-container" id="seatGrid" aria-label="座席表"></section>

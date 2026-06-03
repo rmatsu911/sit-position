@@ -1,6 +1,30 @@
 <?php
 $renderUrl = 'https://sit-position.onrender.com';
+$adminToken = 'sit-position-admin-2026';
+$proxyAdminSecret = 'sit-position-proxy-admin-v1';
+$adminCookieName = 'sit_position_admin';
+$adminCookieValue = hash_hmac('sha256', $adminToken, $proxyAdminSecret);
 $requestUri = $_SERVER['REQUEST_URI'] ?? '/';
+
+if (isset($_GET['host']) && hash_equals($adminToken, (string) $_GET['host'])) {
+  setcookie($adminCookieName, $adminCookieValue, [
+    'expires' => time() + 60 * 60 * 24 * 30,
+    'path' => '/',
+    'secure' => true,
+    'httponly' => true,
+    'samesite' => 'Lax',
+  ]);
+
+  $parts = parse_url($requestUri);
+  parse_str($parts['query'] ?? '', $query);
+  unset($query['host']);
+  $nextQuery = http_build_query($query);
+  $nextPath = ($parts['path'] ?? '/') . ($nextQuery ? '?' . $nextQuery : '');
+  header('Location: ' . $nextPath, true, 302);
+  exit;
+}
+
+$isAdmin = isset($_COOKIE[$adminCookieName]) && hash_equals($adminCookieValue, (string) $_COOKIE[$adminCookieName]);
 $targetUrl = rtrim($renderUrl, '/') . $requestUri;
 
 $ch = curl_init($targetUrl);
@@ -17,7 +41,7 @@ $headers = [];
 if (function_exists('getallheaders')) {
   foreach (getallheaders() as $name => $value) {
     $lower = strtolower($name);
-    if (!in_array($lower, ['host', 'connection', 'content-length'], true)) {
+    if (!in_array($lower, ['host', 'connection', 'content-length', 'x-host-token', 'x-xserver-admin'], true)) {
       $headers[] = $name . ': ' . $value;
     }
   }
@@ -29,6 +53,10 @@ $headers[] = 'X-Forwarded-Proto: https';
 
 if (!empty($_SERVER['REMOTE_ADDR'])) {
   $headers[] = 'X-Forwarded-For: ' . $_SERVER['REMOTE_ADDR'];
+}
+
+if ($isAdmin) {
+  $headers[] = 'X-Xserver-Admin: ' . $proxyAdminSecret;
 }
 
 if (isset($_SERVER['HTTP_COOKIE'])) {
