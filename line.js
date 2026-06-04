@@ -171,6 +171,7 @@ function buildSetupPanel({ memberCount = 0, totalCount = 0, sessionUrl = "", adm
     postbackButton("メンバー取得", "action=collectMembers"),
     postbackButton("確定してURL作成", "action=confirmLottery"),
     postbackButton("抽選開始", "action=startLottery"),
+    postbackButton("リセット", "action=resetLottery"),
   ];
 
   if (sessionUrl) actions.splice(3, 0, uriButton("抽選画面を開く", sessionUrl));

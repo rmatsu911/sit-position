@@ -524,6 +524,20 @@ async function handleApi(request, response) {
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/reset") {
+    if (!isHostRequest(request)) {
+      sendJson(response, 403, { error: "Host only" });
+      return;
+    }
+
+    state = { ...state, drawing: null, session: null };
+    cachedResultPng = null;
+    viewers.clear();
+    broadcast("reset", state);
+    sendJson(response, 200, buildPublicState());
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/api/result-image.png") {
     if (!cachedResultPng) {
       response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -735,8 +749,33 @@ async function handleStartLotteryFromLine(lineConfig, event) {
   await line.replyToLine(lineConfig, event.replyToken, line.textMessage(`抽選を開始しました。\n現在の表示人数: ${getViewCount()}人`));
 }
 
+async function handleResetLotteryFromLine(lineConfig, event) {
+  const groupId = event.source?.groupId;
+  const userId = event.source?.userId;
+  if (!groupId || !userId) return;
+  const group = getLineGroupState(groupId);
+  if (group.adminUserId && group.adminUserId !== userId) {
+    await line.replyToLine(lineConfig, event.replyToken, line.textMessage("管理者だけがリセットできます。"));
+    return;
+  }
+
+  state = { ...state, drawing: null, session: null };
+  cachedResultPng = null;
+  viewers.clear();
+  broadcast("reset", state);
+  await replySetupMenu(lineConfig, event, "抽選をリセットしました。必要に応じて「確定してURL作成」を押してください。");
+}
+
+function normalizeLineCommand(command) {
+  return String(command || "")
+    .replace(/\s+/g, "")
+    .replace(/^＠?座席抽選/, "")
+    .trim();
+}
+
 async function handleLineCommand(lineConfig, event, command) {
-  if (command === "抽選設定" || command === "action=setup") {
+  const normalizedCommand = normalizeLineCommand(command);
+  if (normalizedCommand === "action=setup" || normalizedCommand.includes("抽選設定") || normalizedCommand === "設定") {
     if (event.source?.groupId && event.source?.userId) {
       const group = getLineGroupState(event.source.groupId);
       group.adminUserId = event.source.userId;
@@ -752,10 +791,11 @@ async function handleLineCommand(lineConfig, event, command) {
     await replySetupMenu(lineConfig, event);
     return;
   }
-  if (command === "参加" || command === "action=joinLottery") return handleJoinLottery(lineConfig, event);
-  if (command === "メンバー取得" || command === "action=collectMembers") return handleCollectMembers(lineConfig, event);
-  if (command === "確定" || command === "action=confirmLottery") return handleConfirmLottery(lineConfig, event);
-  if (command === "抽選開始" || command === "action=startLottery") return handleStartLotteryFromLine(lineConfig, event);
+  if (normalizedCommand === "参加" || normalizedCommand === "action=joinLottery") return handleJoinLottery(lineConfig, event);
+  if (normalizedCommand === "メンバー取得" || normalizedCommand === "action=collectMembers") return handleCollectMembers(lineConfig, event);
+  if (normalizedCommand === "確定" || normalizedCommand === "action=confirmLottery") return handleConfirmLottery(lineConfig, event);
+  if (normalizedCommand === "抽選開始" || normalizedCommand === "action=startLottery") return handleStartLotteryFromLine(lineConfig, event);
+  if (normalizedCommand === "リセット" || normalizedCommand === "action=resetLottery") return handleResetLotteryFromLine(lineConfig, event);
 }
 
 async function handleLineWebhook(request, response) {
