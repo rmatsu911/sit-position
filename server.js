@@ -824,7 +824,7 @@ function normalizeLineCommand(command) {
 
 async function handleLineCommand(lineConfig, event, command) {
   const normalizedCommand = normalizeLineCommand(command);
-  if (normalizedCommand === "action=setup" || normalizedCommand.includes("抽選設定") || normalizedCommand === "設定") {
+  if (normalizedCommand === "action=setup" || normalizedCommand.includes("抽選設定") || normalizedCommand === "設定" || normalizedCommand === "抽選") {
     if (event.source?.groupId && event.source?.userId) {
       const group = getLineGroupState(event.source.groupId);
       group.adminUserId = event.source.userId;
