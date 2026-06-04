@@ -184,8 +184,32 @@ function getSessionUrl() {
   return state.session ? `${publicBaseUrl}/?session=${encodeURIComponent(state.session.id)}` : "";
 }
 
-function getAdminUrl() {
-  return `${publicBaseUrl}/admin.html?host=sit-position-admin-2026`;
+function toBase64Url(input) {
+  return Buffer.from(input)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function signAdminToken(payload) {
+  return crypto.createHmac("sha256", proxyAdminSecret).update(payload).digest("base64url");
+}
+
+function createLineAdminToken(userId) {
+  const payload = toBase64Url(JSON.stringify({
+    typ: "line-admin",
+    sub: userId,
+    exp: Date.now() + 1000 * 60 * 60 * 24 * 14,
+  }));
+  return `${payload}.${signAdminToken(payload)}`;
+}
+
+function getAdminUrl(userId = "") {
+  const token = userId ? createLineAdminToken(userId) : "";
+  return token
+    ? `${publicBaseUrl}/admin.html?admin=${encodeURIComponent(token)}`
+    : `${publicBaseUrl}/admin.html`;
 }
 
 function cleanupViewers() {
@@ -618,10 +642,14 @@ async function replySetupMenu(lineConfig, event, extraText = "") {
     memberCount: group ? group.members.length : 0,
     totalCount: group ? group.memberCount : 0,
     sessionUrl: getSessionUrl(),
-    adminUrl: getAdminUrl(),
     note: extraText || "参加者は「参加する」を押してください。管理者は人数確認後に確定します。",
   });
   await line.replyToLine(lineConfig, event.replyToken, panel);
+}
+
+async function pushAdminUrlToUser(lineConfig, userId, note = "座席抽選の管理者画面はこちらです。") {
+  if (!userId) return null;
+  return line.pushMessages(lineConfig, userId, line.textMessage(`${note}\n${getAdminUrl(userId)}\n\nこのURLは管理者本人用です。グループには共有しないでください。`));
 }
 
 async function handleCollectMembers(lineConfig, event) {
@@ -645,16 +673,10 @@ async function handleCollectMembers(lineConfig, event) {
 async function handleJoinLottery(lineConfig, event) {
   const group = await registerEventUser(lineConfig, event);
   if (!group) {
-    await line.replyToLine(lineConfig, event.replyToken, line.textMessage("参加登録に失敗しました。グループ内で再度お試しください。"));
+    await line.replyToLine(lineConfig, event.replyToken, line.textMessage("参加登録に失敗しました。もう一度お試しください。"));
     return;
   }
-  await line.replyToLine(lineConfig, event.replyToken, line.buildSetupPanel({
-    memberCount: group.members.length,
-    totalCount: group.memberCount,
-    sessionUrl: getSessionUrl(),
-    adminUrl: getAdminUrl(),
-    note: `参加登録しました。現在 ${group.members.length}名です。`,
-  }));
+  // Keep group notifications quiet. The admin can check the count from the panel.
 }
 
 async function handleConfirmLottery(lineConfig, event) {
@@ -686,15 +708,13 @@ async function handleConfirmLottery(lineConfig, event) {
       memberCount: group.members.length,
       totalCount: group.memberCount,
       sessionUrl: getSessionUrl(),
-      adminUrl: getAdminUrl(),
       note: "抽選画面を作成しました。参加者は抽選画面を開いて待機してください。",
     }),
   ]);
 
-  const adminMessage = line.textMessage(`座席抽選の最終確認はこちらです。\n${getAdminUrl()}\n\n確認後、管理画面またはLINEの「抽選開始」から開始できます。`);
-  const pushed = await line.pushMessages(lineConfig, userId, adminMessage);
+  const pushed = await pushAdminUrlToUser(lineConfig, userId, "座席抽選の最終確認はこちらです。確認後、管理画面またはLINEの「抽選開始」から開始できます。");
   if (!pushed || pushed.status >= 300) {
-    await line.pushMessages(lineConfig, groupId, line.textMessage(`管理者用URLを個別送信できませんでした。Botを友だち追加後に再度お試しください。\n管理者用URL:\n${getAdminUrl()}`));
+    await line.pushMessages(lineConfig, groupId, line.textMessage("管理者用URLを個人LINEに送信できませんでした。管理者はBotを友だち追加してから、もう一度「確定してURL作成」を押してください。"));
   }
 }
 
@@ -722,6 +742,12 @@ async function handleLineCommand(lineConfig, event, command) {
       group.adminUserId = event.source.userId;
       saveLineState();
       await registerEventUser(lineConfig, event);
+      const pushed = await pushAdminUrlToUser(lineConfig, event.source.userId, "座席抽選の管理者として設定しました。管理者画面はこちらです。");
+      const note = pushed && pushed.status < 300
+        ? "管理者用URLを個人LINEに送信しました。参加者は「参加する」を押してください。"
+        : "管理者用URLを個人LINEに送信できませんでした。Botを友だち追加してから、もう一度「抽選設定」を押してください。";
+      await replySetupMenu(lineConfig, event, note);
+      return;
     }
     await replySetupMenu(lineConfig, event);
     return;
@@ -787,7 +813,6 @@ async function handleLineWebhook(request, response) {
         memberCount: group.members.length,
         totalCount: group.memberCount,
         sessionUrl: getSessionUrl(),
-        adminUrl: getAdminUrl(),
         note: `新しいメンバーを記録しました。現在 ${group.members.length}名です。`,
       }));
       continue;

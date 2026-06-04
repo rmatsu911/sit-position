@@ -1,12 +1,39 @@
 <?php
 $renderUrl = 'https://sit-position.onrender.com';
-$adminToken = 'sit-position-admin-2026';
 $proxyAdminSecret = 'sit-position-proxy-admin-v1';
 $adminCookieName = 'sit_position_admin';
-$adminCookieValue = hash_hmac('sha256', $adminToken, $proxyAdminSecret);
+$adminCookieValue = hash_hmac('sha256', 'line-admin', $proxyAdminSecret);
 $requestUri = $_SERVER['REQUEST_URI'] ?? '/';
 
-if (isset($_GET['host']) && hash_equals($adminToken, (string) $_GET['host'])) {
+function base64url_decode_string($value) {
+  $padded = strtr($value, '-_', '+/');
+  $padded .= str_repeat('=', (4 - strlen($padded) % 4) % 4);
+  return base64_decode($padded, true);
+}
+
+function base64url_encode_string($value) {
+  return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+}
+
+function verify_admin_token($token, $secret) {
+  $parts = explode('.', (string) $token);
+  if (count($parts) !== 2) return false;
+
+  [$payload, $signature] = $parts;
+  $expected = base64url_encode_string(hash_hmac('sha256', $payload, $secret, true));
+  if (!hash_equals($expected, $signature)) return false;
+
+  $json = base64url_decode_string($payload);
+  if ($json === false) return false;
+
+  $data = json_decode($json, true);
+  if (!is_array($data)) return false;
+  if (($data['typ'] ?? '') !== 'line-admin') return false;
+  if (!isset($data['exp']) || (int) $data['exp'] < (int) floor(microtime(true) * 1000)) return false;
+  return true;
+}
+
+if (isset($_GET['admin']) && verify_admin_token((string) $_GET['admin'], $proxyAdminSecret)) {
   setcookie($adminCookieName, $adminCookieValue, [
     'expires' => time() + 60 * 60 * 24 * 30,
     'path' => '/',
@@ -17,7 +44,7 @@ if (isset($_GET['host']) && hash_equals($adminToken, (string) $_GET['host'])) {
 
   $parts = parse_url($requestUri);
   parse_str($parts['query'] ?? '', $query);
-  unset($query['host']);
+  unset($query['admin']);
   $nextQuery = http_build_query($query);
   $nextPath = ($parts['path'] ?? '/') . ($nextQuery ? '?' . $nextQuery : '');
   header('Location: ' . $nextPath, true, 302);

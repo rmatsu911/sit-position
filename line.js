@@ -133,17 +133,19 @@ function buildSetupQuickReply() {
   ];
 }
 
-function postbackButton(label, data, style = "secondary") {
+function postbackButton(label, data, style = "secondary", displayText = label) {
+  const action = {
+    type: "postback",
+    label,
+    data,
+  };
+  if (displayText) action.displayText = displayText;
+
   return {
     type: "button",
     style,
     height: "sm",
-    action: {
-      type: "postback",
-      label,
-      data,
-      displayText: label,
-    },
+    action,
   };
 }
 
@@ -165,7 +167,7 @@ function buildSetupPanel({ memberCount = 0, totalCount = 0, sessionUrl = "", adm
     ? `登録 ${memberCount}名 / グループ ${totalCount}名`
     : `登録 ${memberCount}名`;
   const actions = [
-    postbackButton("参加する", "action=joinLottery", "primary"),
+    postbackButton("参加する", "action=joinLottery", "primary", ""),
     postbackButton("メンバー取得", "action=collectMembers"),
     postbackButton("確定してURL作成", "action=confirmLottery"),
     postbackButton("抽選開始", "action=startLottery"),
