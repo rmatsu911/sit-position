@@ -1,5 +1,7 @@
 const crypto = require("crypto");
 const https = require("https");
+const path = require("path");
+const fontkit = require("fontkit");
 
 let sharp;
 try {
@@ -8,11 +10,79 @@ try {
   // Image mode is optional. The app falls back to Flex Messages.
 }
 
+let imageFonts;
+
 function esc(str) {
   return String(str || "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+function escAttr(str) {
+  return esc(str).replace(/"/g, "&quot;");
+}
+
+function loadImageFonts() {
+  if (imageFonts !== undefined) return imageFonts;
+
+  try {
+    const fontDir = path.join(__dirname, "node_modules", "@embedpdf", "fonts-jp", "fonts");
+    imageFonts = {
+      regular: fontkit.openSync(path.join(fontDir, "NotoSansJP-Regular.otf")),
+      medium: fontkit.openSync(path.join(fontDir, "NotoSansJP-Medium.otf")),
+      bold: fontkit.openSync(path.join(fontDir, "NotoSansJP-Bold.otf")),
+      black: fontkit.openSync(path.join(fontDir, "NotoSansJP-Black.otf")),
+    };
+  } catch (err) {
+    console.warn("Japanese image font loading failed:", err.message);
+    imageFonts = null;
+  }
+
+  return imageFonts;
+}
+
+function getImageFont(weight = 400) {
+  const fonts = loadImageFonts();
+  if (!fonts) return null;
+  if (weight >= 850) return fonts.black;
+  if (weight >= 650) return fonts.bold;
+  if (weight >= 500) return fonts.medium;
+  return fonts.regular;
+}
+
+function formatNumber(value) {
+  return Number(value).toFixed(3).replace(/\.?0+$/g, "");
+}
+
+function imageText(text, { x, y, fill, fontSize, fontWeight = 400, anchor = "start" }) {
+  const value = String(text || "");
+  const font = getImageFont(fontWeight);
+
+  if (!font) {
+    const anchorAttr = anchor === "middle" || anchor === "end" ? ` text-anchor="${anchor}"` : "";
+    return `<text x="${x}" y="${y}"${anchorAttr} fill="${escAttr(fill)}" font-size="${fontSize}" font-weight="${fontWeight}">${esc(value)}</text>`;
+  }
+
+  const run = font.layout(value);
+  const scale = fontSize / font.unitsPerEm;
+  const width = run.positions.reduce((total, position) => total + position.xAdvance, 0) * scale;
+  const baseX = anchor === "middle" ? x - width / 2 : anchor === "end" ? x - width : x;
+  let cursor = 0;
+  const paths = [];
+
+  run.glyphs.forEach((glyph, index) => {
+    const position = run.positions[index];
+    const d = glyph.path.toSVG();
+    if (d) {
+      const tx = baseX + (cursor + position.xOffset) * scale;
+      const ty = y - position.yOffset * scale;
+      paths.push(`<path d="${d}" transform="translate(${formatNumber(tx)} ${formatNumber(ty)}) scale(${formatNumber(scale)} -${formatNumber(scale)})" fill="${escAttr(fill)}"/>`);
+    }
+    cursor += position.xAdvance;
+  });
+
+  return paths.join("");
 }
 
 function lineRequest(method, apiPath, token, body = null, options = {}) {
@@ -167,7 +237,7 @@ function buildSetupPanel({ memberCount = 0, totalCount = 0, sessionUrl = "", adm
     ? `登録 ${memberCount}名 / グループ ${totalCount}名`
     : `登録 ${memberCount}名`;
   const actions = [
-    postbackButton("参加する", "action=joinLottery", "primary", ""),
+    postbackButton("参加する", "action=joinLottery", "primary", "参加しました"),
     postbackButton("メンバー取得", "action=collectMembers"),
     postbackButton("確定してURL作成", "action=confirmLottery"),
     postbackButton("抽選開始", "action=startLottery"),
@@ -249,19 +319,19 @@ function buildSeatSVG(config, finalSeats) {
     return `
 <rect x="${x}" y="${y}" width="${cardW}" height="${cardH}" rx="8" fill="#fffdf8" stroke="#e3ddd2"/>
 <rect x="${x + 10}" y="${y + 10}" width="28" height="28" rx="7" fill="#efe8dc"/>
-<text x="${x + 24}" y="${y + 29}" text-anchor="middle" fill="#64594b" font-size="11" font-weight="800">${String(index + 1).padStart(2, "0")}</text>
-<text x="${x + 46}" y="${y + 29}" fill="#697586" font-size="12" font-weight="700">${esc(seat.label)}</text>
-<text x="${x + 12}" y="${y + 64}" fill="${nameFill}" font-size="${nameFont}" font-weight="850">${esc(display)}</text>
+${imageText(String(index + 1).padStart(2, "0"), { x: x + 24, y: y + 29, anchor: "middle", fill: "#64594b", fontSize: 11, fontWeight: 800 })}
+${imageText(seat.label, { x: x + 46, y: y + 29, fill: "#697586", fontSize: 12, fontWeight: 700 })}
+${imageText(display, { x: x + 12, y: y + 64, fill: nameFill, fontSize: nameFont, fontWeight: 850 })}
 <rect x="${x + cardW - 52}" y="${y + 10}" width="40" height="20" rx="10" fill="${chipFill}" opacity="0.13"/>
-<text x="${x + cardW - 32}" y="${y + 24}" text-anchor="middle" fill="${chipFill}" font-size="11" font-weight="800">${chipText}</text>`;
+${imageText(chipText, { x: x + cardW - 32, y: y + 24, anchor: "middle", fill: chipFill, fontSize: 11, fontWeight: 800 })}`;
   }).join("");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
 <style>text{font-family:"Yu Gothic","Meiryo","Hiragino Kaku Gothic ProN","Noto Sans CJK JP",sans-serif}</style>
 <rect width="${width}" height="${height}" fill="#f5f2ec"/>
-<text x="${pad}" y="39" fill="#17212b" font-size="23" font-weight="900">座席抽選 結果</text>
-<text x="${width - pad}" y="39" text-anchor="end" fill="#697586" font-size="12">${ts}</text>
+${imageText("座席抽選 結果", { x: pad, y: 39, fill: "#17212b", fontSize: 23, fontWeight: 900 })}
+${imageText(ts, { x: width - pad, y: 39, anchor: "end", fill: "#697586", fontSize: 12, fontWeight: 500 })}
 <line x1="${pad}" y1="55" x2="${width - pad}" y2="55" stroke="#e3ddd2"/>
 ${cards}
 </svg>`;

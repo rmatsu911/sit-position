@@ -708,12 +708,29 @@ async function handleCollectMembers(lineConfig, event) {
 }
 
 async function handleJoinLottery(lineConfig, event) {
+  const groupId = event.source?.groupId;
+  const userId = event.source?.userId;
+  const wasRegistered = !!(groupId && userId && getLineGroupState(groupId).members.some((member) => member.userId === userId));
   const group = await registerEventUser(lineConfig, event);
   if (!group) {
     await line.replyToLine(lineConfig, event.replyToken, line.textMessage("参加登録に失敗しました。もう一度お試しください。"));
     return;
   }
-  // Keep group notifications quiet. The admin can check the count from the panel.
+
+  const member = group.members.find((item) => item.userId === userId);
+  const status = wasRegistered ? "参加登録済みです。" : "参加登録しました。";
+  const privateMessage = `${status}\n${member?.displayName || "あなた"}さんを登録しています。\n現在 ${group.members.length}名です。`;
+
+  if (userId) {
+    try {
+      const pushed = await line.pushMessages(lineConfig, userId, line.textMessage(privateMessage));
+      if (pushed && pushed.status >= 300) {
+        console.warn(`LINE private join confirmation failed: ${pushed.status}`);
+      }
+    } catch (err) {
+      console.warn("LINE private join confirmation failed:", err.message);
+    }
+  }
 }
 
 async function handleConfirmLottery(lineConfig, event) {
