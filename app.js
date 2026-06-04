@@ -308,6 +308,7 @@ async function bindAdminPage() {
   const createSessionButton = document.getElementById("createSessionButton");
   const adminStartButton = document.getElementById("adminStartButton");
   const resetLotteryButton = document.getElementById("resetLotteryButton");
+  const resetSettingsButton = document.getElementById("resetSettingsButton");
   const publicUrlInput = document.getElementById("publicUrl");
   const copyPublicUrlButton = document.getElementById("copyPublicUrlButton");
 
@@ -477,6 +478,24 @@ async function bindAdminPage() {
     }
   }
 
+  async function resetSettings() {
+    if (!confirm("メンバー、固定席、LINEで収集した参加者、抽選画面をすべてリセットしますか？")) return;
+    try {
+      const state = await requestJson("/api/reset-settings", { method: "POST" });
+      const config = sanitizeConfig(state.config);
+      currentMembers = [...config.members];
+      seatCount = config.seatCount;
+      currentSeats = [...config.seats];
+      seatCountInput.value = seatCount;
+      renderMembers();
+      renderSeatEditor();
+      updatePublicUrl(state.session);
+      updateAdminStatus("抽選設定をリセットしました。");
+    } catch (error) {
+      updateAdminStatus(`設定リセットに失敗しました: ${error.message}`);
+    }
+  }
+
   seatCountInput.value = seatCount;
   renderMembers();
   renderSeatEditor();
@@ -498,6 +517,7 @@ async function bindAdminPage() {
   createSessionButton.addEventListener("click", () => createSession().catch((error) => updateAdminStatus(`URL作成に失敗しました: ${error.message}`)));
   adminStartButton.addEventListener("click", startDrawing);
   resetLotteryButton.addEventListener("click", resetLottery);
+  resetSettingsButton.addEventListener("click", resetSettings);
   clearButton.addEventListener("click", () => {
     if (!confirm("全てのメンバーを削除しますか？")) return;
     currentMembers = [];

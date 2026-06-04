@@ -538,6 +538,29 @@ async function handleApi(request, response) {
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/reset-settings") {
+    if (!isHostRequest(request)) {
+      sendJson(response, 403, { error: "Host only" });
+      return;
+    }
+
+    const seatCount = state.config.seatCount || defaultConfig.seatCount;
+    const nextConfig = sanitizeConfig({
+      seatCount,
+      members: [],
+      seats: createDefaultSeats(seatCount),
+    });
+    state = { config: nextConfig, drawing: null, session: null };
+    cachedResultPng = null;
+    viewers.clear();
+    lineState = { groups: {} };
+    saveLineState();
+    saveStoredConfig(nextConfig);
+    broadcast("reset-settings", state);
+    sendJson(response, 200, buildPublicState());
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/api/result-image.png") {
     if (!cachedResultPng) {
       response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -766,6 +789,32 @@ async function handleResetLotteryFromLine(lineConfig, event) {
   await replySetupMenu(lineConfig, event, "抽選をリセットしました。必要に応じて「確定してURL作成」を押してください。");
 }
 
+async function handleResetSettingsFromLine(lineConfig, event) {
+  const groupId = event.source?.groupId;
+  const userId = event.source?.userId;
+  if (!groupId || !userId) return;
+  const group = getLineGroupState(groupId);
+  if (group.adminUserId && group.adminUserId !== userId) {
+    await line.replyToLine(lineConfig, event.replyToken, line.textMessage("管理者だけが設定リセットできます。"));
+    return;
+  }
+
+  const seatCount = state.config.seatCount || defaultConfig.seatCount;
+  const nextConfig = sanitizeConfig({
+    seatCount,
+    members: [],
+    seats: createDefaultSeats(seatCount),
+  });
+  state = { config: nextConfig, drawing: null, session: null };
+  cachedResultPng = null;
+  viewers.clear();
+  lineState = { groups: {} };
+  saveLineState();
+  saveStoredConfig(nextConfig);
+  broadcast("reset-settings", state);
+  await line.replyToLine(lineConfig, event.replyToken, line.textMessage("抽選設定をリセットしました。もう一度「抽選設定」から開始してください。"));
+}
+
 function normalizeLineCommand(command) {
   return String(command || "")
     .replace(/\s+/g, "")
@@ -796,6 +845,7 @@ async function handleLineCommand(lineConfig, event, command) {
   if (normalizedCommand === "確定" || normalizedCommand === "action=confirmLottery") return handleConfirmLottery(lineConfig, event);
   if (normalizedCommand === "抽選開始" || normalizedCommand === "action=startLottery") return handleStartLotteryFromLine(lineConfig, event);
   if (normalizedCommand === "リセット" || normalizedCommand === "action=resetLottery") return handleResetLotteryFromLine(lineConfig, event);
+  if (normalizedCommand === "設定リセット" || normalizedCommand === "action=resetSettings") return handleResetSettingsFromLine(lineConfig, event);
 }
 
 async function handleLineWebhook(request, response) {
