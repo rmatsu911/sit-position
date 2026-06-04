@@ -1,5 +1,6 @@
 const storageKey = "seatingConfig";
 const hostTokenKey = "seatingHostToken";
+const viewerIdKey = "seatingViewerId";
 const drawingDurationMs = 4200;
 const frameMs = 95;
 const pollMs = 1500;
@@ -33,6 +34,15 @@ function getHostToken() {
 
 function getSessionId() {
   return new URLSearchParams(location.search).get("session") || "";
+}
+
+function getViewerId() {
+  let viewerId = localStorage.getItem(viewerIdKey);
+  if (!viewerId) {
+    viewerId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem(viewerIdKey, viewerId);
+  }
+  return viewerId;
 }
 
 function createDefaultSeats(seatCount) {
@@ -102,6 +112,7 @@ async function requestJson(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
   const hostToken = getHostToken();
   if (hostToken) headers["X-Host-Token"] = hostToken;
+  headers["X-Viewer-Id"] = getViewerId();
 
   const response = await fetch(path, { headers, ...options });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
@@ -230,6 +241,7 @@ function animateDrawing(payload, force = false) {
 function syncPublicState(state, force = false) {
   const sessionId = getSessionId();
   const session = state.session;
+  const viewCount = Number(state.viewCount) || 0;
   currentConfig = sanitizeConfig(state.config);
 
   if (!sessionId) {
@@ -256,7 +268,7 @@ function syncPublicState(state, force = false) {
   stopAnimation();
   lastRenderedDrawingSeed = null;
   setStatusTone("ready");
-  updateStatus("抽選開始を待っています。固定席の内容は開始まで表示されません。");
+  updateStatus(`抽選開始を待っています。現在の表示人数: ${viewCount}人。固定席の内容は開始まで表示されません。`);
   renderWaitingSeats(currentConfig);
 }
 

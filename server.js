@@ -10,8 +10,10 @@ const rootDir = __dirname;
 const dataFile = path.join(rootDir, "seating-data.json");
 const hostFile = path.join(rootDir, ".host-token");
 const lineConfigFile = path.join(rootDir, "line-config.json");
+const lineStateFile = path.join(rootDir, "line-state.json");
 const drawingDurationMs = 4200;
 const proxyAdminSecret = process.env.XSERVER_PROXY_SECRET || "sit-position-proxy-admin-v1";
+const publicBaseUrl = (process.env.PUBLIC_BASE_URL || process.env.LINE_PUBLIC_URL || "https://xxxtrw77777.xsrv.jp").replace(/\/$/, "");
 
 const defaultConfig = {
   seatCount: 12,
@@ -38,6 +40,8 @@ let state = {
   session: null,
 };
 let cachedResultPng = null;
+let lineState = loadLineState();
+const viewers = new Map();
 
 function loadHostToken() {
   if (process.env.HOST_TOKEN) return process.env.HOST_TOKEN.trim();
@@ -117,6 +121,102 @@ function loadStoredConfig() {
 
 function saveStoredConfig(config) {
   fs.writeFileSync(dataFile, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+function loadLineState() {
+  try {
+    if (fs.existsSync(lineStateFile)) {
+      return JSON.parse(fs.readFileSync(lineStateFile, "utf8"));
+    }
+  } catch (error) {
+    console.warn("Failed to read line-state.json.", error);
+  }
+  return { groups: {} };
+}
+
+function saveLineState() {
+  fs.writeFileSync(lineStateFile, `${JSON.stringify(lineState, null, 2)}\n`, "utf8");
+}
+
+function getLineGroupState(groupId) {
+  if (!lineState.groups[groupId]) {
+    lineState.groups[groupId] = {
+      groupId,
+      adminUserId: "",
+      members: [],
+      memberCount: 0,
+      updatedAt: Date.now(),
+    };
+  }
+  return lineState.groups[groupId];
+}
+
+function upsertLineMember(groupId, member) {
+  const group = getLineGroupState(groupId);
+  const userId = String(member.userId || "").trim();
+  const displayName = String(member.displayName || member.name || "").trim();
+  if (!userId || !displayName) return group;
+
+  const existing = group.members.find((item) => item.userId === userId);
+  if (existing) {
+    existing.displayName = displayName;
+  } else {
+    group.members.push({ userId, displayName });
+  }
+  group.updatedAt = Date.now();
+  saveLineState();
+  return group;
+}
+
+function lineMembersToConfig(group) {
+  const members = group.members.map((member) => member.displayName).filter(Boolean);
+  if (!members.length) return null;
+  const seatCount = Math.max(state.config.seatCount || members.length, members.length);
+  return sanitizeConfig({
+    ...state.config,
+    seatCount,
+    members,
+    seats: createDefaultSeats(seatCount),
+  });
+}
+
+function getSessionUrl() {
+  return state.session ? `${publicBaseUrl}/?session=${encodeURIComponent(state.session.id)}` : "";
+}
+
+function getAdminUrl() {
+  return `${publicBaseUrl}/admin.html?host=sit-position-admin-2026`;
+}
+
+function cleanupViewers() {
+  const cutoff = Date.now() - 12_000;
+  for (const [key, item] of viewers.entries()) {
+    if (item.seenAt < cutoff) viewers.delete(key);
+  }
+}
+
+function registerViewer(request, url) {
+  const sessionId = url.searchParams.get("session");
+  const viewerId = String(request.headers["x-viewer-id"] || "").trim();
+  if (!sessionId || !viewerId) return;
+  viewers.set(`${sessionId}:${viewerId}`, { sessionId, seenAt: Date.now() });
+}
+
+function getViewCount(sessionId = state.session && state.session.id) {
+  cleanupViewers();
+  if (!sessionId) return 0;
+  let count = 0;
+  for (const item of viewers.values()) {
+    if (item.sessionId === sessionId) count += 1;
+  }
+  return count;
+}
+
+function buildPublicState() {
+  return {
+    ...state,
+    viewCount: getViewCount(),
+  };
 }
 
 function loadLineConfig() {
@@ -316,7 +416,7 @@ function serveStatic(request, response) {
     return;
   }
 
-  const blockedFiles = new Set([".host-token", "seating-data.json", "line-config.json", "localtunnel.log", "localtunnel.err.log"]);
+  const blockedFiles = new Set([".host-token", "seating-data.json", "line-config.json", "line-state.json", "localtunnel.log", "localtunnel.err.log"]);
   if (blockedFiles.has(path.basename(resolvedPath))) {
     response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
     response.end("Not found");
@@ -343,7 +443,8 @@ async function handleApi(request, response) {
   const url = new URL(request.url, `http://${request.headers.host}`);
 
   if (request.method === "GET" && url.pathname === "/api/state") {
-    sendJson(response, 200, state);
+    registerViewer(request, url);
+    sendJson(response, 200, buildPublicState());
     return;
   }
 
@@ -363,7 +464,7 @@ async function handleApi(request, response) {
       state = { config: nextConfig, drawing: null, session: state.session };
       saveStoredConfig(nextConfig);
       broadcast("config", state);
-      sendJson(response, 200, state);
+      sendJson(response, 200, buildPublicState());
     } catch (error) {
       sendJson(response, 400, { error: error.message });
     }
@@ -378,7 +479,7 @@ async function handleApi(request, response) {
 
     state = { ...state, drawing: null, session: createSession() };
     broadcast("session", state);
-    sendJson(response, 200, state);
+    sendJson(response, 200, buildPublicState());
     return;
   }
 
@@ -391,7 +492,7 @@ async function handleApi(request, response) {
     if (!state.session) state.session = createSession();
     state.drawing = createDrawing();
     broadcast("drawing", state.drawing);
-    sendJson(response, 200, state);
+    sendJson(response, 200, buildPublicState());
     refreshCachedResultImage(state.drawing);
     pushLineNotification(state.drawing).catch((err) =>
       console.warn("LINE notification error:", err.message)
@@ -420,7 +521,7 @@ async function handleApi(request, response) {
       hasToken: !!cfg.channelAccessToken,
       hasSecret: !!cfg.channelSecret,
       groupId: cfg.groupId,
-      publicUrl: cfg.publicUrl,
+      publicUrl: cfg.publicUrl || publicBaseUrl,
       imageMode: line.isImageModeAvailable(),
     });
     return;
@@ -450,6 +551,166 @@ async function handleApi(request, response) {
   sendJson(response, 404, { error: "Not found" });
 }
 
+function parsePostbackData(data) {
+  return Object.fromEntries(new URLSearchParams(String(data || "")));
+}
+
+async function getDisplayName(lineConfig, source) {
+  if (!source || !source.userId) return "";
+  try {
+    const result = source.groupId
+      ? await line.getGroupMemberProfile(lineConfig, source.groupId, source.userId)
+      : await line.getUserProfile(lineConfig, source.userId);
+    return result.json?.displayName || "";
+  } catch {
+    return "";
+  }
+}
+
+async function registerEventUser(lineConfig, event) {
+  const groupId = event.source?.groupId;
+  const userId = event.source?.userId;
+  if (!groupId || !userId) return null;
+  const displayName = await getDisplayName(lineConfig, event.source);
+  if (!displayName) return null;
+  return upsertLineMember(groupId, { userId, displayName });
+}
+
+async function collectGroupMembers(lineConfig, groupId) {
+  const group = getLineGroupState(groupId);
+  const countResult = await line.getGroupMemberCount(lineConfig, groupId);
+  if (countResult.status >= 200 && countResult.status < 300) {
+    group.memberCount = Number(countResult.json?.count) || group.memberCount;
+  }
+
+  const idsResult = await line.getGroupMemberIds(lineConfig, groupId);
+  if (idsResult.status < 200 || idsResult.status >= 300) {
+    group.updatedAt = Date.now();
+    saveLineState();
+    return {
+      ok: false,
+      group,
+      reason: "グループ全員の自動取得はLINE公式アカウントのVerified/Premiumでのみ利用できます。通常アカウントでは、各メンバーが「参加」を押す方式で収集します。",
+    };
+  }
+
+  for (const userId of idsResult.json.memberIds || []) {
+    const profile = await line.getGroupMemberProfile(lineConfig, groupId, userId);
+    const displayName = profile.json?.displayName;
+    if (displayName) upsertLineMember(groupId, { userId, displayName });
+  }
+
+  return { ok: true, group: getLineGroupState(groupId) };
+}
+
+function applyLineMembersToLottery(group) {
+  const nextConfig = lineMembersToConfig(group);
+  if (!nextConfig) return false;
+  state = { config: nextConfig, drawing: null, session: state.session || createSession() };
+  saveStoredConfig(nextConfig);
+  broadcast("config", buildPublicState());
+  return true;
+}
+
+async function replySetupMenu(lineConfig, event, extraText = "") {
+  const group = event.source?.groupId ? getLineGroupState(event.source.groupId) : null;
+  const memberText = group ? `現在の収集メンバー: ${group.members.length}名` : "グループ内で操作してください。";
+  const text = `${extraText ? `${extraText}\n\n` : ""}座席抽選の設定を開始します。\n${memberText}\n\n「メンバー取得」を試し、取得できない場合は各メンバーが「参加」を押してください。`;
+  await line.replyToLine(lineConfig, event.replyToken, line.textMessage(text, line.buildSetupQuickReply()));
+}
+
+async function handleCollectMembers(lineConfig, event) {
+  const groupId = event.source?.groupId;
+  if (!groupId) {
+    await line.replyToLine(lineConfig, event.replyToken, line.textMessage("この操作はLINEグループ内で実行してください。"));
+    return;
+  }
+
+  const group = getLineGroupState(groupId);
+  group.adminUserId = event.source.userId || group.adminUserId;
+  saveLineState();
+  const result = await collectGroupMembers(lineConfig, groupId);
+  const latest = getLineGroupState(groupId);
+  const message = result.ok
+    ? `メンバーを取得しました。現在 ${latest.members.length}名です。`
+    : `${result.reason}\n\n現在 ${latest.members.length}名です。未登録の方は「参加」を押してください。`;
+  await replySetupMenu(lineConfig, event, message);
+}
+
+async function handleJoinLottery(lineConfig, event) {
+  const group = await registerEventUser(lineConfig, event);
+  if (!group) {
+    await line.replyToLine(lineConfig, event.replyToken, line.textMessage("参加登録に失敗しました。グループ内で再度お試しください。"));
+    return;
+  }
+  await line.replyToLine(lineConfig, event.replyToken, line.textMessage(`参加登録しました。現在 ${group.members.length}名です。`, line.buildSetupQuickReply()));
+}
+
+async function handleConfirmLottery(lineConfig, event) {
+  const groupId = event.source?.groupId;
+  const userId = event.source?.userId;
+  if (!groupId || !userId) return;
+  const group = getLineGroupState(groupId);
+  if (group.adminUserId && group.adminUserId !== userId) {
+    await line.replyToLine(lineConfig, event.replyToken, line.textMessage("最初に「抽選設定」を開始した方だけが確定できます。"));
+    return;
+  }
+  group.adminUserId = userId;
+  saveLineState();
+
+  const applied = applyLineMembersToLottery(group);
+  if (!applied) {
+    await line.replyToLine(lineConfig, event.replyToken, line.textMessage("メンバーがまだ登録されていません。「参加」または「メンバー取得」を行ってください。", line.buildSetupQuickReply()));
+    return;
+  }
+
+  const currentLineConfig = loadLineConfig();
+  saveLineConfig({ ...currentLineConfig, groupId, publicUrl: currentLineConfig.publicUrl || publicBaseUrl });
+  await line.replyToLine(lineConfig, event.replyToken, [
+    line.textMessage(`抽選画面を作成しました。\n参加者用URL:\n${getSessionUrl()}\n\n管理者に確認URLを送信します。`, line.buildSetupQuickReply()),
+  ]);
+
+  const adminMessage = line.textMessage(`座席抽選の最終確認はこちらです。\n${getAdminUrl()}\n\n確認後、管理画面またはLINEの「抽選開始」から開始できます。`);
+  const pushed = await line.pushMessages(lineConfig, userId, adminMessage);
+  if (!pushed || pushed.status >= 300) {
+    await line.pushMessages(lineConfig, groupId, line.textMessage(`管理者用URLを個別送信できませんでした。Botを友だち追加後に再度お試しください。\n管理者用URL:\n${getAdminUrl()}`));
+  }
+}
+
+async function handleStartLotteryFromLine(lineConfig, event) {
+  const groupId = event.source?.groupId;
+  const userId = event.source?.userId;
+  if (!groupId || !userId) return;
+  const group = getLineGroupState(groupId);
+  if (group.adminUserId && group.adminUserId !== userId) {
+    await line.replyToLine(lineConfig, event.replyToken, line.textMessage("管理者だけが抽選開始できます。"));
+    return;
+  }
+  if (!state.session) state.session = createSession();
+  state.drawing = createDrawing();
+  broadcast("drawing", state.drawing);
+  refreshCachedResultImage(state.drawing);
+  pushLineNotification(state.drawing).catch((err) => console.warn("LINE notification error:", err.message));
+  await line.replyToLine(lineConfig, event.replyToken, line.textMessage(`抽選を開始しました。\n現在の表示人数: ${getViewCount()}人`));
+}
+
+async function handleLineCommand(lineConfig, event, command) {
+  if (command === "抽選設定" || command === "action=setup") {
+    if (event.source?.groupId && event.source?.userId) {
+      const group = getLineGroupState(event.source.groupId);
+      group.adminUserId = event.source.userId;
+      saveLineState();
+      await registerEventUser(lineConfig, event);
+    }
+    await replySetupMenu(lineConfig, event);
+    return;
+  }
+  if (command === "参加" || command === "action=joinLottery") return handleJoinLottery(lineConfig, event);
+  if (command === "メンバー取得" || command === "action=collectMembers") return handleCollectMembers(lineConfig, event);
+  if (command === "確定" || command === "action=confirmLottery") return handleConfirmLottery(lineConfig, event);
+  if (command === "抽選開始" || command === "action=startLottery") return handleStartLotteryFromLine(lineConfig, event);
+}
+
 async function handleLineWebhook(request, response) {
   const rawBody = await readBody(request);
   const sig = request.headers["x-line-signature"] || "";
@@ -475,10 +736,41 @@ async function handleLineWebhook(request, response) {
     if (event.source && event.source.type === "group" && event.source.groupId) {
       const currentCfg = loadLineConfig();
       if (currentCfg.groupId !== event.source.groupId) {
-        saveLineConfig({ ...currentCfg, groupId: event.source.groupId });
+        saveLineConfig({ ...currentCfg, groupId: event.source.groupId, publicUrl: currentCfg.publicUrl || publicBaseUrl });
         console.log(`LINE group ID auto-detected: ${event.source.groupId}`);
       }
-      break;
+    }
+
+    if (event.type === "join" && event.source?.groupId) {
+      await line.replyToLine(lineConfig, event.replyToken, line.textMessage("招待ありがとうございます。\n「抽選設定」と送信すると座席抽選を開始できます。"));
+      continue;
+    }
+
+    if (event.type === "memberJoined" && event.source?.groupId) {
+      const groupId = event.source.groupId;
+      for (const member of event.joined?.members || []) {
+        if (member.userId) {
+          const profile = await line.getGroupMemberProfile(lineConfig, groupId, member.userId);
+          if (profile.json?.displayName) {
+            upsertLineMember(groupId, { userId: member.userId, displayName: profile.json.displayName });
+          }
+        }
+      }
+      const group = getLineGroupState(groupId);
+      await line.replyToLine(lineConfig, event.replyToken, line.textMessage(`新しいメンバーを記録しました。現在 ${group.members.length}名です。`, line.buildSetupQuickReply()));
+      continue;
+    }
+
+    if (event.type === "message" && event.message?.type === "text") {
+      const command = String(event.message.text || "").trim();
+      await handleLineCommand(lineConfig, event, command);
+      continue;
+    }
+
+    if (event.type === "postback") {
+      const params = parsePostbackData(event.postback?.data);
+      await handleLineCommand(lineConfig, event, `action=${params.action || ""}`);
+      continue;
     }
   }
 }

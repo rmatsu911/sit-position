@@ -5,10 +5,8 @@ let sharp;
 try {
   sharp = require("sharp");
 } catch {
-  // image mode unavailable; falls back to Flex Message
+  // Image mode is optional. The app falls back to Flex Messages.
 }
-
-// ── SVG → PNG ────────────────────────────────────
 
 function esc(str) {
   return String(str || "")
@@ -17,214 +15,247 @@ function esc(str) {
     .replace(/>/g, "&gt;");
 }
 
+function lineRequest(method, apiPath, token, body = null, options = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = body ? Buffer.from(JSON.stringify(body), "utf8") : null;
+    const hostname = options.hostname || "api.line.me";
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      ...(options.headers || {}),
+    };
+
+    if (payload) {
+      headers["Content-Type"] = "application/json; charset=utf-8";
+      headers["Content-Length"] = payload.length;
+    }
+
+    const req = https.request(
+      { hostname, path: apiPath, method, headers },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk) => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          let json = null;
+          try {
+            json = data ? JSON.parse(data) : null;
+          } catch {
+            // Keep the raw body for LINE error messages.
+          }
+          resolve({ status: res.statusCode, body: data, json });
+        });
+      }
+    );
+    req.on("error", reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+function replyToLine(lineConfig, replyToken, messages) {
+  if (!lineConfig.channelAccessToken || !replyToken) return null;
+  return lineRequest("POST", "/v2/bot/message/reply", lineConfig.channelAccessToken, {
+    replyToken,
+    messages: Array.isArray(messages) ? messages : [messages],
+  });
+}
+
+function pushMessages(lineConfig, to, messages) {
+  if (!lineConfig.channelAccessToken || !to) return null;
+  return lineRequest("POST", "/v2/bot/message/push", lineConfig.channelAccessToken, {
+    to,
+    messages: Array.isArray(messages) ? messages : [messages],
+  });
+}
+
+function getGroupMemberCount(lineConfig, groupId) {
+  return lineRequest("GET", `/v2/bot/group/${encodeURIComponent(groupId)}/members/count`, lineConfig.channelAccessToken);
+}
+
+async function getGroupMemberIds(lineConfig, groupId) {
+  const ids = [];
+  let start = "";
+
+  do {
+    const query = start ? `?start=${encodeURIComponent(start)}` : "";
+    const result = await lineRequest(
+      "GET",
+      `/v2/bot/group/${encodeURIComponent(groupId)}/members/ids${query}`,
+      lineConfig.channelAccessToken
+    );
+    if (result.status < 200 || result.status >= 300) return result;
+    ids.push(...(result.json?.memberIds || []));
+    start = result.json?.next || "";
+  } while (start);
+
+  return { status: 200, json: { memberIds: ids }, body: JSON.stringify({ memberIds: ids }) };
+}
+
+function getGroupMemberProfile(lineConfig, groupId, userId) {
+  return lineRequest(
+    "GET",
+    `/v2/bot/group/${encodeURIComponent(groupId)}/member/${encodeURIComponent(userId)}`,
+    lineConfig.channelAccessToken
+  );
+}
+
+function getUserProfile(lineConfig, userId) {
+  return lineRequest("GET", `/v2/bot/profile/${encodeURIComponent(userId)}`, lineConfig.channelAccessToken);
+}
+
+function textMessage(text, quickReplyItems = []) {
+  const message = { type: "text", text };
+  if (quickReplyItems.length) {
+    message.quickReply = { items: quickReplyItems };
+  }
+  return message;
+}
+
+function quickReply(label, data, displayText = label) {
+  return {
+    type: "action",
+    action: {
+      type: "postback",
+      label,
+      data,
+      displayText,
+    },
+  };
+}
+
+function buildSetupQuickReply() {
+  return [
+    quickReply("メンバー取得", "action=collectMembers"),
+    quickReply("参加", "action=joinLottery"),
+    quickReply("確定", "action=confirmLottery"),
+    quickReply("抽選開始", "action=startLottery"),
+  ];
+}
+
 function buildSeatSVG(config, finalSeats) {
   const total = finalSeats.length;
-  const fixedSet = new Set(
-    config.seats.filter((s) => s.fixedMember).map((s) => s.fixedMember)
-  );
-
+  const fixedSet = new Set(config.seats.filter((seat) => seat.fixedMember).map((seat) => seat.fixedMember));
   const cols = total <= 6 ? 2 : total <= 12 ? 3 : 4;
   const rows = Math.ceil(total / cols);
-  const CARD_W = 210;
-  const CARD_H = 78;
-  const GAP_X = 10;
-  const GAP_Y = 10;
-  const PAD_X = 20;
-  const HEADER_H = 56;
-  const PAD_TOP = 14;
-  const PAD_BOT = 16;
-
-  const bodyW = cols * CARD_W + (cols - 1) * GAP_X;
-  const W = bodyW + PAD_X * 2;
-  const H = HEADER_H + PAD_TOP + rows * (CARD_H + GAP_Y) - GAP_Y + PAD_BOT;
-
+  const cardW = 218;
+  const cardH = 82;
+  const gap = 10;
+  const pad = 22;
+  const headerH = 62;
+  const bodyW = cols * cardW + (cols - 1) * gap;
+  const width = bodyW + pad * 2;
+  const height = headerH + pad + rows * cardH + Math.max(0, rows - 1) * gap + pad;
   const now = new Date();
-  const ts =
-    `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")}` +
-    ` ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  const ts = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 
-  let cards = "";
-  finalSeats.forEach((name, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const x = PAD_X + col * (CARD_W + GAP_X);
-    const y = HEADER_H + PAD_TOP + row * (CARD_H + GAP_Y);
-    const seat = config.seats[i] || { label: `席 ${i + 1}` };
+  const cards = finalSeats.map((name, index) => {
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    const x = pad + col * (cardW + gap);
+    const y = headerH + pad + row * (cardH + gap);
+    const seat = config.seats[index] || { label: `席 ${index + 1}` };
     const isFixed = !!(name && fixedSet.has(name));
     const isEmpty = !name;
     const display = name || "空席";
-    const numStr = String(i + 1).padStart(2, "0");
-    const nameFontSize = display.length > 8 ? 13 : display.length > 5 ? 16 : 20;
+    const chipText = isFixed ? "固定" : isEmpty ? "空席" : "抽選";
+    const chipFill = isFixed ? "#245c4f" : isEmpty ? "#8a8176" : "#b56b2a";
+    const nameFill = isEmpty ? "#9b948c" : "#17212b";
+    const nameFont = display.length > 8 ? 14 : display.length > 5 ? 17 : 21;
 
-    const bg = isEmpty ? "#181b1e" : isFixed ? "#182820" : "#1d2024";
-    const stroke = isEmpty
-      ? "rgba(255,255,255,0.07)"
-      : isFixed
-      ? "rgba(53,208,167,0.35)"
-      : "rgba(255,255,255,0.12)";
-    const nameFill = isEmpty ? "#4a4845" : "#f0ece4";
-    const chipBg = isFixed
-      ? "rgba(53,208,167,0.18)"
-      : isEmpty
-      ? "rgba(255,255,255,0.05)"
-      : "rgba(255,255,255,0.07)";
-    const chipFill = isFixed ? "#35d0a7" : "#8a8480";
-    const chipTx = isFixed ? "固定" : isEmpty ? "空席" : "抽選";
-
-    cards += `
-<rect x="${x}" y="${y}" width="${CARD_W}" height="${CARD_H}" rx="7" fill="${bg}" stroke="${stroke}" stroke-width="1"/>
-<rect x="${x + 8}" y="${y + 8}" width="22" height="22" rx="4" fill="rgba(255,255,255,0.07)"/>
-<text x="${x + 19}" y="${y + 22.5}" text-anchor="middle" fill="#8a8480" font-size="10" font-weight="700">${numStr}</text>
-<text x="${x + 36}" y="${y + 22.5}" fill="#8a8480" font-size="11">${esc(seat.label)}</text>
-<text x="${x + 12}" y="${y + 59}" fill="${nameFill}" font-size="${nameFontSize}" font-weight="800">${esc(display)}</text>
-<rect x="${x + CARD_W - 47}" y="${y + 8}" width="39" height="17" rx="8" fill="${chipBg}"/>
-<text x="${x + CARD_W - 27.5}" y="${y + 20.5}" text-anchor="middle" fill="${chipFill}" font-size="10" font-weight="700">${chipTx}</text>`;
-  });
+    return `
+<rect x="${x}" y="${y}" width="${cardW}" height="${cardH}" rx="8" fill="#fffdf8" stroke="#e3ddd2"/>
+<rect x="${x + 10}" y="${y + 10}" width="28" height="28" rx="7" fill="#efe8dc"/>
+<text x="${x + 24}" y="${y + 29}" text-anchor="middle" fill="#64594b" font-size="11" font-weight="800">${String(index + 1).padStart(2, "0")}</text>
+<text x="${x + 46}" y="${y + 29}" fill="#697586" font-size="12" font-weight="700">${esc(seat.label)}</text>
+<text x="${x + 12}" y="${y + 64}" fill="${nameFill}" font-size="${nameFont}" font-weight="850">${esc(display)}</text>
+<rect x="${x + cardW - 52}" y="${y + 10}" width="40" height="20" rx="10" fill="${chipFill}" opacity="0.13"/>
+<text x="${x + cardW - 32}" y="${y + 24}" text-anchor="middle" fill="${chipFill}" font-size="11" font-weight="800">${chipText}</text>`;
+  }).join("");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
 <style>text{font-family:"Yu Gothic","Meiryo","Hiragino Kaku Gothic ProN","Noto Sans CJK JP",sans-serif}</style>
-<rect width="${W}" height="${H}" fill="#111315"/>
-<text x="${PAD_X}" y="36" fill="#f0ece4" font-size="19" font-weight="900">宴会座席抽選　結果</text>
-<text x="${W - PAD_X}" y="36" text-anchor="end" fill="#8a8480" font-size="12">${ts}</text>
-<line x1="${PAD_X}" y1="49" x2="${W - PAD_X}" y2="49" stroke="rgba(255,255,255,0.1)"/>
+<rect width="${width}" height="${height}" fill="#f5f2ec"/>
+<text x="${pad}" y="39" fill="#17212b" font-size="23" font-weight="900">座席抽選 結果</text>
+<text x="${width - pad}" y="39" text-anchor="end" fill="#697586" font-size="12">${ts}</text>
+<line x1="${pad}" y1="55" x2="${width - pad}" y2="55" stroke="#e3ddd2"/>
 ${cards}
 </svg>`;
 }
 
 async function generateSeatPng(config, finalSeats) {
-  if (!sharp) throw new Error("sharp がインストールされていません。npm install sharp を実行してください。");
-  const svg = buildSeatSVG(config, finalSeats);
-  return sharp(Buffer.from(svg, "utf8")).png({ compressionLevel: 7 }).toBuffer();
+  if (!sharp) throw new Error("sharp is not installed.");
+  return sharp(Buffer.from(buildSeatSVG(config, finalSeats), "utf8")).png({ compressionLevel: 7 }).toBuffer();
 }
 
-// ── Flex Message ─────────────────────────────────
-
 function buildFlexMessage(config, finalSeats) {
-  const fixedSet = new Set(
-    config.seats.filter((s) => s.fixedMember).map((s) => s.fixedMember)
-  );
-  const cols = finalSeats.length <= 6 ? 2 : 3;
-
-  const seatBoxes = finalSeats.map((name, i) => {
-    const seat = config.seats[i] || { label: `席 ${i + 1}` };
-    const isFixed = !!(name && fixedSet.has(name));
-    const isEmpty = !name;
-    return {
-      type: "box",
-      layout: "vertical",
-      flex: 1,
-      paddingAll: "9px",
-      backgroundColor: isFixed ? "#182820" : "#1d2024",
-      cornerRadius: "7px",
-      spacing: "xs",
-      contents: [
-        {
-          type: "box",
-          layout: "horizontal",
-          contents: [
-            { type: "text", text: String(i + 1).padStart(2, "0"), size: "xxs", color: "#8a8480", weight: "bold", flex: 0 },
-            { type: "text", text: seat.label, size: "xxs", color: "#8a8480", margin: "sm", flex: 1 },
-            { type: "text", text: isFixed ? "固定" : isEmpty ? "空席" : "抽選", size: "xxs", color: isFixed ? "#35d0a7" : "#8a8480", align: "end", flex: 0 },
-          ],
-        },
-        { type: "text", text: name || "空席", size: "sm", color: isEmpty ? "#555555" : "#f0ece4", weight: "bold", wrap: true },
-      ],
-    };
-  });
-
-  const rowContents = [];
-  for (let i = 0; i < seatBoxes.length; i += cols) {
-    const row = seatBoxes.slice(i, i + cols);
-    while (row.length < cols) {
-      row.push({ type: "box", layout: "vertical", flex: 1, contents: [] });
-    }
-    rowContents.push({ type: "box", layout: "horizontal", spacing: "sm", contents: row });
-  }
-
-  const now = new Date();
-  const ts =
-    `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")}` +
-    ` ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  const rows = finalSeats.map((name, index) => ({
+    type: "box",
+    layout: "horizontal",
+    paddingAll: "8px",
+    backgroundColor: index % 2 === 0 ? "#fffdf8" : "#f7f2ea",
+    contents: [
+      { type: "text", text: String(index + 1).padStart(2, "0"), size: "xs", color: "#697586", weight: "bold", flex: 0 },
+      { type: "text", text: config.seats[index]?.label || `席 ${index + 1}`, size: "xs", color: "#697586", margin: "md", flex: 2 },
+      { type: "text", text: name || "空席", size: "sm", color: name ? "#17212b" : "#9b948c", weight: "bold", align: "end", flex: 3, wrap: true },
+    ],
+  }));
 
   return {
     type: "flex",
-    altText: `🎲 座席抽選結果 (${finalSeats.filter(Boolean).length}名)`,
+    altText: `座席抽選 結果 (${finalSeats.filter(Boolean).length}名)`,
     contents: {
       type: "bubble",
       size: "giga",
       header: {
         type: "box",
-        layout: "horizontal",
-        backgroundColor: "#111315",
-        paddingAll: "14px",
+        layout: "vertical",
+        backgroundColor: "#245c4f",
+        paddingAll: "16px",
         contents: [
-          { type: "text", text: "🎲 座席抽選　結果", weight: "bold", size: "lg", color: "#f0ece4", flex: 1 },
-          { type: "text", text: ts, size: "xxs", color: "#8a8480", align: "end", gravity: "center" },
+          { type: "text", text: "座席抽選 結果", weight: "bold", size: "lg", color: "#ffffff" },
         ],
       },
       body: {
         type: "box",
         layout: "vertical",
-        spacing: "sm",
-        paddingAll: "12px",
-        backgroundColor: "#111315",
-        contents: rowContents,
+        paddingAll: "0px",
+        contents: rows,
       },
     },
   };
 }
 
-// ── LINE API ──────────────────────────────────────
-
-function linePost(apiPath, body, token) {
-  return new Promise((resolve, reject) => {
-    const payload = Buffer.from(JSON.stringify(body), "utf8");
-    const req = https.request(
-      {
-        hostname: "api.line.me",
-        path: apiPath,
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json; charset=utf-8",
-          "Content-Length": payload.length,
-        },
-      },
-      (res) => {
-        let data = "";
-        res.on("data", (chunk) => { data += chunk; });
-        res.on("end", () => resolve({ status: res.statusCode, body: data }));
-      }
-    );
-    req.on("error", reject);
-    req.write(payload);
-    req.end();
-  });
-}
-
 async function pushToLine(lineConfig, config, finalSeats, imageUrl) {
   const { channelAccessToken, groupId } = lineConfig;
   if (!channelAccessToken || !groupId) return null;
-
   const message = imageUrl
     ? { type: "image", originalContentUrl: imageUrl, previewImageUrl: imageUrl }
     : buildFlexMessage(config, finalSeats);
-
-  return linePost("/v2/bot/message/push", { to: groupId, messages: [message] }, channelAccessToken);
+  return pushMessages(lineConfig, groupId, message);
 }
 
 function verifySignature(rawBody, signature, secret) {
-  if (!secret || !signature) return !secret; // skip if no secret configured
+  if (!secret || !signature) return !secret;
   const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("base64");
   return expected === signature;
 }
 
 module.exports = {
+  buildSetupQuickReply,
   buildSeatSVG,
   generateSeatPng,
   buildFlexMessage,
-  pushToLine,
-  verifySignature,
+  getGroupMemberCount,
+  getGroupMemberIds,
+  getGroupMemberProfile,
+  getUserProfile,
   isImageModeAvailable: () => !!sharp,
+  pushMessages,
+  pushToLine,
+  quickReply,
+  replyToLine,
+  textMessage,
+  verifySignature,
 };
