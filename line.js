@@ -133,6 +133,85 @@ function buildSetupQuickReply() {
   ];
 }
 
+function postbackButton(label, data, style = "secondary") {
+  return {
+    type: "button",
+    style,
+    height: "sm",
+    action: {
+      type: "postback",
+      label,
+      data,
+      displayText: label,
+    },
+  };
+}
+
+function uriButton(label, uri) {
+  return {
+    type: "button",
+    style: "link",
+    height: "sm",
+    action: {
+      type: "uri",
+      label,
+      uri,
+    },
+  };
+}
+
+function buildSetupPanel({ memberCount = 0, totalCount = 0, sessionUrl = "", adminUrl = "", note = "" } = {}) {
+  const summary = totalCount
+    ? `登録 ${memberCount}名 / グループ ${totalCount}名`
+    : `登録 ${memberCount}名`;
+  const actions = [
+    postbackButton("参加する", "action=joinLottery", "primary"),
+    postbackButton("メンバー取得", "action=collectMembers"),
+    postbackButton("確定してURL作成", "action=confirmLottery"),
+    postbackButton("抽選開始", "action=startLottery"),
+  ];
+
+  if (sessionUrl) actions.splice(3, 0, uriButton("抽選画面を開く", sessionUrl));
+  if (adminUrl) actions.push(uriButton("管理画面を開く", adminUrl));
+
+  return {
+    type: "flex",
+    altText: "座席抽選 操作パネル",
+    contents: {
+      type: "bubble",
+      size: "mega",
+      header: {
+        type: "box",
+        layout: "vertical",
+        backgroundColor: "#245c4f",
+        paddingAll: "16px",
+        contents: [
+          { type: "text", text: "座席抽選", color: "#ffffff", weight: "bold", size: "xl" },
+          { type: "text", text: "操作パネル", color: "#d8efe7", size: "sm", margin: "xs" },
+        ],
+      },
+      body: {
+        type: "box",
+        layout: "vertical",
+        spacing: "md",
+        paddingAll: "16px",
+        backgroundColor: "#fffdf8",
+        contents: [
+          { type: "text", text: summary, color: "#17212b", weight: "bold", size: "md" },
+          { type: "text", text: note || "参加者は「参加する」を押してください。管理者は人数確認後に確定します。", color: "#697586", size: "sm", wrap: true },
+          {
+            type: "box",
+            layout: "vertical",
+            spacing: "sm",
+            margin: "md",
+            contents: actions,
+          },
+        ],
+      },
+    },
+  };
+}
+
 function buildSeatSVG(config, finalSeats) {
   const total = finalSeats.length;
   const fixedSet = new Set(config.seats.filter((seat) => seat.fixedMember).map((seat) => seat.fixedMember));
@@ -245,6 +324,7 @@ function verifySignature(rawBody, signature, secret) {
 module.exports = {
   buildSetupQuickReply,
   buildSeatSVG,
+  buildSetupPanel,
   generateSeatPng,
   buildFlexMessage,
   getGroupMemberCount,

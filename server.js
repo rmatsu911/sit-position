@@ -614,9 +614,14 @@ function applyLineMembersToLottery(group) {
 
 async function replySetupMenu(lineConfig, event, extraText = "") {
   const group = event.source?.groupId ? getLineGroupState(event.source.groupId) : null;
-  const memberText = group ? `現在の収集メンバー: ${group.members.length}名` : "グループ内で操作してください。";
-  const text = `${extraText ? `${extraText}\n\n` : ""}座席抽選の設定を開始します。\n${memberText}\n\n「メンバー取得」を試し、取得できない場合は各メンバーが「参加」を押してください。`;
-  await line.replyToLine(lineConfig, event.replyToken, line.textMessage(text, line.buildSetupQuickReply()));
+  const panel = line.buildSetupPanel({
+    memberCount: group ? group.members.length : 0,
+    totalCount: group ? group.memberCount : 0,
+    sessionUrl: getSessionUrl(),
+    adminUrl: getAdminUrl(),
+    note: extraText || "参加者は「参加する」を押してください。管理者は人数確認後に確定します。",
+  });
+  await line.replyToLine(lineConfig, event.replyToken, panel);
 }
 
 async function handleCollectMembers(lineConfig, event) {
@@ -643,7 +648,13 @@ async function handleJoinLottery(lineConfig, event) {
     await line.replyToLine(lineConfig, event.replyToken, line.textMessage("参加登録に失敗しました。グループ内で再度お試しください。"));
     return;
   }
-  await line.replyToLine(lineConfig, event.replyToken, line.textMessage(`参加登録しました。現在 ${group.members.length}名です。`, line.buildSetupQuickReply()));
+  await line.replyToLine(lineConfig, event.replyToken, line.buildSetupPanel({
+    memberCount: group.members.length,
+    totalCount: group.memberCount,
+    sessionUrl: getSessionUrl(),
+    adminUrl: getAdminUrl(),
+    note: `参加登録しました。現在 ${group.members.length}名です。`,
+  }));
 }
 
 async function handleConfirmLottery(lineConfig, event) {
@@ -660,14 +671,24 @@ async function handleConfirmLottery(lineConfig, event) {
 
   const applied = applyLineMembersToLottery(group);
   if (!applied) {
-    await line.replyToLine(lineConfig, event.replyToken, line.textMessage("メンバーがまだ登録されていません。「参加」または「メンバー取得」を行ってください。", line.buildSetupQuickReply()));
+    await line.replyToLine(lineConfig, event.replyToken, line.buildSetupPanel({
+      memberCount: group.members.length,
+      totalCount: group.memberCount,
+      note: "メンバーがまだ登録されていません。「参加する」または「メンバー取得」を行ってください。",
+    }));
     return;
   }
 
   const currentLineConfig = loadLineConfig();
   saveLineConfig({ ...currentLineConfig, groupId, publicUrl: currentLineConfig.publicUrl || publicBaseUrl });
   await line.replyToLine(lineConfig, event.replyToken, [
-    line.textMessage(`抽選画面を作成しました。\n参加者用URL:\n${getSessionUrl()}\n\n管理者に確認URLを送信します。`, line.buildSetupQuickReply()),
+    line.buildSetupPanel({
+      memberCount: group.members.length,
+      totalCount: group.memberCount,
+      sessionUrl: getSessionUrl(),
+      adminUrl: getAdminUrl(),
+      note: "抽選画面を作成しました。参加者は抽選画面を開いて待機してください。",
+    }),
   ]);
 
   const adminMessage = line.textMessage(`座席抽選の最終確認はこちらです。\n${getAdminUrl()}\n\n確認後、管理画面またはLINEの「抽選開始」から開始できます。`);
@@ -742,7 +763,12 @@ async function handleLineWebhook(request, response) {
     }
 
     if (event.type === "join" && event.source?.groupId) {
-      await line.replyToLine(lineConfig, event.replyToken, line.textMessage("招待ありがとうございます。\n「抽選設定」と送信すると座席抽選を開始できます。"));
+      const group = getLineGroupState(event.source.groupId);
+      await line.replyToLine(lineConfig, event.replyToken, line.buildSetupPanel({
+        memberCount: group.members.length,
+        totalCount: group.memberCount,
+        note: "招待ありがとうございます。座席抽選を始めるには、まず参加者に「参加する」を押してもらってください。",
+      }));
       continue;
     }
 
@@ -757,7 +783,13 @@ async function handleLineWebhook(request, response) {
         }
       }
       const group = getLineGroupState(groupId);
-      await line.replyToLine(lineConfig, event.replyToken, line.textMessage(`新しいメンバーを記録しました。現在 ${group.members.length}名です。`, line.buildSetupQuickReply()));
+      await line.replyToLine(lineConfig, event.replyToken, line.buildSetupPanel({
+        memberCount: group.members.length,
+        totalCount: group.memberCount,
+        sessionUrl: getSessionUrl(),
+        adminUrl: getAdminUrl(),
+        note: `新しいメンバーを記録しました。現在 ${group.members.length}名です。`,
+      }));
       continue;
     }
 
