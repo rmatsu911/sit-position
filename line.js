@@ -320,9 +320,11 @@ async function pushToLine(lineConfig, config, finalSeats, imageUrl) {
 }
 
 function verifySignature(rawBody, signature, secret) {
-  if (!secret || !signature) return !secret;
+  if (!secret || !signature) return false;
   const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("base64");
-  return expected === signature;
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  const actualBuffer = Buffer.from(String(signature), "utf8");
+  return expectedBuffer.length === actualBuffer.length && crypto.timingSafeEqual(expectedBuffer, actualBuffer);
 }
 
 module.exports = {
