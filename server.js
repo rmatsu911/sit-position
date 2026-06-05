@@ -13,6 +13,7 @@ const lineConfigFile = path.join(rootDir, "line-config.json");
 const lineStateFile = path.join(rootDir, "line-state.json");
 const drawingDurationMs = 4200;
 const proxyAdminSecret = process.env.XSERVER_PROXY_SECRET || "sit-position-proxy-admin-v1";
+const lineConfigProxySecret = process.env.LINE_CONFIG_PROXY_SECRET || proxyAdminSecret;
 const publicBaseUrl = (process.env.PUBLIC_BASE_URL || process.env.LINE_PUBLIC_URL || "https://xxxtrw77777.xsrv.jp").replace(/\/$/, "");
 
 const defaultConfig = {
@@ -269,6 +270,29 @@ function saveLineConfig(config) {
   };
   fs.writeFileSync(lineConfigFile, `${JSON.stringify(safe, null, 2)}\n`, "utf8");
   return safe;
+}
+
+function syncLineConfigFromProxyHeaders(request) {
+  if (request.headers["x-line-config-proxy"] !== lineConfigProxySecret) return null;
+
+  const channelAccessToken = String(request.headers["x-line-channel-access-token"] || "").trim();
+  const channelSecret = String(request.headers["x-line-channel-secret"] || "").trim();
+  if (!channelAccessToken || !channelSecret) return null;
+
+  const current = loadLineConfig();
+  const next = {
+    channelAccessToken,
+    channelSecret,
+    groupId: String(request.headers["x-line-group-id"] || current.groupId || "").trim(),
+    publicUrl: String(request.headers["x-line-public-url"] || current.publicUrl || publicBaseUrl).trim().replace(/\/$/, ""),
+  };
+
+  const changed = next.channelAccessToken !== current.channelAccessToken ||
+    next.channelSecret !== current.channelSecret ||
+    next.groupId !== current.groupId ||
+    next.publicUrl !== current.publicUrl;
+
+  return changed ? saveLineConfig(next) : current;
 }
 
 async function pushLineNotification(drawing) {
@@ -940,6 +964,8 @@ async function handleLineWebhook(request, response) {
 }
 
 const server = http.createServer((request, response) => {
+  syncLineConfigFromProxyHeaders(request);
+
   if (request.method === "POST" && request.url === "/webhook") {
     handleLineWebhook(request, response).catch((err) => {
       console.warn("Webhook error:", err.message);

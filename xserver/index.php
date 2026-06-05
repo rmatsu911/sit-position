@@ -4,6 +4,19 @@ $proxyAdminSecret = 'sit-position-proxy-admin-v1';
 $adminCookieName = 'sit_position_admin';
 $adminCookieValue = hash_hmac('sha256', 'line-admin', $proxyAdminSecret);
 $requestUri = $_SERVER['REQUEST_URI'] ?? '/';
+$lineChannelAccessToken = '';
+$lineChannelSecret = '';
+$lineGroupId = '';
+$linePublicUrl = 'https://xxxtrw77777.xsrv.jp';
+$lineSecretsFile = __DIR__ . '/line-secrets.php';
+
+if (is_file($lineSecretsFile)) {
+  require $lineSecretsFile;
+}
+
+function clean_header_value($value) {
+  return str_replace(["\r", "\n"], '', (string) $value);
+}
 
 function base64url_decode_string($value) {
   $padded = strtr($value, '-_', '+/');
@@ -68,7 +81,18 @@ $headers = [];
 if (function_exists('getallheaders')) {
   foreach (getallheaders() as $name => $value) {
     $lower = strtolower($name);
-    if (!in_array($lower, ['host', 'connection', 'content-length', 'x-host-token', 'x-xserver-admin'], true)) {
+    if (!in_array($lower, [
+      'host',
+      'connection',
+      'content-length',
+      'x-host-token',
+      'x-xserver-admin',
+      'x-line-config-proxy',
+      'x-line-channel-access-token',
+      'x-line-channel-secret',
+      'x-line-public-url',
+      'x-line-group-id',
+    ], true)) {
       $headers[] = $name . ': ' . $value;
     }
   }
@@ -84,6 +108,16 @@ if (!empty($_SERVER['REMOTE_ADDR'])) {
 
 if ($isAdmin) {
   $headers[] = 'X-Xserver-Admin: ' . $proxyAdminSecret;
+}
+
+if (!empty($lineChannelAccessToken) && !empty($lineChannelSecret)) {
+  $headers[] = 'X-Line-Config-Proxy: ' . clean_header_value($proxyAdminSecret);
+  $headers[] = 'X-Line-Channel-Access-Token: ' . clean_header_value($lineChannelAccessToken);
+  $headers[] = 'X-Line-Channel-Secret: ' . clean_header_value($lineChannelSecret);
+  $headers[] = 'X-Line-Public-Url: ' . clean_header_value($linePublicUrl);
+  if (!empty($lineGroupId)) {
+    $headers[] = 'X-Line-Group-Id: ' . clean_header_value($lineGroupId);
+  }
 }
 
 if (isset($_SERVER['HTTP_COOKIE'])) {
