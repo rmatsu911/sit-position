@@ -18,7 +18,7 @@ const publicBaseUrl = (process.env.PUBLIC_BASE_URL || process.env.LINE_PUBLIC_UR
 
 const defaultConfig = {
   seatCount: 12,
-  members: ["田中太郎", "鈴木花子", "佐藤次郎", "高橋美咲"],
+  members: [],
 };
 
 const mimeTypes = {
