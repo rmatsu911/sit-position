@@ -7,7 +7,8 @@ const pollMs = 1500;
 
 const defaultConfig = {
   seatCount: 12,
-  members: ["田中太郎", "鈴木花子", "佐藤次郎", "高橋美咲"],
+  members: [],
+  payments: {},
 };
 
 let activeAnimation = null;
@@ -59,6 +60,9 @@ function sanitizeConfig(config) {
     : [];
   const normalizedSeatCount = Number.isInteger(seatCount) && seatCount > 0 ? seatCount : defaultConfig.seatCount;
   const sourceSeats = Array.isArray(config?.seats) ? config.seats : [];
+  const sourcePayments = config?.payments && typeof config.payments === "object" && !Array.isArray(config.payments)
+    ? config.payments
+    : {};
   const usedFixedMembers = new Set();
   const seats = createDefaultSeats(normalizedSeatCount).map((seat, index) => {
     const sourceSeat = sourceSeats[index] || {};
@@ -68,8 +72,12 @@ function sanitizeConfig(config) {
     if (canUseFixedMember) usedFixedMembers.add(fixedMember);
     return { label, fixedMember: canUseFixedMember ? fixedMember : "" };
   });
+  const payments = {};
+  members.forEach((member) => {
+    payments[member] = sourcePayments[member] === true;
+  });
 
-  return { seatCount: normalizedSeatCount, members, seats };
+  return { seatCount: normalizedSeatCount, members, seats, payments };
 }
 
 function getFixedMembers(config) {
@@ -301,6 +309,8 @@ async function bindAdminPage() {
   const seatCountInput = document.getElementById("seatCount");
   const memberNameInput = document.getElementById("memberName");
   const memberList = document.getElementById("memberList");
+  const paymentList = document.getElementById("paymentList");
+  const paymentSummary = document.getElementById("paymentSummary");
   const adminSeatGrid = document.getElementById("adminSeatGrid");
   const addMemberButton = document.getElementById("addMemberButton");
   const saveButton = document.getElementById("saveButton");
@@ -316,9 +326,10 @@ async function bindAdminPage() {
   let currentMembers = [...sanitizeConfig(initialState.config).members];
   let seatCount = sanitizeConfig(initialState.config).seatCount;
   let currentSeats = [...sanitizeConfig(initialState.config).seats];
+  let currentPayments = { ...sanitizeConfig(initialState.config).payments };
 
   function buildConfig() {
-    return sanitizeConfig({ seatCount, members: currentMembers, seats: currentSeats });
+    return sanitizeConfig({ seatCount, members: currentMembers, seats: currentSeats, payments: currentPayments });
   }
 
   function updatePublicUrl(session) {
@@ -329,6 +340,76 @@ async function bindAdminPage() {
 
   function resizeSeats(nextSeatCount) {
     currentSeats = createDefaultSeats(nextSeatCount).map((seat, index) => currentSeats[index] || seat);
+  }
+
+  function syncPaymentsWithMembers() {
+    currentPayments = Object.fromEntries(currentMembers.map((member) => [member, currentPayments[member] === true]));
+  }
+
+  async function savePaymentStatus(message = "集金状況を保存しました。") {
+    syncPaymentsWithMembers();
+    const state = await requestJson("/api/payments", {
+      method: "POST",
+      body: JSON.stringify({ payments: currentPayments }),
+    });
+    const config = sanitizeConfig(state.config);
+    currentPayments = { ...config.payments };
+    renderPayments();
+    updateAdminStatus(message);
+    return state;
+  }
+
+  function renderPayments() {
+    if (!paymentList) return;
+    syncPaymentsWithMembers();
+    paymentList.innerHTML = "";
+
+    const paidCount = currentMembers.filter((member) => currentPayments[member]).length;
+    if (paymentSummary) {
+      paymentSummary.textContent = currentMembers.length
+        ? `受取済み ${paidCount} / ${currentMembers.length}名`
+        : "メンバー登録後に集金チェックを使えます。";
+    }
+
+    if (!currentMembers.length) {
+      const empty = document.createElement("li");
+      empty.className = "empty-list";
+      empty.textContent = "集金対象のメンバーがいません。";
+      paymentList.appendChild(empty);
+      return;
+    }
+
+    currentMembers.forEach((name) => {
+      const item = document.createElement("li");
+      item.className = currentPayments[name] ? "is-paid" : "";
+
+      const label = document.createElement("label");
+      label.className = "payment-check";
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = currentPayments[name] === true;
+      checkbox.addEventListener("change", () => {
+        currentPayments[name] = checkbox.checked;
+        item.className = checkbox.checked ? "is-paid" : "";
+        renderPayments();
+        savePaymentStatus(`${name}さんの集金状況を保存しました。`).catch((error) => {
+          updateAdminStatus(`集金状況の保存に失敗しました: ${error.message}`);
+        });
+      });
+
+      const mark = document.createElement("span");
+      mark.className = "payment-mark";
+      mark.textContent = currentPayments[name] ? "受取済" : "未受取";
+
+      const nameText = document.createElement("span");
+      nameText.className = "payment-name";
+      nameText.textContent = name;
+
+      label.append(checkbox, mark, nameText);
+      item.appendChild(label);
+      paymentList.appendChild(item);
+    });
   }
 
   function renderMembers() {
@@ -356,6 +437,7 @@ async function bindAdminPage() {
           fixedMember: seat.fixedMember === removedName ? "" : seat.fixedMember,
         }));
         renderMembers();
+        renderPayments();
         renderSeatEditor();
       });
       item.append(label, removeButton);
@@ -435,6 +517,7 @@ async function bindAdminPage() {
     currentMembers.push(name);
     memberNameInput.value = "";
     renderMembers();
+    renderPayments();
     renderSeatEditor();
     memberNameInput.focus();
   }
@@ -444,6 +527,8 @@ async function bindAdminPage() {
     seatCount = Number.isInteger(parsedSeatCount) && parsedSeatCount > 0 ? parsedSeatCount : seatCount;
     resizeSeats(seatCount);
     const state = await requestJson("/api/config", { method: "POST", body: JSON.stringify(buildConfig()) });
+    currentPayments = { ...sanitizeConfig(state.config).payments };
+    renderPayments();
     updatePublicUrl(state.session);
     updateAdminStatus(message);
     return state;
@@ -486,8 +571,10 @@ async function bindAdminPage() {
       currentMembers = [...config.members];
       seatCount = config.seatCount;
       currentSeats = [...config.seats];
+      currentPayments = { ...config.payments };
       seatCountInput.value = seatCount;
       renderMembers();
+      renderPayments();
       renderSeatEditor();
       updatePublicUrl(state.session);
       updateAdminStatus("抽選設定をリセットしました。");
@@ -498,6 +585,7 @@ async function bindAdminPage() {
 
   seatCountInput.value = seatCount;
   renderMembers();
+  renderPayments();
   renderSeatEditor();
 
   addMemberButton.addEventListener("click", addMember);
@@ -521,8 +609,10 @@ async function bindAdminPage() {
   clearButton.addEventListener("click", () => {
     if (!confirm("全てのメンバーを削除しますか？")) return;
     currentMembers = [];
+    currentPayments = {};
     currentSeats = currentSeats.map((seat) => ({ ...seat, fixedMember: "" }));
     renderMembers();
+    renderPayments();
     renderSeatEditor();
   });
   copyPublicUrlButton.addEventListener("click", async () => {

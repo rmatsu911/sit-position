@@ -99,11 +99,19 @@ function sanitizeConfig(config) {
       fixedMember: canUseFixedMember ? fixedMember : "",
     };
   });
+  const sourcePayments = config && typeof config.payments === "object" && !Array.isArray(config.payments)
+    ? config.payments
+    : {};
+  const payments = {};
+  members.forEach((member) => {
+    payments[member] = sourcePayments[member] === true;
+  });
 
   return {
     seatCount: normalizedSeatCount,
     members,
     seats,
+    payments,
   };
 }
 
@@ -237,9 +245,25 @@ function getViewCount(sessionId = state.session && state.session.id) {
   return count;
 }
 
-function buildPublicState() {
+function redactConfig(config) {
+  if (!config) return config;
+  const { payments, ...publicConfig } = config;
+  return publicConfig;
+}
+
+function redactDrawing(drawing) {
+  if (!drawing) return drawing;
   return {
-    ...state,
+    ...drawing,
+    config: redactConfig(drawing.config),
+  };
+}
+
+function buildClientState(includePrivate = false) {
+  return {
+    config: includePrivate ? state.config : redactConfig(state.config),
+    drawing: includePrivate ? state.drawing : redactDrawing(state.drawing),
+    session: state.session,
     viewCount: getViewCount(),
   };
 }
@@ -436,7 +460,7 @@ function serveEvents(request, response) {
   });
   response.write("\n");
   clients.push(response);
-  broadcastTo(response, "state", state);
+  broadcastTo(response, "state", buildClientState(false));
 
   const heartbeat = setInterval(() => {
     if (!response.destroyed) response.write(": ping\n\n");
@@ -492,7 +516,7 @@ async function handleApi(request, response) {
 
   if (request.method === "GET" && url.pathname === "/api/state") {
     registerViewer(request, url);
-    sendJson(response, 200, buildPublicState());
+    sendJson(response, 200, buildClientState(isHostRequest(request)));
     return;
   }
 
@@ -511,8 +535,33 @@ async function handleApi(request, response) {
       const nextConfig = sanitizeConfig(JSON.parse(await readBody(request)));
       state = { config: nextConfig, drawing: null, session: state.session };
       saveStoredConfig(nextConfig);
-      broadcast("config", state);
-      sendJson(response, 200, buildPublicState());
+      broadcast("config", buildClientState(false));
+      sendJson(response, 200, buildClientState(true));
+    } catch (error) {
+      sendJson(response, 400, { error: error.message });
+    }
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/payments") {
+    if (!isHostRequest(request)) {
+      sendJson(response, 403, { error: "Host only" });
+      return;
+    }
+
+    try {
+      const incoming = JSON.parse(await readBody(request));
+      const nextConfig = sanitizeConfig({
+        ...state.config,
+        payments: incoming.payments || {},
+      });
+      state = {
+        ...state,
+        config: nextConfig,
+        drawing: state.drawing ? { ...state.drawing, config: nextConfig } : null,
+      };
+      saveStoredConfig(nextConfig);
+      sendJson(response, 200, buildClientState(true));
     } catch (error) {
       sendJson(response, 400, { error: error.message });
     }
@@ -526,8 +575,8 @@ async function handleApi(request, response) {
     }
 
     state = { ...state, drawing: null, session: createSession() };
-    broadcast("session", state);
-    sendJson(response, 200, buildPublicState());
+    broadcast("session", buildClientState(false));
+    sendJson(response, 200, buildClientState(true));
     return;
   }
 
@@ -539,8 +588,8 @@ async function handleApi(request, response) {
 
     if (!state.session) state.session = createSession();
     state.drawing = createDrawing();
-    broadcast("drawing", state.drawing);
-    sendJson(response, 200, buildPublicState());
+    broadcast("drawing", redactDrawing(state.drawing));
+    sendJson(response, 200, buildClientState(true));
     refreshCachedResultImage(state.drawing);
     pushLineNotification(state.drawing).catch((err) =>
       console.warn("LINE notification error:", err.message)
@@ -557,8 +606,8 @@ async function handleApi(request, response) {
     state = { ...state, drawing: null, session: null };
     cachedResultPng = null;
     viewers.clear();
-    broadcast("reset", state);
-    sendJson(response, 200, buildPublicState());
+    broadcast("reset", buildClientState(false));
+    sendJson(response, 200, buildClientState(true));
     return;
   }
 
@@ -580,8 +629,8 @@ async function handleApi(request, response) {
     lineState = { groups: {} };
     saveLineState();
     saveStoredConfig(nextConfig);
-    broadcast("reset-settings", state);
-    sendJson(response, 200, buildPublicState());
+    broadcast("reset-settings", buildClientState(false));
+    sendJson(response, 200, buildClientState(true));
     return;
   }
 
@@ -693,7 +742,7 @@ function applyLineMembersToLottery(group) {
   if (!nextConfig) return false;
   state = { config: nextConfig, drawing: null, session: state.session || createSession() };
   saveStoredConfig(nextConfig);
-  broadcast("config", buildPublicState());
+  broadcast("config", buildClientState(false));
   return true;
 }
 
@@ -807,7 +856,7 @@ async function handleStartLotteryFromLine(lineConfig, event) {
   }
   if (!state.session) state.session = createSession();
   state.drawing = createDrawing();
-  broadcast("drawing", state.drawing);
+  broadcast("drawing", redactDrawing(state.drawing));
   refreshCachedResultImage(state.drawing);
   pushLineNotification(state.drawing).catch((err) => console.warn("LINE notification error:", err.message));
   await line.replyToLine(lineConfig, event.replyToken, line.textMessage(`抽選を開始しました。\n現在の表示人数: ${getViewCount()}人`));
@@ -826,7 +875,7 @@ async function handleResetLotteryFromLine(lineConfig, event) {
   state = { ...state, drawing: null, session: null };
   cachedResultPng = null;
   viewers.clear();
-  broadcast("reset", state);
+  broadcast("reset", buildClientState(false));
   await replySetupMenu(lineConfig, event, "抽選をリセットしました。必要に応じて「確定してURL作成」を押してください。");
 }
 
@@ -852,7 +901,7 @@ async function handleResetSettingsFromLine(lineConfig, event) {
   lineState = { groups: {} };
   saveLineState();
   saveStoredConfig(nextConfig);
-  broadcast("reset-settings", state);
+  broadcast("reset-settings", buildClientState(false));
   await line.replyToLine(lineConfig, event.replyToken, line.textMessage("抽選設定をリセットしました。もう一度「抽選設定」から開始してください。"));
 }
 
