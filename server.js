@@ -922,8 +922,8 @@ async function handleLineCommand(lineConfig, event, command) {
       await registerEventUser(lineConfig, event);
       const pushed = await pushAdminUrlToUser(lineConfig, event.source.userId, "座席抽選の管理者として設定しました。管理者画面はこちらです。");
       const note = pushed && pushed.status < 300
-        ? "管理者用URLを個人LINEに送信しました。参加者は「参加する」を押してください。"
-        : "管理者用URLを個人LINEに送信できませんでした。Botを友だち追加してから、もう一度「抽選設定」を押してください。";
+        ? "幹事として設定しました。管理者用URLを個人LINEに送信しました。参加者は「参加する」を押してください。"
+        : "幹事として設定しました。ただし管理者用URLを個人LINEに送信できませんでした。Botを友だち追加してから、もう一度「幹事に設定」を押してください。";
       await replySetupMenu(lineConfig, event, note);
       return;
     }
@@ -969,11 +969,19 @@ async function handleLineWebhook(request, response) {
     }
 
     if (event.type === "join" && event.source?.groupId) {
+      lineState.groups[event.source.groupId] = {
+        groupId: event.source.groupId,
+        adminUserId: "",
+        members: [],
+        memberCount: 0,
+        updatedAt: Date.now(),
+      };
+      saveLineState();
       const group = getLineGroupState(event.source.groupId);
       await line.replyToLine(lineConfig, event.replyToken, line.buildSetupPanel({
         memberCount: group.members.length,
         totalCount: group.memberCount,
-        note: "招待ありがとうございます。座席抽選を始めるには、まず参加者に「参加する」を押してもらってください。",
+        note: "招待ありがとうございます。幹事の方はまず「幹事に設定」を押してください。その後、参加者に「参加する」を押してもらいます。",
       }));
       continue;
     }

@@ -237,6 +237,7 @@ function buildSetupPanel({ memberCount = 0, totalCount = 0, sessionUrl = "", adm
     ? `登録 ${memberCount}名 / グループ ${totalCount}名`
     : `登録 ${memberCount}名`;
   const actions = [
+    postbackButton("幹事に設定", "action=setup", "secondary", "抽選設定"),
     postbackButton("参加する", "action=joinLottery", "primary", "参加しました"),
     postbackButton("メンバー取得", "action=collectMembers"),
     postbackButton("確定してURL作成", "action=confirmLottery"),
