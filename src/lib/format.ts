@@ -1,22 +1,45 @@
 import { format, parseISO } from 'date-fns'
 import { ja } from 'date-fns/locale'
 
-export function formatYen(value: number): string {
-  return `¥${value.toLocaleString('ja-JP')}`
+export function yen(v: number): string {
+  return `¥${v.toLocaleString('ja-JP')}`
 }
 
-export function formatManYen(value: number): string {
-  return `${Math.round(value / 10000).toLocaleString('ja-JP')}万円`
+export function manYen(v: number): string {
+  return `${Math.round(v / 10000).toLocaleString('ja-JP')}万円`
 }
 
-export function formatDate(iso: string, pattern = 'yyyy年M月d日'): string {
+/** YYYY/MM/DD */
+export function ymd(iso: string): string {
   try {
-    return format(parseISO(iso), pattern, { locale: ja })
+    return format(parseISO(iso), 'yyyy/MM/dd')
   } catch {
     return iso
   }
 }
 
-export function formatDateWithDay(iso: string): string {
-  return formatDate(iso, 'M月d日(E)')
+/** M/d(E) */
+export function mdE(iso: string): string {
+  try {
+    return format(parseISO(iso), 'M/d(E)', { locale: ja })
+  } catch {
+    return iso
+  }
+}
+
+export function weekdayJa(iso: string): string {
+  try {
+    return format(parseISO(iso), 'E', { locale: ja })
+  } catch {
+    return ''
+  }
+}
+
+export function isWeekend(iso: string): boolean {
+  try {
+    const d = parseISO(iso).getDay()
+    return d === 0 || d === 6
+  } catch {
+    return false
+  }
 }

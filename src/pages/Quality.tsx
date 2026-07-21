@@ -1,0 +1,194 @@
+import { useMemo, useState } from 'react'
+import { ScanSearch, CheckCircle2, RotateCcw, PauseCircle, ArrowRight } from 'lucide-react'
+import { PageHeader } from '../components/layout/Breadcrumb'
+import { Panel, PreparingTag } from '../components/ui/common'
+import { StatusBadge, Badge } from '../components/ui/Badge'
+import { Modal } from '../components/ui/Modal'
+import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
+import { useApp } from '../context/AppContext'
+import { qualityItems as seed, qualitySummary, anomalyFindings } from '../data/quality'
+import { photos } from '../data/photos'
+import type { QualityItem } from '../types'
+
+const flow = ['写真登録', '自動分類候補', '品質確認', 'コメント入力', '修正・再撮影依頼', '再確認', '承認']
+
+export default function Quality() {
+  const { toast } = useApp()
+  const [items, setItems] = useState<QualityItem[]>(() => seed.map((q) => ({ ...q })))
+  const [detail, setDetail] = useState<QualityItem | null>(null)
+  const [anomalyOpen, setAnomalyOpen] = useState(false)
+  const [comment, setComment] = useState('')
+
+  const photoById = useMemo(() => new Map(photos.map((p) => [p.id, p])), [])
+
+  function act(id: string, status: QualityItem['status'], msg: string) {
+    setItems((prev) => prev.map((q) => (q.id === id ? { ...q, status, checker: '品質 管理者', updatedAt: '2026/07/21 15:30' } : q)))
+    toast(msg, 'ok')
+    setDetail(null)
+    setComment('')
+  }
+
+  const summaryTiles: { label: string; value: number; tone: 'warn' | 'ng' | 'ok' | 'info' }[] = [
+    { label: '確認待ち', value: qualitySummary.確認待ち, tone: 'warn' },
+    { label: '不足', value: qualitySummary.不足, tone: 'warn' },
+    { label: '未提出', value: qualitySummary.未提出, tone: 'ng' },
+    { label: '警告', value: qualitySummary.警告, tone: 'warn' },
+    { label: '確認済み', value: qualitySummary.確認済み, tone: 'ok' },
+    { label: '再撮影依頼', value: qualitySummary.再撮影依頼, tone: 'ng' },
+    { label: '承認済み', value: qualitySummary.承認済み, tone: 'ok' },
+  ]
+
+  return (
+    <div>
+      <PageHeader
+        breadcrumb={[{ label: '品質管理' }]}
+        title="品質管理"
+        description="施工写真・検査項目の確認と承認"
+        actions={<button className="btn-default" onClick={() => setAnomalyOpen(true)}><ScanSearch size={15} />異常検知デモ</button>}
+      />
+
+      {/* 集計 */}
+      <div className="mb-3 grid grid-cols-7 gap-2">
+        {summaryTiles.map((t) => (
+          <div key={t.label} className="rounded border border-line bg-white px-3 py-2.5 text-center shadow-panel">
+            <p className={`text-2xl font-bold ${t.tone === 'ng' ? 'text-ng' : t.tone === 'warn' ? 'text-warn' : t.tone === 'ok' ? 'text-ok' : 'text-sysken-600'}`}>{t.value}</p>
+            <p className="mt-0.5 text-[11px] text-ink-soft">{t.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* 業務フロー */}
+      <Panel title="品質確認フロー" className="mb-3">
+        <div className="flex flex-wrap items-center gap-1">
+          {flow.map((f, i) => (
+            <div key={f} className="flex items-center gap-1">
+              <span className={`rounded px-2.5 py-1 text-xs ${i === 2 ? 'bg-sysken-500 font-medium text-white' : 'bg-canvas text-ink-soft'}`}>{f}</span>
+              {i < flow.length - 1 && <ArrowRight size={14} className="text-slate-300" />}
+            </div>
+          ))}
+          <span className="ml-2"><PreparingTag label="AI自動分類・判定は準備中" /></span>
+        </div>
+      </Panel>
+
+      {/* 一覧 */}
+      <Panel bodyClassName="p-0" className="overflow-hidden">
+        <div className="thin-scroll overflow-x-auto">
+          <table className="grid-table text-[13px]">
+            <thead className="bg-canvas text-xs text-ink-soft">
+              <tr>
+                {['対象写真', '案件', '工程', '検査項目', '判定', 'コメント', '担当者', '確認者', '対応期限', 'ステータス', ''].map((h) => (
+                  <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((q) => {
+                const ph = photoById.get(q.photoId)
+                return (
+                  <tr key={q.id} className="cursor-pointer hover:bg-canvas" onClick={() => { setDetail(q); setComment('') }}>
+                    <td className="py-1.5 pl-3"><div className="h-10 w-14 overflow-hidden rounded">{ph ? <PhotoPlaceholder type={ph.colorKey} className="h-full w-full" /> : '—'}</div></td>
+                    <td className="px-3 text-ink-soft">{q.projectId === 'p1' ? '熊本中央局' : q.projectId === 'p3' ? '菊陽町' : '玉名局'}</td>
+                    <td className="px-3">{q.process}</td>
+                    <td className="px-3">{q.inspectItem}</td>
+                    <td className="px-3"><StatusBadge status={q.judge} /></td>
+                    <td className="max-w-[220px] truncate px-3 text-ink-soft">{q.comment || '—'}</td>
+                    <td className="px-3 text-ink-soft">{q.worker}</td>
+                    <td className="px-3 text-ink-soft">{q.checker}</td>
+                    <td className="px-3 tabular-nums text-ink-soft">{q.dueDate.slice(5)}</td>
+                    <td className="px-3"><StatusBadge status={q.status} /></td>
+                    <td className="px-3 text-sysken-600">詳細</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      {/* 詳細モーダル */}
+      <Modal open={!!detail} onClose={() => setDetail(null)} title={detail ? `品質確認：${detail.inspectItem}` : ''} size="lg"
+        footer={detail && (
+          <>
+            <button className="btn-default" onClick={() => act(detail.id, '確認済み', '保留にしました')}><PauseCircle size={15} />保留</button>
+            <button className="btn-danger" onClick={() => act(detail.id, '再撮影依頼', '再撮影を依頼しました')}><RotateCcw size={15} />再撮影依頼</button>
+            <button className="btn-primary" onClick={() => act(detail.id, '承認済み', '承認しました')}><CheckCircle2 size={15} />承認</button>
+          </>
+        )}>
+        {detail && (() => {
+          const ph = photoById.get(detail.photoId)
+          return (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="overflow-hidden rounded border border-line">
+                  {ph ? <PhotoPlaceholder type={ph.colorKey} no={ph.no} className="aspect-[4/3] w-full" /> : null}
+                </div>
+                <div className="mt-2 flex items-center gap-1.5 rounded border border-dashed border-sysken-300 bg-sysken-50 px-2 py-1 text-[11px] text-sysken-700">
+                  <span>AI品質チェック：{ph?.aiCandidate}</span><PreparingTag />
+                </div>
+              </div>
+              <div className="space-y-3 text-[13px]">
+                <KV label="工程" value={detail.process} />
+                <KV label="検査項目" value={detail.inspectItem} />
+                <KV label="判定" value={<StatusBadge status={detail.judge} />} />
+                <KV label="担当者" value={detail.worker} />
+                <KV label="品質担当者" value={detail.checker} />
+                <KV label="対応期限" value={detail.dueDate} />
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-ink-soft">過去コメント</p>
+                  <p className="rounded border border-line bg-canvas px-2 py-1.5 text-ink">{detail.comment || 'コメントはありません'}</p>
+                </div>
+                <div>
+                  <label className="label">担当者コメント</label>
+                  <textarea className="field h-16 resize-none" value={comment} onChange={(e) => setComment(e.target.value)} placeholder="確認コメントを入力..." />
+                </div>
+              </div>
+            </div>
+          )
+        })()}
+      </Modal>
+
+      {/* 異常検知デモ */}
+      <Modal open={anomalyOpen} onClose={() => setAnomalyOpen(false)} title="異常検知デモ（施工中 vs 完成見本）" size="xl"
+        footer={<button className="btn-primary" onClick={() => setAnomalyOpen(false)}>閉じる</button>}>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <p className="mb-1.5 text-[13px] font-semibold text-ink">施工中写真</p>
+            <div className="relative overflow-hidden rounded border border-line">
+              <PhotoPlaceholder type="クロージャ" no="P-003" className="aspect-[4/3] w-full" />
+              <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 75" preserveAspectRatio="none">
+                {anomalyFindings.map((a, i) => (
+                  <g key={i}>
+                    <rect x={a.x} y={a.y} width={a.w} height={a.h} fill="none" stroke="#d64545" strokeWidth={0.8} />
+                    <rect x={a.x} y={a.y - 5} width={a.label.length * 2.6} height={4.5} fill="#d64545" />
+                    <text x={a.x + 0.8} y={a.y - 1.6} fontSize="3" fill="#fff">{a.label}</text>
+                  </g>
+                ))}
+              </svg>
+            </div>
+            <ul className="mt-2 space-y-1 text-xs text-ng">
+              <li>・ケーブル余長不足の可能性</li>
+              <li>・固定位置の確認が必要</li>
+              <li>・タグ未装着の可能性</li>
+              <li>・完成写真との差異あり</li>
+            </ul>
+          </div>
+          <div>
+            <p className="mb-1.5 text-[13px] font-semibold text-ink">完成見本写真</p>
+            <div className="overflow-hidden rounded border border-line">
+              <PhotoPlaceholder type="完成状態" no="見本" className="aspect-[4/3] w-full" />
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <Badge tone="ok" dot>基準に適合</Badge>
+              <span className="text-xs text-ink-soft">見本写真（正常状態）</span>
+            </div>
+          </div>
+        </div>
+        <p className="mt-3 text-[11px] text-ink-soft">※ この判定はデモ表示です。実際の画像比較や異常検知は行っていません。</p>
+      </Modal>
+    </div>
+  )
+}
+
+function KV({ label, value }: { label: string; value: React.ReactNode }) {
+  return <div className="flex justify-between gap-3"><span className="shrink-0 text-ink-soft">{label}</span><span className="text-right text-ink">{value}</span></div>
+}

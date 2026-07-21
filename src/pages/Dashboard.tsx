@@ -1,163 +1,200 @@
+import { useNavigate } from 'react-router-dom'
 import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  Cell,
-  Legend,
-  Line,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
-import {
-  FolderKanban,
-  CheckCircle2,
-  Clock,
-  Wallet,
-  ArrowUpRight,
+  FolderKanban, Hammer, CalendarCheck, AlertTriangle, Camera, ShieldCheck,
+  Users, CloudSun, Thermometer, Wind, ArrowUpRight, Clock,
 } from 'lucide-react'
-import { Card, StatCard, StatusBadge, PriorityBadge } from '../components/ui'
 import {
-  categoryShare,
-  monthlySales,
-  projects,
-  tasks,
-} from '../data/mockData'
-import { formatManYen, formatDateWithDay } from '../lib/format'
+  Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend,
+} from 'recharts'
+import { PageHeader } from '../components/layout/Breadcrumb'
+import { Panel } from '../components/ui/common'
+import { StatusBadge, Badge } from '../components/ui/Badge'
+import { Progress } from '../components/ui/Progress'
+import { projects, dashboardKpi, progressChart, todayEnv } from '../data/projects'
+import { notifications } from '../data/notifications'
 
-const pieColors = ['#3366f2', '#598eff', '#8eb6ff', '#bcd3ff']
+const kpis = [
+  { label: '全案件数', value: dashboardKpi.total, unit: '件', icon: FolderKanban, tone: 'info', to: '/projects' },
+  { label: '進行中', value: dashboardKpi.active, unit: '件', icon: Hammer, tone: 'info', to: '/projects?status=施工中' },
+  { label: '本日作業中', value: dashboardKpi.workingToday, unit: '件', icon: Clock, tone: 'info', to: '/projects' },
+  { label: '今日完了予定', value: dashboardKpi.finishToday, unit: '件', icon: CalendarCheck, tone: 'ok', to: '/projects' },
+  { label: '遅延案件', value: dashboardKpi.delayed, unit: '件', icon: AlertTriangle, tone: 'ng', to: '/projects?status=遅延' },
+  { label: '写真未提出', value: dashboardKpi.photoPending, unit: '枚', icon: Camera, tone: 'warn', to: '/photos' },
+  { label: '品質確認待ち', value: dashboardKpi.qualityWaiting, unit: '件', icon: ShieldCheck, tone: 'warn', to: '/quality' },
+  { label: '本日の要員', value: dashboardKpi.peopleToday, unit: '名', icon: Users, tone: 'info', to: '/personnel' },
+] as const
+
+const toneText: Record<string, string> = { info: 'text-sysken-600', ok: 'text-ok', warn: 'text-warn', ng: 'text-ng' }
+const toneBg: Record<string, string> = { info: 'bg-sysken-50 text-sysken-600', ok: 'bg-emerald-50 text-ok', warn: 'bg-amber-50 text-warn', ng: 'bg-red-50 text-ng' }
 
 export default function Dashboard() {
-  const activeProjects = projects.filter((p) => p.status === '進行中').length
-  const completedProjects = projects.filter((p) => p.status === '完了').length
-  const openTasks = tasks.filter((t) => t.status !== '完了').length
-  const totalBudget = projects.reduce((sum, p) => sum + p.budget, 0)
-
-  const upcomingTasks = [...tasks]
-    .filter((t) => t.status !== '完了')
-    .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
-    .slice(0, 5)
+  const navigate = useNavigate()
+  const recent = [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 5)
 
   return (
-    <div className="space-y-6">
-      {/* KPIカード */}
-      <div className="grid grid-cols-4 gap-5">
-        <StatCard label="進行中の案件" value={`${activeProjects}件`} sub="今月 +2件" icon={FolderKanban} tone="brand" />
-        <StatCard label="完了案件" value={`${completedProjects}件`} sub="今年度累計" icon={CheckCircle2} tone="green" />
-        <StatCard label="未完了タスク" value={`${openTasks}件`} sub="要対応" icon={Clock} tone="amber" />
-        <StatCard label="総予算" value={formatManYen(totalBudget)} sub="全案件合計" icon={Wallet} tone="rose" />
+    <div>
+      <PageHeader breadcrumb={[{ label: 'ダッシュボード' }]} title="ダッシュボード" description="施工管理部 ／ 本日の工事状況サマリー" />
+
+      {/* KPI */}
+      <div className="mb-4 grid grid-cols-8 gap-2.5">
+        {kpis.map((k) => (
+          <button key={k.label} onClick={() => navigate(k.to)} className="flex flex-col items-start rounded border border-line bg-white p-3 text-left shadow-panel transition-colors hover:border-sysken-300">
+            <div className={`mb-2 flex h-8 w-8 items-center justify-center rounded ${toneBg[k.tone]}`}><k.icon size={17} /></div>
+            <p className="text-[11px] text-ink-soft">{k.label}</p>
+            <p className="mt-0.5"><span className={`text-2xl font-bold ${toneText[k.tone]}`}>{k.value}</span><span className="ml-0.5 text-xs text-ink-soft">{k.unit}</span></p>
+          </button>
+        ))}
       </div>
 
-      {/* チャート */}
-      <div className="grid grid-cols-3 gap-5">
-        <Card title="月次売上推移" className="col-span-2">
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={monthlySales} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="salesFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#3366f2" stopOpacity={0.3} />
-                    <stop offset="100%" stopColor="#3366f2" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#eef1f6" />
-                <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                <YAxis
-                  tickFormatter={(v) => `${v / 10000000}千万`}
-                  tick={{ fontSize: 12, fill: '#94a3b8' }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip
-                  formatter={(v: number) => formatManYen(v)}
-                  contentStyle={{ borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 12 }}
-                />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Area type="monotone" dataKey="売上" stroke="#3366f2" strokeWidth={2.5} fill="url(#salesFill)" />
-                <Line type="monotone" dataKey="目標" stroke="#f59e0b" strokeWidth={2} strokeDasharray="5 5" dot={false} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        <Card title="案件カテゴリ構成">
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={categoryShare}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="45%"
-                  innerRadius={55}
-                  outerRadius={85}
-                  paddingAngle={2}
-                >
-                  {categoryShare.map((_, i) => (
-                    <Cell key={i} fill={pieColors[i % pieColors.length]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  formatter={(v: number) => `${v}%`}
-                  contentStyle={{ borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 12 }}
-                />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-      </div>
-
-      {/* 期限が近いタスク & 進行中案件 */}
-      <div className="grid grid-cols-2 gap-5">
-        <Card title="期限が近いタスク">
-          <ul className="divide-y divide-slate-100">
-            {upcomingTasks.map((t) => (
-              <li key={t.id} className="flex items-center justify-between py-3">
-                <div>
-                  <p className="text-sm font-medium text-slate-700">{t.title}</p>
-                  <p className="text-xs text-slate-400">
-                    {t.assignee} ・ {formatDateWithDay(t.dueDate)}
-                  </p>
+      <div className="grid grid-cols-3 gap-4">
+        {/* 工程進捗 */}
+        <Panel title="案件別 工程進捗（予定 vs 実績）" className="col-span-2">
+          <div className="space-y-3">
+            {progressChart.map((p) => (
+              <div key={p.name}>
+                <div className="mb-1 flex items-center justify-between text-xs">
+                  <span className="font-medium text-ink">{p.name}</span>
+                  <span className="text-ink-soft">実績 {p.actual}% ／ 予定 {p.plan}%{p.actual < p.plan && <span className="ml-1 text-ng">(-{p.plan - p.actual})</span>}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <PriorityBadge priority={t.priority} />
-                  <StatusBadge status={t.status} />
-                </div>
-              </li>
+                <Progress value={p.actual} plan={p.plan} showLabel={false} height={10} />
+              </div>
             ))}
-          </ul>
-        </Card>
+          </div>
+          <div className="mt-3 flex items-center gap-3 border-t border-line pt-2 text-[11px] text-ink-soft">
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-sysken-500" />実績</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-warn" />予定遅れ</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-3 w-0.5 bg-ink/40" />予定進捗ライン</span>
+          </div>
+        </Panel>
 
-        <Card
-          title="進行中の案件"
-          action={
-            <span className="flex items-center gap-1 text-xs font-medium text-brand-600">
-              すべて表示 <ArrowUpRight size={14} />
-            </span>
-          }
-        >
-          <ul className="space-y-4">
-            {projects
-              .filter((p) => p.status === '進行中')
-              .slice(0, 4)
-              .map((p) => (
-                <li key={p.id}>
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-slate-700">{p.name}</p>
-                    <span className="text-xs text-slate-400">{p.progress}%</span>
-                  </div>
-                  <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                    <div className="h-full rounded-full bg-brand-500" style={{ width: `${p.progress}%` }} />
+        {/* 右：注意・環境 */}
+        <div className="space-y-4">
+          <Panel title="本日の現場環境">
+            <div className="grid grid-cols-2 gap-2 text-[13px]">
+              <Env icon={CloudSun} label="天気" value={todayEnv.weather} />
+              <Env icon={Thermometer} label="気温" value={todayEnv.temp} />
+              <Env icon={AlertTriangle} label="熱中症" value={`WBGT ${todayEnv.wbgt}`} tone="warn" />
+              <Env icon={Wind} label="風" value="やや強い" tone="warn" />
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1 border-t border-line pt-2">
+              {todayEnv.advisory.map((a) => <Badge key={a} tone="warn" dot>{a}</Badge>)}
+              <Badge tone="ng" dot>作業中止候補：高所作業（強風時）</Badge>
+            </div>
+          </Panel>
+
+          <Panel title="通知・注意事項" action={<button onClick={() => navigate('/notifications')} className="flex items-center gap-0.5 text-xs text-sysken-600">すべて<ArrowUpRight size={13} /></button>} bodyClassName="p-0">
+            <ul className="thin-scroll max-h-44 divide-y divide-line overflow-y-auto">
+              {notifications.slice(0, 6).map((n) => (
+                <li key={n.id} onClick={() => navigate(n.link)} className="flex cursor-pointer items-start gap-2 px-3 py-2 hover:bg-canvas">
+                  <span className={`mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full ${n.important ? 'bg-ng' : n.read ? 'bg-slate-300' : 'bg-sysken-500'}`} />
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-medium text-ink">{n.title}</p>
+                    <p className="text-[11px] text-slate-400">{n.at}</p>
                   </div>
                 </li>
               ))}
+            </ul>
+          </Panel>
+        </div>
+      </div>
+
+      {/* 簡易ガント（今週） */}
+      <Panel title="今週の主要工程（簡易ガント）" className="mt-4">
+        <MiniGantt />
+      </Panel>
+
+      <div className="mt-4 grid grid-cols-3 gap-4">
+        {/* 案件一覧 */}
+        <Panel title="案件一覧" className="col-span-2" bodyClassName="p-0" action={<button onClick={() => navigate('/projects')} className="flex items-center gap-0.5 text-xs text-sysken-600">案件一覧へ<ArrowUpRight size={13} /></button>}>
+          <div className="thin-scroll overflow-x-auto">
+            <table className="grid-table text-[13px]">
+              <thead className="bg-canvas text-xs text-ink-soft">
+                <tr>{['案件番号', '工事名', '顧客', 'エリア', '現場責任者', '完了予定', '進捗', 'ステータス', '写真', '品質'].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {projects.map((p) => (
+                  <tr key={p.id} className="cursor-pointer hover:bg-canvas" onClick={() => navigate(`/projects/${p.id}`)}>
+                    <td className="px-3 tabular-nums text-ink-soft">{p.code}</td>
+                    <td className="px-3 font-medium text-ink">{p.name}</td>
+                    <td className="px-3 text-ink-soft">{p.client}</td>
+                    <td className="px-3 text-ink-soft">{p.area}</td>
+                    <td className="px-3 text-ink-soft">{p.manager}</td>
+                    <td className="px-3 tabular-nums text-ink-soft">{p.dueDate.slice(5)}</td>
+                    <td className="w-28 px-3"><Progress value={p.progressActual} plan={p.progressPlan} height={7} /></td>
+                    <td className="px-3"><StatusBadge status={p.status} /></td>
+                    <td className="px-3 text-center">{p.unconfirmedPhotos > 0 ? <Badge tone="warn">{p.unconfirmedPhotos}</Badge> : <span className="text-ink-soft">0</span>}</td>
+                    <td className="px-3 text-center">{p.qualityChecks > 0 ? <Badge tone="warn">{p.qualityChecks}</Badge> : <span className="text-ink-soft">0</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+
+        {/* 最近更新 */}
+        <Panel title="最近更新された案件" bodyClassName="p-0">
+          <ul className="divide-y divide-line">
+            {recent.map((p) => (
+              <li key={p.id} onClick={() => navigate(`/projects/${p.id}`)} className="cursor-pointer px-3 py-2.5 hover:bg-canvas">
+                <p className="truncate text-[13px] font-medium text-ink">{p.name}</p>
+                <p className="mt-0.5 text-xs text-ink-soft">進捗を{p.progressActual}%に更新 ／ {p.manager}</p>
+                <p className="flex items-center gap-1 text-[11px] text-slate-400"><Clock size={11} />{p.updatedAt}</p>
+              </li>
+            ))}
           </ul>
-        </Card>
+        </Panel>
+      </div>
+    </div>
+  )
+}
+
+function Env({ icon: Icon, label, value, tone }: { icon: typeof CloudSun; label: string; value: string; tone?: 'warn' }) {
+  return (
+    <div className="flex items-center gap-2 rounded border border-line bg-canvas px-2 py-1.5">
+      <Icon size={18} className={tone === 'warn' ? 'text-warn' : 'text-sysken-500'} />
+      <div className="min-w-0"><p className="text-[11px] text-ink-soft">{label}</p><p className={`truncate font-medium ${tone === 'warn' ? 'text-warn' : 'text-ink'}`}>{value}</p></div>
+    </div>
+  )
+}
+
+// 今週の簡易ガント（AM/PM）
+const weekData = [
+  { day: '7/21', dow: '月', am: '融着', pm: '測定', plan: 90, actual: 82, delay: false },
+  { day: '7/22', dow: '火', am: '測定', pm: 'ONU', plan: 80, actual: 60, delay: true },
+  { day: '7/23', dow: '水', am: 'ONU', pm: '成端', plan: 70, actual: 0, delay: false },
+  { day: '7/24', dow: '木', am: '成端', pm: '成端', plan: 60, actual: 0, delay: false },
+  { day: '7/25', dow: '金', am: '切替', pm: '試験', plan: 50, actual: 0, delay: false },
+]
+function MiniGantt() {
+  return (
+    <div className="grid grid-cols-2 gap-6">
+      <table className="grid-table text-xs">
+        <thead className="text-ink-soft"><tr><th className="px-2 py-1 text-left">日付</th><th className="px-2 py-1 text-left">曜日</th><th className="px-2 py-1 text-left">AM</th><th className="px-2 py-1 text-left">PM</th><th className="px-2 py-1 text-left">予定/実績</th><th className="px-2 py-1 text-left">状態</th></tr></thead>
+        <tbody>
+          {weekData.map((d) => (
+            <tr key={d.day} className="hover:bg-canvas">
+              <td className="px-2 py-1.5 tabular-nums">{d.day}</td>
+              <td className="px-2 py-1.5">{d.dow}</td>
+              <td className="px-2 py-1.5"><Badge tone="info">{d.am}</Badge></td>
+              <td className="px-2 py-1.5"><Badge tone="info">{d.pm}</Badge></td>
+              <td className="px-2 py-1.5 tabular-nums text-ink-soft">{d.plan}% / {d.actual}%</td>
+              <td className="px-2 py-1.5">{d.delay ? <Badge tone="ng" dot>遅延</Badge> : d.actual > 0 ? <Badge tone="info" dot>施工中</Badge> : <Badge tone="muted">予定</Badge>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="h-40">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={weekData} margin={{ top: 6, right: 8, left: -10, bottom: 0 }} barGap={2}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#eef1f5" vertical={false} />
+            <XAxis dataKey="day" tick={{ fontSize: 11, fill: '#667085' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 11, fill: '#667085' }} axisLine={false} tickLine={false} unit="%" />
+            <Tooltip contentStyle={{ borderRadius: 4, border: '1px solid #d6dce3', fontSize: 12 }} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Bar dataKey="plan" name="予定" fill="#cbd5e1" radius={[3, 3, 0, 0]} maxBarSize={18} />
+            <Bar dataKey="actual" name="実績" fill="#005bac" radius={[3, 3, 0, 0]} maxBarSize={18} />
+          </BarChart>
+        </ResponsiveContainer>
       </div>
     </div>
   )
