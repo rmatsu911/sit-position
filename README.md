@@ -1,52 +1,74 @@
-# 宴会座席抽選
+# 業務管理システム（Business Console）
 
-スマホから同じ抽選画面を見られる座席抽選アプリです。管理者画面でメンバーと固定席を設定し、抽選結果をLINEグループへ自動送信できます。
+React + TypeScript + Vite で構築した、Windows PC 向けの業務Webアプリです。案件・メンバー・スケジュール・売上レポートを一画面で管理するダッシュボードを備えています。
 
-## ローカル起動
+> 本アプリはフロントエンドのみで動作します。バックエンド／データベース／API接続は無く、すべてダミーデータで表示しています。
+
+## 技術構成
+
+| 分類 | 使用技術 |
+| --- | --- |
+| フレームワーク | React 18 |
+| 言語 | TypeScript |
+| ビルドツール | Vite 6 |
+| スタイリング | Tailwind CSS 3 |
+| ルーティング | React Router 7 |
+| アイコン | Lucide React |
+| グラフ | Recharts 2 |
+| 日付処理 | date-fns 4 |
+
+## 前提
+
+- Node.js 18 以上
+- 画面は **1920×1080 の Windows PC 向け固定レイアウト**（`.app-canvas` で 1920×1080 に固定）
+- UI はすべて日本語
+
+## セットアップ
 
 ```bash
 npm install
-npm start
 ```
 
-起動後に表示されるURLへアクセスします。
+## 開発サーバー起動
 
-- 抽選ページ: `http://localhost:3000/`
-- 管理者画面: `http://localhost:3000/admin.html`
-- ホストURL: `http://localhost:3000/?host=...`
+```bash
+npm run dev
+```
 
-抽選開始やLINE設定保存はホストトークンが必要です。ホストURLを一度開くと、このブラウザにトークンが保存されます。
+表示された URL（既定 `http://localhost:5173/`）にアクセスします。
 
-## LINE Bot連携
+## 本番ビルド
 
-1. LINE DevelopersでMessaging APIチャンネルを作成します。
-2. チャンネルアクセストークンとチャンネルシークレットを取得します。
-3. Webhook URLを `https://公開URL/webhook` に設定します。
-4. BotをLINEグループに追加します。
-5. 管理者画面の「LINE Bot 連携」で設定を保存します。
+```bash
+npm run build      # 型チェック(tsc) + Viteビルド。出力先は dist/
+npm run preview    # ビルド結果のローカルプレビュー
+```
 
-画像で送信するには、RenderなどHTTPSで外部公開されているURLを「サーバー公開URL」に入力してください。未入力の場合はFlexメッセージで送信します。
+## 画面構成
 
-## Render環境変数
+| ルート | 画面 | 内容 |
+| --- | --- | --- |
+| `/` | ダッシュボード | KPIカード、月次売上推移、案件カテゴリ構成、期限が近いタスク、進行中案件 |
+| `/projects` | 案件管理 | 案件一覧テーブル（ステータス絞り込み・進捗バー） |
+| `/members` | メンバー | メンバーカード一覧（部署・稼働状況） |
+| `/schedule` | スケジュール | 月間カレンダー（date-fns）と今後の予定 |
+| `/reports` | レポート | 売上 vs 目標、週間アクティビティのグラフ |
+| `/settings` | 設定 | プロフィール・通知・表示設定 |
 
-Renderにデプロイする場合は、必要に応じて以下を設定します。
+## ディレクトリ構成
 
-| 変数名 | 内容 |
-| --- | --- |
-| `HOST_TOKEN` | 管理者操作用の任意文字列 |
-| `LINE_CHANNEL_ACCESS_TOKEN` | LINEのチャンネルアクセストークン |
-| `LINE_CHANNEL_SECRET` | LINEのチャンネルシークレット |
-| `LINE_GROUP_ID` | 送信先グループID |
-| `LINE_PUBLIC_URL` | Renderの公開URL |
+```
+src/
+├── main.tsx              エントリーポイント（BrowserRouter）
+├── App.tsx              レイアウト＋ルーティング
+├── index.css           Tailwind＋固定レイアウト用スタイル
+├── types.ts            型定義
+├── data/mockData.ts    ダミーデータ
+├── lib/format.ts       金額・日付フォーマット（date-fns）
+├── components/         Sidebar / Topbar / 共通UI
+└── pages/              各画面
+```
 
-## Render + Xserverで公開する流れ
+## ダミーデータについて
 
-1. このプロジェクトをGitHubへpushします。
-2. Renderで「New Web Service」を作成し、GitHubリポジトリを接続します。
-3. Build Commandは `npm install`、Start Commandは `npm start` にします。
-4. Renderの公開URLを確認します。例: `https://sit-position.onrender.com`
-5. `xserver/index.php` と `xserver/webhook.php` 内の `YOUR-RENDER-APP.onrender.com` をRenderのURLへ変更します。
-6. Xserverの `public_html` に `xserver/index.php` をアップロードします。
-7. LINE DevelopersのWebhook URLは、確実性優先なら `https://RenderのURL/webhook`、Xserver経由にしたい場合は `https://xxxtrw77777.xsrv.jp/webhook.php` を設定します。
-
-Xserver側は入口ページです。アプリ本体、リアルタイム同期、LINE送信、画像生成はRender側で動きます。
+すべての表示内容は `src/data/mockData.ts` に定義した静的データです。実データと連携する場合は、このファイルを差し替えるか、各ページのデータ取得箇所を API 呼び出しに置き換えてください。
