@@ -48,13 +48,3 @@ export function Panel({
     </section>
   )
 }
-
-/** AIダミー用の「準備中」バッジ */
-export function PreparingTag({ label = '準備中' }: { label?: string }) {
-  return (
-    <span className="inline-flex items-center gap-1 rounded border border-dashed border-sysken-300 bg-sysken-50 px-1.5 py-0.5 text-[11px] font-medium text-sysken-700">
-      <span className="h-1.5 w-1.5 rounded-full bg-sysken-400" />
-      {label}
-    </span>
-  )
-}

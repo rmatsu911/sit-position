@@ -161,9 +161,12 @@ export default function Settings() {
             </Panel>
           )}
           {tab === 'data' && (
-            <Panel title="データ">
+            <Panel title="データ・システム情報">
               <div className="max-w-2xl space-y-3 text-[13px]">
-                <div className="rounded border border-dashed border-sysken-300 bg-sysken-50 px-3 py-2 text-sysken-700">現在の接続：デモ環境（サンプルデータ）。バックエンド・データベースには接続していません。</div>
+                <div className="rounded border border-line bg-canvas px-3 py-2 text-ink-soft">
+                  <p className="font-medium text-ink">システム情報</p>
+                  <p className="mt-0.5">本画面はAI機能実装後の完成イメージです。実際のAI処理は現在未実装です。</p>
+                </div>
                 <div className="flex items-center justify-between rounded border border-line px-3 py-2"><span>サンプルデータの再読み込み</span><button className="btn-default btn-xs" onClick={() => toast('サンプルデータを再読み込みしました', 'ok')}>再読み込み</button></div>
                 <div className="flex items-center justify-between rounded border border-line px-3 py-2"><span>エクスポート（全案件）</span><button className="btn-default btn-xs" onClick={() => toast('エクスポートを開始しました（デモ）')}>エクスポート</button></div>
               </div>

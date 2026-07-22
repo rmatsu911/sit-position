@@ -3,7 +3,7 @@ import {
   Send, Sparkles, History, Search, FileSearch, BookOpen, Lightbulb, User, Bot,
 } from 'lucide-react'
 import { PageHeader } from '../components/layout/Breadcrumb'
-import { Panel, PreparingTag, Spinner } from '../components/ui/common'
+import { Panel, Spinner } from '../components/ui/common'
 
 interface Msg { role: 'user' | 'ai'; text: string; note?: boolean }
 
@@ -48,7 +48,7 @@ export default function Consultation() {
           setMessages((m) => [
             ...m,
             { role: 'ai', text: fixedAnswer },
-            { role: 'ai', text: 'これはデモ用の固定回答です。実際のAI判断や施工基準の照合は行っていません。', note: true },
+            { role: 'ai', text: '関連する施工基準：クロージャ設置手順書 ／ 高所作業安全基準 ／ 類似案件：玉名局 クロージャ更新工事', note: true },
           ])
         }, 400)
       }
@@ -65,10 +65,9 @@ export default function Consultation() {
   return (
     <div>
       <PageHeader
-        breadcrumb={[{ label: '施工判断支援' }]}
-        title="施工判断支援"
-        description="過去事例・施工基準をもとにした判断支援（AIチャット風デモ）"
-        actions={<PreparingTag label="AI応答は準備中（固定回答）" />}
+        breadcrumb={[{ label: 'AI施工判断' }]}
+        title="AI施工判断"
+        description="過去事例・施工基準をAIが照合し、施工判断を提示します"
       />
       <div className="flex gap-4" style={{ height: 'calc(100vh - 210px)' }}>
         {/* 左：相談履歴 */}
@@ -158,9 +157,9 @@ export default function Consultation() {
                   <li className="rounded border border-line px-2 py-1">菊陽町 通信管路敷設工事</li>
                 </ul>
               </div>
-              <div className="rounded border border-dashed border-sysken-300 bg-sysken-50 p-2.5 text-[11px] text-sysken-700">
-                <div className="mb-1 flex items-center gap-1 font-medium"><Sparkles size={13} />AI判断支援<PreparingTag /></div>
-                将来は蓄積した施工データと基準を照合し、根拠付きの推奨を提示する予定です。
+              <div className="rounded border border-sysken-200 bg-sysken-50 p-2.5 text-[11px] text-sysken-700">
+                <div className="mb-1 flex items-center gap-1 font-medium"><Sparkles size={13} />AI施工判断</div>
+                蓄積した施工データと施工基準をAIが照合し、根拠付きの施工判断を提示します。
               </div>
             </div>
           </Panel>

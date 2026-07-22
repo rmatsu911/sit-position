@@ -112,7 +112,7 @@ export default function Dashboard() {
             </div>
             <div className="mt-2 flex flex-wrap gap-1 border-t border-line pt-2">
               {todayEnv.advisory.map((a) => <Badge key={a} tone="warn" dot>{a}</Badge>)}
-              <Badge tone="ng" dot>作業中止候補：高所作業（強風時）</Badge>
+              <Badge tone="ng" dot>作業中止対象：高所作業（強風時）</Badge>
             </div>
           </Panel>
 

@@ -12,7 +12,7 @@ import { RecognitionOverlay, RecognitionLegend } from '../components/ui/Recognit
 import { useApp } from '../context/AppContext'
 import { photos as seedPhotos, photoTags } from '../data/photos'
 import {
-  classificationFor, recogBoxesFor, classCandidatesFor, confirmCandidates, classifyNote,
+  recognitionFor, recogBoxesFor, detectionsFor, qualityJudgeFor, boxColor,
 } from '../data/aiPreview'
 import type { Photo } from '../types'
 
@@ -87,16 +87,16 @@ export default function Photos() {
     }
   }, [uploadOpen, uploadPct, photos.length, toast])
 
-  // 分類候補を写真情報へ反映（フロント上の表示変更のみ）
+  // AI認識結果を写真情報へ反映
   function reflectClassification(id: string) {
     const target = photos.find((p) => p.id === id)
     if (!target) return
-    const c = classificationFor(target)
+    const c = recognitionFor(target)
     setPhotos((prev) => prev.map((p) => (p.id === id
-      ? { ...p, tags: Array.from(new Set([...p.tags, c.分類候補, c.設備候補])), workType: c.工種候補, process: c.工程候補 }
+      ? { ...p, tags: Array.from(new Set([...p.tags, c.認識結果, c.設備判定])), workType: c.工種判定, process: c.工程判定 }
       : p)))
     setReflected((prev) => new Set(prev).add(id))
-    toast('分類候補を写真情報へ反映しました。', 'ok')
+    toast('AI認識結果を写真情報へ反映しました。', 'ok')
   }
 
   const stats = {
@@ -147,7 +147,7 @@ export default function Photos() {
         <span className="ml-auto text-xs text-ink-soft">{filtered.length} 枚表示</span>
       </div>
 
-      {/* 写真分類支援（画像認識イメージ・参考表示） */}
+      {/* AI施工写真分類 */}
       <ClassificationSupport
         photos={filtered.length ? filtered : photos}
         targetId={classTargetId}
@@ -216,15 +216,16 @@ function ClassificationSupport({
 }) {
   const target = photos.find((p) => p.id === targetId) ?? photos[0]
   if (!target) return null
-  const c = classificationFor(target)
+  const c = recognitionFor(target)
+  const detections = detectionsFor(target)
   const isReflected = reflected.has(target.id)
   const indoor = target.place.includes('局舎') || target.place.includes('MDF')
 
   return (
-    <Panel title="写真分類支援（画像認識イメージ）" className="mb-3"
-      action={<span className="text-[12px] text-ink-soft">対象写真の分類候補・確認候補を参考表示します</span>}>
+    <Panel title="AI施工写真分類" className="mb-3"
+      action={<span className="text-[12px] text-ink-soft">AIが施工写真を認識し、物体検出・分類・判定を行います</span>}>
       <div className="flex gap-4">
-        {/* 対象写真＋認識枠 */}
+        {/* 対象写真＋検出枠 */}
         <div className="w-72 shrink-0">
           <div className="relative overflow-hidden rounded border border-line">
             <PhotoPlaceholder type={target.colorKey} no={target.no} className="aspect-[4/3] w-full" indoor={indoor} board={{ process: target.process, date: target.takenAt }} />
@@ -239,30 +240,49 @@ function ClassificationSupport({
           <div className="mt-2"><RecognitionLegend /></div>
         </div>
 
-        {/* 候補フィールド */}
+        {/* AI認識結果 */}
         <div className="min-w-0 flex-1">
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 text-[13.5px]">
-            <Cand label="分類候補" value={c.分類候補} strong />
-            <Cand label="現場候補" value={c.現場候補} />
-            <Cand label="工種候補" value={c.工種候補} />
-            <Cand label="工程候補" value={c.工程候補} />
-            <Cand label="設備候補" value={c.設備候補} />
+          <p className="mb-2 text-[13px] font-semibold text-sysken-700">AI認識結果</p>
+          <div className="grid grid-cols-2 gap-4">
+            {/* 物体検出 */}
             <div>
-              <p className="text-[11.5px] text-ink-soft">確認状態</p>
-              <p className="mt-0.5">{isReflected ? <Badge tone="ok" dot>反映済み</Badge> : <Badge tone="warn" dot>未反映</Badge>}</p>
+              <p className="mb-1 text-[11.5px] text-ink-soft">物体検出</p>
+              <div className="space-y-1.5">
+                {detections.map((d) => (
+                  <div key={d.label} className="flex items-center gap-2">
+                    <span className="w-28 shrink-0 text-[13px] text-ink">{d.label}</span>
+                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                      <div className="h-full rounded-full" style={{ width: `${d.pct}%`, background: boxColor[d.kind] }} />
+                    </div>
+                    <span className="w-10 shrink-0 text-right text-[13px] font-semibold tabular-nums text-ink">{d.pct}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* 判定 */}
+            <div className="grid grid-cols-1 gap-y-2.5 text-[13.5px]">
+              <Cand label="認識結果" value={c.認識結果} strong />
+              <Cand label="工種判定" value={c.工種判定} />
+              <Cand label="工程判定" value={c.工程判定} />
+              <Cand label="設備判定" value={c.設備判定} />
+              <Cand label="現場判定" value={c.現場判定} />
             </div>
           </div>
 
-          <div className="mt-3 flex items-center gap-3">
+          <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-line pt-3">
             <button className="btn-primary" disabled={isReflected} onClick={() => onReflect(target.id)}>
-              <CheckCircle2 size={15} />分類候補を反映
+              <CheckCircle2 size={15} />認識結果を写真情報へ反映
             </button>
-            {isReflected && <span className="text-[12.5px] text-ok">写真情報（タグ・工種・工程・設備）へ反映しました。</span>}
+            {isReflected ? (
+              <div className="flex items-center gap-3 text-[12.5px]">
+                <Badge tone="ok" dot>反映済み</Badge>
+                <span className="text-ink-soft">反映者：山田 太郎</span>
+                <span className="text-ink-soft">反映日時：2026/07/21 15:32</span>
+              </div>
+            ) : (
+              <Badge tone="warn" dot>未反映</Badge>
+            )}
           </div>
-
-          <p className="mt-3 rounded border border-dashed border-sysken-300 bg-sysken-50 px-3 py-2 text-[12px] text-sysken-700">
-            {classifyNote}
-          </p>
         </div>
       </div>
     </Panel>
@@ -388,9 +408,10 @@ function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNex
   const [showBoxes, setShowBoxes] = useState(true)
   useEffect(() => setComment(photo.comment), [photo])
   const indoor = photo.place.includes('局舎') || photo.place.includes('MDF')
-  const cls = classificationFor(photo)
-  const candidates = classCandidatesFor(photo)
+  const cls = recognitionFor(photo)
+  const detections = detectionsFor(photo)
   const boxes = recogBoxesFor(photo)
+  const judge = qualityJudgeFor(photo)
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-ink/60" onClick={onClose} />
@@ -402,7 +423,7 @@ function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNex
           {hasPrev && <button onClick={onPrev} className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-white/85 p-2 hover:bg-white"><ChevronLeft size={22} /></button>}
           {hasNext && <button onClick={onNext} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white/85 p-2 hover:bg-white"><ChevronRight size={22} /></button>}
           <button onClick={() => setShowBoxes((v) => !v)} className="absolute right-3 top-3 rounded border border-white/40 bg-ink/60 px-2 py-1 text-[12px] text-white hover:bg-ink/80">
-            {showBoxes ? '認識イメージを隠す' : '認識イメージを表示'}
+            {showBoxes ? '認識結果を非表示' : '認識結果を表示'}
           </button>
         </div>
         {/* 情報 */}
@@ -414,6 +435,28 @@ function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNex
               <button onClick={onClose} className="text-ink-soft hover:text-ink">✕</button>
             </div>
           </div>
+          {/* AI画像認識結果 */}
+          <div className="border-b border-line px-4 py-3">
+            <p className="mb-2 text-[13px] font-semibold text-sysken-700">AI画像認識結果</p>
+            <p className="mb-1 text-[11.5px] text-ink-soft">物体検出結果</p>
+            <div className="space-y-1.5">
+              {detections.map((d) => (
+                <div key={d.label} className="flex items-center gap-2">
+                  <span className="w-24 shrink-0 text-[13px] text-ink">{d.label}</span>
+                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                    <div className="h-full rounded-full" style={{ width: `${d.pct}%`, background: boxColor[d.kind] }} />
+                  </div>
+                  <span className="w-10 shrink-0 text-right text-[13px] font-semibold tabular-nums text-ink">{d.pct}%</span>
+                </div>
+              ))}
+            </div>
+            <dl className="mt-2.5 space-y-1.5 text-[13px]">
+              <Row label="工程判定" value={cls.工程判定} />
+              <Row label="設備判定" value={cls.設備判定} />
+              <Row label="品質判定" value={<span className={`font-medium ${judge === '良好' ? 'text-ok' : judge === '要修正' ? 'text-ng' : 'text-warn'}`}>{judge}</span>} />
+            </dl>
+          </div>
+
           <dl className="space-y-2 px-4 py-3 text-[13px]">
             <Row label="撮影日時" value={photo.takenAt} />
             <Row label="撮影者" value={photo.photographer} />
@@ -421,40 +464,17 @@ function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNex
             <Row label="工種" value={photo.workType} />
             <Row label="工程" value={photo.process} />
             <Row label="設備" value={photo.equipment} />
-            <Row label="分類候補" value={<span className="font-medium text-sysken-700">{cls.分類候補}</span>} />
+            <Row label="認識結果" value={<span className="font-medium text-sysken-700">{cls.認識結果}</span>} />
             <Row label="反映状況" value={reflected ? <Badge tone="ok" dot>反映済み</Badge> : <Badge tone="warn" dot>未反映</Badge>} />
             <Row label="確認状況" value={<StatusBadge status={photo.confirm} />} />
             <Row label="GPS" value={<span className="flex items-center gap-1 text-ink-soft"><MapPin size={13} />{photo.gps}</span>} />
             <Row label="タグ" value={<div className="flex flex-wrap justify-end gap-1">{photo.tags.map((t) => <Badge key={t} tone="muted">{t}</Badge>)}</div>} />
           </dl>
 
-          {/* 画像分類候補 */}
-          <div className="border-t border-line px-4 py-3">
-            <p className="mb-1.5 text-[13px] font-semibold text-ink">画像分類候補<span className="ml-1 text-[11px] font-normal text-ink-soft">（参考表示）</span></p>
-            <ol className="space-y-1">
-              {candidates.map((c, i) => (
-                <li key={i} className="flex items-center gap-2 text-[13px]">
-                  <span className="flex h-4 w-4 items-center justify-center rounded-full bg-sysken-500 text-[10px] font-bold text-white">{i + 1}</span>
-                  <span className="text-ink">{c}</span>
-                  <span className="text-[11px] text-ink-soft">候補</span>
-                </li>
-              ))}
-            </ol>
-          </div>
-
-          {/* 確認候補 */}
-          <div className="border-t border-line px-4 py-3">
-            <p className="mb-1.5 text-[13px] font-semibold text-ink">確認候補<span className="ml-1 text-[11px] font-normal text-ink-soft">（参考表示）</span></p>
-            <ul className="space-y-1 text-[13px] text-ink">
-              {confirmCandidates.map((c) => <li key={c} className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-warn" />{c}</li>)}
-            </ul>
-            <p className="mt-2 text-[11.5px] text-ink-soft">分類候補・確認候補は検証用データに基づく参考表示です。実際の画像認識は行っていません。</p>
-          </div>
-
           {/* 反映＋コメント */}
           <div className="border-t border-line px-4 py-3">
             <button className="btn-primary w-full justify-center" disabled={reflected} onClick={onReflect}>
-              <CheckCircle2 size={15} />分類候補を反映
+              <CheckCircle2 size={15} />認識結果を反映
             </button>
             <label className="label mt-3">担当者コメント</label>
             <textarea className="field h-16 resize-none" value={comment} onChange={(e) => setComment(e.target.value)} placeholder="コメントを入力..." />

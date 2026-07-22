@@ -467,7 +467,7 @@ export default function Schedule() {
       </Modal>
 
       {/* 工期予測モーダル */}
-      <Modal open={forecastOpen} onClose={() => setForecastOpen(false)} title="AI工期予測（準備中）" size="lg"
+      <Modal open={forecastOpen} onClose={() => setForecastOpen(false)} title="AI工期予測" size="lg"
         footer={<button className="btn-primary" onClick={() => setForecastOpen(false)}>閉じる</button>}>
         <ForecastView />
       </Modal>
@@ -588,8 +588,8 @@ function GanttRow({
 function ForecastView() {
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 rounded border border-dashed border-sysken-300 bg-sysken-50 px-3 py-2 text-xs text-sysken-700">
-        AI工期予測：準備中 ／ 現在はサンプルデータによる表示です。
+      <div className="flex items-center gap-2 rounded border border-sysken-200 bg-sysken-50 px-3 py-2 text-xs text-sysken-700">
+        AIが実績進捗・天候・要員稼働を解析し、完了予定日と遅延リスクを予測しています。
       </div>
       <div className="grid grid-cols-5 gap-2">
         {[

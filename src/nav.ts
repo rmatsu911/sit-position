@@ -48,5 +48,5 @@ export const routeTitle: Record<string, string> = {
   '/reports': '報告書',
   '/notifications': '通知',
   '/settings': '設定',
-  '/consultation': '施工判断支援',
+  '/consultation': 'AI施工判断',
 }

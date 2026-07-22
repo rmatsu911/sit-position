@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Sparkles, MessageSquareText, X, Info } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
-import { aiFeatures, aiPanelNote, aiPanelHeading, aiPanelIntro, type AiFeature } from '../../data/aiPanel'
+import { aiFeatures, aiPanelHeading, aiPanelIntro, type AiFeature } from '../../data/aiPanel'
 import { Modal } from '../ui/Modal'
 
 export function AISupportPanel() {
@@ -29,7 +29,7 @@ export function AISupportPanel() {
       </header>
 
       <div className="thin-scroll flex-1 overflow-y-auto p-4">
-        <p className="mb-1 text-[14px] font-semibold text-ink">将来追加予定のAI機能</p>
+        <p className="mb-1 text-[14px] font-semibold text-ink">AI機能</p>
         <p className="mb-3 text-[12px] leading-relaxed text-ink-soft">
           {aiPanelIntro}
         </p>
@@ -43,27 +43,23 @@ export function AISupportPanel() {
                 className="mt-1.5 inline-flex items-center gap-1 rounded border border-sysken-200 bg-sysken-50 px-2 py-1 text-[12px] font-medium text-sysken-700 hover:bg-sysken-100"
               >
                 <Info size={13} />
-                機能説明を見る
+                機能の詳細
               </button>
             </div>
           ))}
         </div>
 
-        {/* 施工判断支援への導線 */}
+        {/* AI施工判断への導線 */}
         <button
           onClick={() => navigate('/consultation')}
           className="mt-4 flex w-full items-center gap-2 rounded border border-sysken-200 bg-sysken-50 px-3 py-2.5 text-left hover:bg-sysken-100"
         >
           <MessageSquareText size={17} className="text-sysken-600" />
           <div>
-            <p className="text-[13.5px] font-medium text-sysken-700">施工判断支援を開く</p>
-            <p className="text-[12px] text-ink-soft">AIチャット風の相談画面（デモ）</p>
+            <p className="text-[13.5px] font-medium text-sysken-700">AI施工判断を開く</p>
+            <p className="text-[12px] text-ink-soft">AIチャットによる施工判断</p>
           </div>
         </button>
-      </div>
-
-      <div className="border-t border-line bg-canvas px-4 py-3 text-[12px] leading-relaxed text-ink-soft">
-        {aiPanelNote}
       </div>
 
       <Modal
@@ -79,12 +75,9 @@ export function AISupportPanel() {
       >
         {detail && (
           <div className="space-y-4">
-            <Field label="将来実装する機能">{detail.future}</Field>
-            <Field label="利用予定のデータ">{detail.data}</Field>
-            <Field label="期待される効果">{detail.effect}</Field>
-            <div className="rounded border border-line bg-canvas p-3 text-[12.5px] leading-relaxed text-ink-soft">
-              本システムはまず「データを収集・整理・見える化」する業務基盤を構築しています。実際の現場で蓄積したデータを活用し、上記のAI機能を段階的に追加する計画です。現在は未実装で、表示はすべてサンプルです。
-            </div>
+            <Field label="機能概要">{detail.future}</Field>
+            <Field label="利用データ">{detail.data}</Field>
+            <Field label="効果">{detail.effect}</Field>
           </div>
         )}
       </Modal>

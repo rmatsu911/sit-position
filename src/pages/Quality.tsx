@@ -1,16 +1,16 @@
 import { useMemo, useState } from 'react'
 import { ScanSearch, CheckCircle2, RotateCcw, PauseCircle, ArrowRight } from 'lucide-react'
 import { PageHeader } from '../components/layout/Breadcrumb'
-import { Panel, PreparingTag } from '../components/ui/common'
+import { Panel } from '../components/ui/common'
 import { StatusBadge, Badge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
 import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
 import { useApp } from '../context/AppContext'
-import { qualityItems as seed, qualitySummary, anomalyFindings, anomalyMeta, confirmPoints } from '../data/quality'
+import { qualityItems as seed, qualitySummary, anomalyFindings, anomalyMeta, detectionPoints } from '../data/quality'
 import { photos } from '../data/photos'
 import type { QualityItem } from '../types'
 
-const flow = ['写真登録', '分類候補の提示', '品質確認', 'コメント入力', '修正・再撮影依頼', '再確認', '承認']
+const flow = ['写真登録', 'AI画像認識', '品質確認', 'コメント入力', '修正・再撮影依頼', '再確認', '承認']
 
 export default function Quality() {
   const { toast } = useApp()
@@ -45,7 +45,7 @@ export default function Quality() {
         breadcrumb={[{ label: '品質管理' }]}
         title="品質管理"
         description="施工写真・検査項目の確認と承認"
-        actions={<button className="btn-default" onClick={() => setAnomalyOpen(true)}><ScanSearch size={15} />施工品質比較</button>}
+        actions={<button className="btn-default" onClick={() => setAnomalyOpen(true)}><ScanSearch size={15} />AI品質チェック</button>}
       />
 
       {/* 集計 */}
@@ -67,7 +67,6 @@ export default function Quality() {
               {i < flow.length - 1 && <ArrowRight size={14} className="text-slate-300" />}
             </div>
           ))}
-          <span className="ml-2"><PreparingTag label="AIによる分類候補・確認候補の提示は将来追加予定" /></span>
         </div>
       </Panel>
 
@@ -123,8 +122,8 @@ export default function Quality() {
                 <div className="overflow-hidden rounded border border-line">
                   {ph ? <PhotoPlaceholder type={ph.colorKey} no={ph.no} className="aspect-[4/3] w-full" /> : null}
                 </div>
-                <div className="mt-2 flex items-center gap-1.5 rounded border border-dashed border-sysken-300 bg-sysken-50 px-2 py-1 text-[12px] text-sysken-700">
-                  <span>分類候補：{ph?.aiCandidate}</span><span className="text-ink-soft">（参考表示）</span>
+                <div className="mt-2 flex items-center gap-1.5 rounded border border-sysken-200 bg-sysken-50 px-2 py-1 text-[12px] text-sysken-700">
+                  <span className="font-medium">AI認識結果：{ph?.aiCandidate}</span>
                 </div>
               </div>
               <div className="space-y-3 text-[13px]">
@@ -148,16 +147,17 @@ export default function Quality() {
         })()}
       </Modal>
 
-      {/* 施工品質比較 */}
-      <Modal open={anomalyOpen} onClose={() => setAnomalyOpen(false)} title="施工品質比較（確認対象 vs 完成基準）" size="xl"
+      {/* AI施工品質チェック */}
+      <Modal open={anomalyOpen} onClose={() => setAnomalyOpen(false)} title="AI施工品質チェック" size="xl"
         footer={
           <div className="flex w-full items-center justify-between">
             <div className="flex items-center gap-2 text-[12.5px] text-ink-soft">確認状況：<StatusBadge status={anomalyStatus} /></div>
             <div className="flex items-center gap-2">
-              <button className="btn-default" onClick={() => toast('コメントを追加しました（デモ）', 'ok')}>コメントを追加</button>
+              <button className="btn-default" onClick={() => { setAnomalyStatus('確認済み'); toast('問題なしとして確認しました', 'ok') }}>問題なし</button>
+              <button className="btn-default" onClick={() => toast('コメントを追加しました', 'ok')}>コメントを追加</button>
               <button className="btn-danger" onClick={() => { setAnomalyStatus('再撮影依頼'); toast('再撮影を依頼しました', 'ng') }}>再撮影を依頼</button>
+              <button className="btn-default" onClick={() => { setAnomalyStatus('再撮影依頼'); toast('修正を依頼しました', 'ng') }}>修正を依頼</button>
               <button className="btn-default" onClick={() => { setAnomalyStatus('保留'); toast('保留にしました', 'warn') }}>保留</button>
-              <button className="btn-default" onClick={() => { setAnomalyStatus('確認済み'); toast('問題なしとして確認しました', 'ok') }}>問題なしとして確認</button>
               <button className="btn-primary" onClick={() => { setAnomalyStatus('承認済み'); toast('承認しました', 'ok') }}>承認</button>
             </div>
           </div>
@@ -178,7 +178,7 @@ export default function Quality() {
                   </g>
                 ))}
               </svg>
-              <span className="absolute bottom-1 left-1 rounded bg-ink/70 px-1.5 py-0.5 text-[10px] text-white">確認候補（参考表示）</span>
+              <span className="absolute bottom-1 left-1 rounded bg-ink/70 px-1.5 py-0.5 text-[10px] text-white">AI検出結果</span>
             </div>
           </div>
           <div>
@@ -193,19 +193,19 @@ export default function Quality() {
           </div>
         </div>
 
-        {/* 確認候補 */}
+        {/* AI検出結果 */}
         <div className="mt-3 rounded border border-line bg-canvas px-4 py-3">
-          <p className="mb-1.5 text-[13px] font-semibold text-ink">確認候補<span className="ml-1 text-[11px] font-normal text-ink-soft">（参考表示）</span></p>
+          <p className="mb-1.5 text-[13px] font-semibold text-ink">AI検出結果</p>
           <div className="flex flex-wrap gap-2">
-            {confirmPoints.map((p, i) => (
-              <span key={p} className="inline-flex items-center gap-1.5 rounded border border-line bg-white px-2.5 py-1 text-[13px]">
-                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-warn text-[10px] font-bold text-white">{i + 1}</span>{p}
+            {detectionPoints.map((p, i) => (
+              <span key={p} className="inline-flex items-center gap-1.5 rounded border border-red-200 bg-red-50 px-2.5 py-1 text-[13px] text-ng">
+                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-ng text-[10px] font-bold text-white">{i + 1}</span>{p}
               </span>
             ))}
           </div>
         </div>
 
-        {/* 写真メタ情報 */}
+        {/* 詳細情報 */}
         <div className="mt-3 grid grid-cols-5 gap-x-4 gap-y-2 rounded border border-line bg-canvas px-4 py-3 text-[13px]">
           <Meta label="案件名" value={anomalyMeta.project} span={2} />
           <Meta label="工程" value={anomalyMeta.process} />
@@ -214,15 +214,11 @@ export default function Quality() {
           <Meta label="撮影日時" value={anomalyMeta.takenAt} />
           <Meta label="撮影者" value={anomalyMeta.photographer} />
           <Meta label="確認担当者" value={anomalyMeta.checker} />
-          <Meta label="確認優先度" value={<span className="font-medium text-ng">{anomalyMeta.priority}</span>} />
+          <Meta label="AI判定結果" value={<span className="font-medium text-ng">{anomalyMeta.judge}</span>} />
+          <Meta label="重要度" value={<span className="font-medium text-warn">{anomalyMeta.priority}</span>} />
           <Meta label="確認状況" value={<StatusBadge status={anomalyStatus} />} />
           <Meta label="対応期限" value={anomalyMeta.dueDate} />
         </div>
-
-        <p className="mt-3 flex items-center gap-1 text-[12px] text-ink-soft">
-          <span className="inline-block h-2 w-2 rounded-full bg-slate-300" />
-          確認候補は検証用データに基づく参考表示です。実際の画像比較や画像認識は行っていません。
-        </p>
       </Modal>
     </div>
   )
