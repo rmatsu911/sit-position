@@ -2,7 +2,7 @@ import { Circle, Database, Save, List } from 'lucide-react'
 
 export function StatusBar({ count }: { count?: number }) {
   return (
-    <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-line bg-canvas px-4 text-[11px] text-ink-soft">
+    <footer className="flex h-8 shrink-0 items-center gap-4 border-t border-line bg-canvas px-4 text-[12px] text-ink-soft">
       <span className="flex items-center gap-1">
         <Circle size={9} className="fill-warn text-warn" />
         接続状態：デモ環境

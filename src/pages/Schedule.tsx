@@ -307,13 +307,13 @@ export default function Schedule() {
         <div className="thin-scroll flex max-h-[calc(100vh-320px)] overflow-y-auto">
           {/* 左：工程表（横スクロール・固定列） */}
           <div className="thin-scroll shrink-0 overflow-x-auto border-r border-line" style={{ width: 560 }}>
-            <table className="grid-table text-xs">
+            <table className="grid-table text-[12.5px]">
               <thead className="sticky top-0 z-20 bg-canvas">
                 <tr>
                   {LEFT_COLS.map((c, i) => (
                     <th
                       key={c.key}
-                      className={`h-14 border-r border-line px-2 text-left align-bottom pb-2 font-semibold text-ink-soft ${i < 2 ? 'sticky bg-canvas z-10' : ''}`}
+                      className={`h-16 border-r border-line px-2 text-left align-bottom pb-2 text-[12.5px] font-semibold text-ink-soft ${i < 2 ? 'sticky bg-canvas z-10' : ''}`}
                       style={{ width: c.w, minWidth: c.w, left: i === 0 ? 0 : i === 1 ? 46 : undefined }}
                     >
                       {c.label}
@@ -488,21 +488,21 @@ function GanttHeader({ dw, view }: { dw: number; view: ViewMode }) {
     <div className="sticky top-0 z-20 bg-canvas">
       <div className="flex h-6 border-b border-line">
         {months.map((m, i) => (
-          <div key={i} className="flex items-center border-r border-line px-2 text-[11px] font-semibold text-ink" style={{ width: m.span * dw }}>
+          <div key={i} className="flex items-center border-r border-line px-2 text-[12px] font-semibold text-ink" style={{ width: m.span * dw }}>
             {m.label}
           </div>
         ))}
       </div>
-      <div className="flex h-8 border-b border-line">
+      <div className="flex h-10 border-b border-line">
         {days.map((d, i) => {
           const wk = isWeekend(d)
           const hol = isHoliday(d)
           const showNum = view === 'day' || view === 'week' || d.getDate() === 1 || d.getDay() === 1
           return (
-            <div key={i} className={`flex flex-col items-center justify-center border-r border-line/70 ${hol ? 'bg-red-50 text-ng' : wk ? 'bg-slate-50 text-slate-400' : 'text-ink-soft'}`} style={{ width: dw }}>
-              {showNum && <span className="text-[10px] leading-none tabular-nums">{d.getDate()}</span>}
-              {view === 'day' && <span className="text-[9px] leading-none">{weekdayLabel(d)}</span>}
-              {view === 'day' && <span className="text-[9px] leading-none">{weatherFor(d)}</span>}
+            <div key={i} className={`flex flex-col items-center justify-center gap-0.5 border-r border-line/70 ${hol ? 'bg-red-50 text-ng' : wk ? 'bg-slate-50 text-slate-400' : 'text-ink-soft'}`} style={{ width: dw }}>
+              {showNum && <span className="text-[11px] font-medium leading-none tabular-nums">{d.getDate()}</span>}
+              {view === 'day' && <span className="text-[11px] leading-none">{weekdayLabel(d)}</span>}
+              {view === 'day' && <span className="text-[11px] leading-none">{weatherFor(d)}</span>}
             </div>
           )
         })}
@@ -617,10 +617,10 @@ function ForecastView() {
               <linearGradient id="pf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#005bac" stopOpacity={0.2} /><stop offset="100%" stopColor="#005bac" stopOpacity={0} /></linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#eef1f5" />
-            <XAxis dataKey="week" tick={{ fontSize: 11, fill: '#667085' }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fontSize: 11, fill: '#667085' }} axisLine={false} tickLine={false} unit="%" />
+            <XAxis dataKey="week" tick={{ fontSize: 12, fill: '#667085' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 12, fill: '#667085' }} axisLine={false} tickLine={false} unit="%" />
             <Tooltip contentStyle={{ borderRadius: 4, border: '1px solid #d6dce3', fontSize: 12 }} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
             <Area type="monotone" dataKey="plan" name="予定進捗" stroke="#94a3b8" strokeWidth={2} fill="none" />
             <Area type="monotone" dataKey="actual" name="実績進捗" stroke="#005bac" strokeWidth={2.5} fill="url(#pf)" />
             <Line type="monotone" dataKey="predict" name="予測進捗" stroke="#d64545" strokeWidth={2} strokeDasharray="5 4" dot={false} />

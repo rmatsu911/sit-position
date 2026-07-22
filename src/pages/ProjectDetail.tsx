@@ -161,7 +161,7 @@ function Materials() {
   return (
     <Panel title="資材" bodyClassName="p-0">
       <table className="grid-table text-[13px]">
-        <thead className="bg-canvas text-xs text-ink-soft"><tr>{['資材名', '仕様', '予定数', '使用数', '残', '単位'].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}</tr></thead>
+        <thead className="bg-canvas text-[12.5px] text-ink-soft"><tr>{['資材名', '仕様', '予定数', '使用数', '残', '単位'].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}</tr></thead>
         <tbody>
           {rows.map((r) => (
             <tr key={r.name} className="hover:bg-canvas"><td className="px-3 py-1.5 font-medium">{r.name}</td><td className="px-3 text-ink-soft">{r.spec}</td><td className="px-3 tabular-nums">{r.plan}</td><td className="px-3 tabular-nums">{r.used}</td><td className="px-3 tabular-nums text-ink-soft">{r.plan - r.used}</td><td className="px-3 text-ink-soft">{r.unit}</td></tr>

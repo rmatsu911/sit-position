@@ -126,7 +126,7 @@ export default function Projects() {
       <Panel bodyClassName="p-0" className="overflow-hidden">
         <div className="thin-scroll overflow-x-auto">
           <table className="grid-table text-[13px]">
-            <thead className="bg-canvas text-xs text-ink-soft">
+            <thead className="bg-canvas text-[12.5px] text-ink-soft">
               <tr>
                 <th className="px-3 py-2"><input type="checkbox" className="h-4 w-4 accent-sysken-500" checked={selected.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} /></th>
                 {['案件番号', '工事名', '顧客', 'エリア', '担当部署', '現場責任者', '開始日', '完了予定', '進捗率', 'ステータス', '写真未確認', '品質確認'].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}

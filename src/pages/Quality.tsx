@@ -6,7 +6,7 @@ import { StatusBadge, Badge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
 import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
 import { useApp } from '../context/AppContext'
-import { qualityItems as seed, qualitySummary, anomalyFindings } from '../data/quality'
+import { qualityItems as seed, qualitySummary, anomalyFindings, anomalyMeta } from '../data/quality'
 import { photos } from '../data/photos'
 import type { QualityItem } from '../types'
 
@@ -18,6 +18,7 @@ export default function Quality() {
   const [detail, setDetail] = useState<QualityItem | null>(null)
   const [anomalyOpen, setAnomalyOpen] = useState(false)
   const [comment, setComment] = useState('')
+  const [anomalyStatus, setAnomalyStatus] = useState('確認待ち')
 
   const photoById = useMemo(() => new Map(photos.map((p) => [p.id, p])), [])
 
@@ -74,7 +75,7 @@ export default function Quality() {
       <Panel bodyClassName="p-0" className="overflow-hidden">
         <div className="thin-scroll overflow-x-auto">
           <table className="grid-table text-[13px]">
-            <thead className="bg-canvas text-xs text-ink-soft">
+            <thead className="bg-canvas text-[12.5px] text-ink-soft">
               <tr>
                 {['対象写真', '案件', '工程', '検査項目', '判定', 'コメント', '担当者', '確認者', '対応期限', 'ステータス', ''].map((h) => (
                   <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>
@@ -149,41 +150,72 @@ export default function Quality() {
 
       {/* 異常検知デモ */}
       <Modal open={anomalyOpen} onClose={() => setAnomalyOpen(false)} title="異常検知デモ（施工中 vs 完成見本）" size="xl"
-        footer={<button className="btn-primary" onClick={() => setAnomalyOpen(false)}>閉じる</button>}>
+        footer={
+          <div className="flex w-full items-center justify-between">
+            <div className="flex items-center gap-2 text-[12.5px] text-ink-soft">対応状況：<StatusBadge status={anomalyStatus} /></div>
+            <div className="flex items-center gap-2">
+              <button className="btn-default" onClick={() => { setAnomalyStatus('確認済み'); toast('「問題なし」で確認済みにしました', 'ok') }}>問題なし</button>
+              <button className="btn-default" onClick={() => toast('コメントを追加しました（デモ）', 'ok')}>コメントを追加</button>
+              <button className="btn-danger" onClick={() => { setAnomalyStatus('再撮影依頼'); toast('再撮影を依頼しました', 'ng') }}>再撮影を依頼</button>
+              <button className="btn-default" onClick={() => { setAnomalyStatus('保留'); toast('保留にしました', 'warn') }}>保留</button>
+              <button className="btn-primary" onClick={() => { setAnomalyStatus('承認済み'); toast('承認しました', 'ok') }}>承認</button>
+            </div>
+          </div>
+        }>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <p className="mb-1.5 text-[13px] font-semibold text-ink">施工中写真</p>
+            <p className="mb-1.5 text-[14px] font-semibold text-ink">施工中写真</p>
             <div className="relative overflow-hidden rounded border border-line">
-              <PhotoPlaceholder type="クロージャ" no="P-003" className="aspect-[4/3] w-full" />
+              <PhotoPlaceholder type="クロージャ" no={anomalyMeta.photoNo} className="aspect-[4/3] w-full" board={{ process: anomalyMeta.process, date: anomalyMeta.takenAt }} />
               <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 75" preserveAspectRatio="none">
-                {anomalyFindings.map((a, i) => (
-                  <g key={i}>
-                    <rect x={a.x} y={a.y} width={a.w} height={a.h} fill="none" stroke="#d64545" strokeWidth={0.8} />
-                    <rect x={a.x} y={a.y - 5} width={a.label.length * 2.6} height={4.5} fill="#d64545" />
-                    <text x={a.x + 0.8} y={a.y - 1.6} fontSize="3" fill="#fff">{a.label}</text>
+                {anomalyFindings.map((a) => (
+                  <g key={a.no}>
+                    <rect x={a.x} y={a.y} width={a.w} height={a.h} fill="none" stroke="#d64545" strokeWidth={1} />
+                    <circle cx={a.x} cy={a.y} r="3.4" fill="#d64545" />
+                    <text x={a.x} y={a.y + 1.2} fontSize="3.6" fill="#fff" textAnchor="middle" fontWeight="bold">{a.no}</text>
                   </g>
                 ))}
               </svg>
             </div>
-            <ul className="mt-2 space-y-1 text-xs text-ng">
-              <li>・ケーブル余長不足の可能性</li>
-              <li>・固定位置の確認が必要</li>
-              <li>・タグ未装着の可能性</li>
-              <li>・完成写真との差異あり</li>
-            </ul>
+            <ol className="mt-2 space-y-1 text-[13px] text-ng">
+              {anomalyFindings.map((a) => (
+                <li key={a.no} className="flex items-center gap-1.5">
+                  <span className="flex h-4 w-4 items-center justify-center rounded-full bg-ng text-[10px] font-bold text-white">{a.no}</span>
+                  {a.label}
+                </li>
+              ))}
+            </ol>
           </div>
           <div>
-            <p className="mb-1.5 text-[13px] font-semibold text-ink">完成見本写真</p>
+            <p className="mb-1.5 text-[14px] font-semibold text-ink">完成見本写真</p>
             <div className="overflow-hidden rounded border border-line">
-              <PhotoPlaceholder type="完成状態" no="見本" className="aspect-[4/3] w-full" />
+              <PhotoPlaceholder type="完成状態" no="見本" className="aspect-[4/3] w-full" board={{ process: 'クロージャ設置（完成）', date: '見本' }} />
             </div>
             <div className="mt-2 flex items-center gap-2">
               <Badge tone="ok" dot>基準に適合</Badge>
-              <span className="text-xs text-ink-soft">見本写真（正常状態）</span>
+              <span className="text-[13px] text-ink-soft">見本写真（正常状態）</span>
             </div>
           </div>
         </div>
-        <p className="mt-3 text-[11px] text-ink-soft">※ この判定はデモ表示です。実際の画像比較や異常検知は行っていません。</p>
+
+        {/* 写真メタ情報 */}
+        <div className="mt-3 grid grid-cols-5 gap-x-4 gap-y-2 rounded border border-line bg-canvas px-4 py-3 text-[13px]">
+          <Meta label="案件名" value={anomalyMeta.project} span={2} />
+          <Meta label="対象工程" value={anomalyMeta.process} />
+          <Meta label="写真番号" value={anomalyMeta.photoNo} />
+          <Meta label="撮影日時" value={anomalyMeta.takenAt} />
+          <Meta label="撮影者" value={anomalyMeta.photographer} />
+          <Meta label="確認担当者" value={anomalyMeta.checker} />
+          <Meta label="検査項目" value={anomalyMeta.inspectItem} span={2} />
+          <Meta label="判定レベル" value={<span className="font-medium text-warn">{anomalyMeta.level}</span>} />
+          <Meta label="対応期限" value={anomalyMeta.dueDate} />
+          <Meta label="対応状況" value={<StatusBadge status={anomalyStatus} />} />
+        </div>
+
+        <p className="mt-3 flex items-center gap-1 text-[12px] text-ink-soft">
+          <span className="inline-block h-2 w-2 rounded-full bg-slate-300" />
+          この判定はデモ表示です。実際の画像比較やAI異常検知は行っていません。
+        </p>
       </Modal>
     </div>
   )
@@ -191,4 +223,13 @@ export default function Quality() {
 
 function KV({ label, value }: { label: string; value: React.ReactNode }) {
   return <div className="flex justify-between gap-3"><span className="shrink-0 text-ink-soft">{label}</span><span className="text-right text-ink">{value}</span></div>
+}
+
+function Meta({ label, value, span }: { label: string; value: React.ReactNode; span?: number }) {
+  return (
+    <div className={span === 2 ? 'col-span-2' : ''}>
+      <p className="text-[11.5px] text-ink-soft">{label}</p>
+      <p className="mt-0.5 font-medium text-ink">{value}</p>
+    </div>
+  )
 }

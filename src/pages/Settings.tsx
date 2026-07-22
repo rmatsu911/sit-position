@@ -1,10 +1,12 @@
 import { useState } from 'react'
-import { User, Bell, Palette, Building2, ShieldCheck, Database } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { User, Bell, Palette, Building2, ShieldCheck, Database, MonitorPlay, Play, CheckCircle2 } from 'lucide-react'
 import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
-import { useApp } from '../context/AppContext'
+import { useApp, useDemoReset } from '../context/AppContext'
 
 const tabs = [
+  { id: 'demo', label: '発表用デモ', icon: MonitorPlay },
   { id: 'profile', label: 'プロフィール', icon: User },
   { id: 'notify', label: '通知', icon: Bell },
   { id: 'display', label: '表示', icon: Palette },
@@ -31,8 +33,10 @@ function Line({ label, desc, on, set }: { label: string; desc: string; on: boole
 }
 
 export default function Settings() {
-  const { toast } = useApp()
-  const [tab, setTab] = useState<string>('profile')
+  const { toast, demoMode, setDemoMode } = useApp()
+  const navigate = useNavigate()
+  const resetDemo = useDemoReset()
+  const [tab, setTab] = useState<string>('demo')
   const [flags, setFlags] = useState<Record<string, boolean>>({
     n1: true, n2: true, n3: false, n4: true, n5: true,
     d1: true, d2: false, d3: true,
@@ -54,6 +58,51 @@ export default function Settings() {
         </div>
 
         <div className="min-w-0 flex-1">
+          {tab === 'demo' && (
+            <div className="space-y-4">
+              <Panel title="発表用デモモード">
+                <div className="flex items-center justify-between rounded border border-line bg-canvas px-4 py-3">
+                  <div>
+                    <p className="text-[14px] font-semibold text-ink">発表用デモモード</p>
+                    <p className="mt-0.5 text-[12.5px] text-ink-soft">展示会・発表向けに、重要箇所を分かりやすく表示します。サンプル案件は「熊本中央局 光設備更改工事」に統一されます。</p>
+                  </div>
+                  <button
+                    onClick={() => { setDemoMode(!demoMode); toast(demoMode ? 'デモモードを終了しました' : '発表用デモモードを有効にしました', 'ok') }}
+                    className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${demoMode ? 'bg-sysken-500' : 'bg-slate-300'}`}
+                  >
+                    <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${demoMode ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+
+                <ul className="mt-3 space-y-1.5 text-[13px] text-ink">
+                  {[
+                    'サンプル案件を「熊本中央局 光設備更改工事」に統一',
+                    'デモで使用する通知を上部に表示',
+                    '予期しない空データ画面を表示しない',
+                    '削除などの危険操作は実データを消さず、演出のみ実行',
+                    '操作後の状態をいつでもリセット可能',
+                  ].map((t) => (
+                    <li key={t} className="flex items-start gap-2">
+                      <CheckCircle2 size={16} className={`mt-0.5 shrink-0 ${demoMode ? 'text-ok' : 'text-slate-300'}`} />
+                      {t}
+                    </li>
+                  ))}
+                </ul>
+              </Panel>
+
+              <Panel title="デモの初期化">
+                <p className="mb-3 text-[13px] text-ink-soft">
+                  「デモを最初から開始」を押すと、ダッシュボード表示・AIパネル閉・通知未読・工程進捗初期値・品質確認待ち・日報下書き・写真フィルター解除・全モーダル閉じた状態に戻します。
+                </p>
+                <button
+                  className="btn-primary"
+                  onClick={() => { resetDemo(); navigate('/dashboard') }}
+                >
+                  <Play size={16} />デモを最初から開始
+                </button>
+              </Panel>
+            </div>
+          )}
           {tab === 'profile' && (
             <Panel title="プロフィール設定">
               <div className="grid max-w-2xl grid-cols-2 gap-4">
@@ -93,7 +142,7 @@ export default function Settings() {
           {tab === 'org' && (
             <Panel title="組織・部署">
               <table className="grid-table max-w-2xl text-[13px]">
-                <thead className="bg-canvas text-xs text-ink-soft"><tr>{['部署', '責任者', '人数', '担当案件数'].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}</tr></thead>
+                <thead className="bg-canvas text-[12.5px] text-ink-soft"><tr>{['部署', '責任者', '人数', '担当案件数'].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}</tr></thead>
                 <tbody>
                   {[['施工管理部 第一課', '山田 太郎', 12, 3], ['施工管理部 第二課', '佐藤 花子', 10, 3], ['施工管理部 第三課', '渡辺 修', 8, 2], ['品質管理課', '品質 管理者', 4, '—']].map((r) => (
                     <tr key={r[0] as string} className="hover:bg-canvas"><td className="px-3 py-1.5 font-medium">{r[0]}</td><td className="px-3">{r[1]}</td><td className="px-3 tabular-nums">{r[2]}名</td><td className="px-3 tabular-nums">{r[3]}</td></tr>

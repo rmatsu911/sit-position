@@ -27,6 +27,15 @@ const kpis = [
 const toneText: Record<string, string> = { info: 'text-sysken-600', ok: 'text-ok', warn: 'text-warn', ng: 'text-ng' }
 const toneBg: Record<string, string> = { info: 'bg-sysken-50 text-sysken-600', ok: 'bg-emerald-50 text-ok', warn: 'bg-amber-50 text-warn', ng: 'bg-red-50 text-ng' }
 
+// 遅延・注意案件
+const alertCases = [
+  { id: 'a1', level: '高', name: '熊本中央局 光設備更改工事', issue: '接続損失測定が4日遅延', owner: '高橋 誠', due: '2026/07/22', status: '施工中', to: '/projects/p1' },
+  { id: 'a2', level: '中', name: '八代エリア FTTH増設工事', issue: '施工写真3枚未提出', owner: '山田 太郎', due: '2026/07/21', status: '未着手', to: '/photos' },
+  { id: 'a3', level: '中', name: '合志市 基地局設備更新工事', issue: '要員不足の可能性', owner: '田中 一郎', due: '2026/07/23', status: '確認待ち', to: '/personnel' },
+  { id: 'a4', level: '高', name: '天草地区 通信設備復旧工事', issue: '工程遅延（15%遅れ）', owner: '渡辺 修', due: '2026/07/24', status: '遅延', to: '/projects/p7' },
+  { id: 'a5', level: '低', name: '玉名局 クロージャ更新工事', issue: '完成図書の提出期限接近', owner: '高橋 誠', due: '2026/07/25', status: '確認待ち', to: '/reports' },
+]
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const recent = [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 5)
@@ -38,34 +47,59 @@ export default function Dashboard() {
       {/* KPI */}
       <div className="mb-4 grid grid-cols-8 gap-2.5">
         {kpis.map((k) => (
-          <button key={k.label} onClick={() => navigate(k.to)} className="flex flex-col items-start rounded border border-line bg-white p-3 text-left shadow-panel transition-colors hover:border-sysken-300">
-            <div className={`mb-2 flex h-8 w-8 items-center justify-center rounded ${toneBg[k.tone]}`}><k.icon size={17} /></div>
-            <p className="text-[11px] text-ink-soft">{k.label}</p>
-            <p className="mt-0.5"><span className={`text-2xl font-bold ${toneText[k.tone]}`}>{k.value}</span><span className="ml-0.5 text-xs text-ink-soft">{k.unit}</span></p>
+          <button key={k.label} onClick={() => navigate(k.to)} className="flex flex-col items-start rounded border border-line bg-white p-3.5 text-left shadow-panel transition-colors hover:border-sysken-300">
+            <div className={`mb-2 flex h-9 w-9 items-center justify-center rounded ${toneBg[k.tone]}`}><k.icon size={19} /></div>
+            <p className="text-[12.5px] text-ink-soft">{k.label}</p>
+            <p className="mt-0.5"><span className={`text-[28px] font-bold leading-none ${toneText[k.tone]}`}>{k.value}</span><span className="ml-0.5 text-[13px] text-ink-soft">{k.unit}</span></p>
           </button>
         ))}
       </div>
 
       <div className="grid grid-cols-3 gap-4">
-        {/* 工程進捗 */}
-        <Panel title="案件別 工程進捗（予定 vs 実績）" className="col-span-2">
-          <div className="space-y-3">
-            {progressChart.map((p) => (
-              <div key={p.name}>
-                <div className="mb-1 flex items-center justify-between text-xs">
-                  <span className="font-medium text-ink">{p.name}</span>
-                  <span className="text-ink-soft">実績 {p.actual}% ／ 予定 {p.plan}%{p.actual < p.plan && <span className="ml-1 text-ng">(-{p.plan - p.actual})</span>}</span>
+        {/* 左：工程進捗＋遅延・注意案件 */}
+        <div className="col-span-2 space-y-4">
+          <Panel title="案件別 工程進捗（予定 vs 実績）">
+            <div className="space-y-3">
+              {progressChart.map((p) => (
+                <div key={p.name}>
+                  <div className="mb-1 flex items-center justify-between text-[13px]">
+                    <span className="font-medium text-ink">{p.name}</span>
+                    <span className="text-ink-soft">実績 {p.actual}% ／ 予定 {p.plan}%{p.actual < p.plan && <span className="ml-1 font-medium text-ng">(-{p.plan - p.actual})</span>}</span>
+                  </div>
+                  <Progress value={p.actual} plan={p.plan} showLabel={false} height={10} />
                 </div>
-                <Progress value={p.actual} plan={p.plan} showLabel={false} height={10} />
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 flex items-center gap-3 border-t border-line pt-2 text-[11px] text-ink-soft">
-            <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-sysken-500" />実績</span>
-            <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-warn" />予定遅れ</span>
-            <span className="flex items-center gap-1"><span className="inline-block h-3 w-0.5 bg-ink/40" />予定進捗ライン</span>
-          </div>
-        </Panel>
+              ))}
+            </div>
+            <div className="mt-3 flex items-center gap-3 border-t border-line pt-2 text-[11px] text-ink-soft">
+              <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-sysken-500" />実績</span>
+              <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-warn" />予定遅れ</span>
+              <span className="flex items-center gap-1"><span className="inline-block h-3 w-0.5 bg-ink/40" />予定進捗ライン</span>
+            </div>
+          </Panel>
+
+          {/* 遅延・注意案件 */}
+          <Panel title="遅延・注意案件" bodyClassName="p-0"
+            action={<span className="text-[12px] text-ink-soft">要対応 {alertCases.length} 件</span>}>
+            <table className="grid-table text-[13px]">
+              <thead className="bg-canvas text-[12.5px] text-ink-soft">
+                <tr>{['重要度', '案件名', '問題内容', '担当者', '対応期限', 'ステータス', ''].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {alertCases.map((a) => (
+                  <tr key={a.id} className="cursor-pointer hover:bg-canvas" onClick={() => navigate(a.to)}>
+                    <td className="px-3"><Badge tone={a.level === '高' ? 'ng' : a.level === '中' ? 'warn' : 'muted'} dot>{a.level}</Badge></td>
+                    <td className="px-3 font-medium text-ink">{a.name}</td>
+                    <td className="px-3 text-ink-soft">{a.issue}</td>
+                    <td className="px-3 text-ink-soft">{a.owner}</td>
+                    <td className="px-3 tabular-nums text-ink-soft">{a.due}</td>
+                    <td className="px-3"><StatusBadge status={a.status} /></td>
+                    <td className="px-3 text-[12.5px] text-sysken-600">詳細</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Panel>
+        </div>
 
         {/* 右：注意・環境 */}
         <div className="space-y-4">
@@ -108,7 +142,7 @@ export default function Dashboard() {
         <Panel title="案件一覧" className="col-span-2" bodyClassName="p-0" action={<button onClick={() => navigate('/projects')} className="flex items-center gap-0.5 text-xs text-sysken-600">案件一覧へ<ArrowUpRight size={13} /></button>}>
           <div className="thin-scroll overflow-x-auto">
             <table className="grid-table text-[13px]">
-              <thead className="bg-canvas text-xs text-ink-soft">
+              <thead className="bg-canvas text-[12.5px] text-ink-soft">
                 <tr>{['案件番号', '工事名', '顧客', 'エリア', '現場責任者', '完了予定', '進捗', 'ステータス', '写真', '品質'].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}</tr>
               </thead>
               <tbody>
@@ -187,10 +221,10 @@ function MiniGantt() {
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={weekData} margin={{ top: 6, right: 8, left: -10, bottom: 0 }} barGap={2}>
             <CartesianGrid strokeDasharray="3 3" stroke="#eef1f5" vertical={false} />
-            <XAxis dataKey="day" tick={{ fontSize: 11, fill: '#667085' }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fontSize: 11, fill: '#667085' }} axisLine={false} tickLine={false} unit="%" />
+            <XAxis dataKey="day" tick={{ fontSize: 12, fill: '#667085' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 12, fill: '#667085' }} axisLine={false} tickLine={false} unit="%" />
             <Tooltip contentStyle={{ borderRadius: 4, border: '1px solid #d6dce3', fontSize: 12 }} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
             <Bar dataKey="plan" name="予定" fill="#cbd5e1" radius={[3, 3, 0, 0]} maxBarSize={18} />
             <Bar dataKey="actual" name="実績" fill="#005bac" radius={[3, 3, 0, 0]} maxBarSize={18} />
           </BarChart>

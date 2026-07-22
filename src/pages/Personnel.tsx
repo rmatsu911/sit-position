@@ -75,7 +75,7 @@ export default function Personnel() {
         <Panel bodyClassName="p-0" className="overflow-hidden">
           <div className="thin-scroll overflow-x-auto">
             <table className="grid-table text-[13px]">
-              <thead className="bg-canvas text-xs text-ink-soft">
+              <thead className="bg-canvas text-[12.5px] text-ink-soft">
                 <tr>
                   {['氏名', '所属', '班', '役割', '保有資格', '現在の配置先', '稼働状況', '連続勤務', '休暇'].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}
                   {scheduleDates.map((d) => <th key={d} className="px-2 py-2 text-center font-semibold">{d}</th>)}

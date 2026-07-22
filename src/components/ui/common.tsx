@@ -39,8 +39,8 @@ export function Panel({
   return (
     <section className={`panel ${className}`}>
       {title && (
-        <header className="flex items-center justify-between border-b border-line px-4 py-2.5">
-          <h2 className="text-[13px] font-semibold text-ink">{title}</h2>
+        <header className="flex items-center justify-between border-b border-line px-4 py-3">
+          <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
           {action}
         </header>
       )}

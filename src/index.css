@@ -17,8 +17,8 @@ body,
 body {
   background-color: #f4f6f8;
   color: #1f2933;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 13.5px;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -50,7 +50,7 @@ body {
 
 @layer components {
   .btn {
-    @apply inline-flex items-center gap-1.5 rounded border px-3 py-1.5 text-[13px] font-medium transition-colors select-none;
+    @apply inline-flex items-center gap-1.5 rounded border px-3 py-1.5 text-[13.5px] font-medium transition-colors select-none;
   }
   .btn-primary {
     @apply btn border-sysken-500 bg-sysken-500 text-white hover:bg-sysken-600;
@@ -65,13 +65,13 @@ body {
     @apply btn border-ng bg-white text-ng hover:bg-ng hover:text-white;
   }
   .btn-xs {
-    @apply px-2 py-1 text-xs;
+    @apply px-2 py-1 text-[12.5px];
   }
   .field {
-    @apply w-full rounded border border-line bg-white px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-sysken-400 focus:ring-1 focus:ring-sysken-200;
+    @apply w-full rounded border border-line bg-white px-2.5 py-1.5 text-[13.5px] text-ink outline-none focus:border-sysken-400 focus:ring-1 focus:ring-sysken-200;
   }
   .label {
-    @apply mb-1 block text-xs font-medium text-ink-soft;
+    @apply mb-1 block text-[12.5px] font-medium text-ink-soft;
   }
   .panel {
     @apply rounded border border-line bg-white shadow-panel;

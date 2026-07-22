@@ -221,15 +221,15 @@ function PhotoCard({ photo, onOpen, onFav, selected, onSelect }: { photo: Photo;
         <Star size={15} className={photo.favorite ? 'fill-warn text-warn' : 'text-slate-400'} />
       </button>
       <div className="aspect-[4/3] cursor-pointer" onClick={onOpen}>
-        <PhotoPlaceholder type={photo.colorKey} no={photo.no} className="h-full w-full" indoor={photo.place.includes('局舎') || photo.place.includes('MDF')} />
+        <PhotoPlaceholder type={photo.colorKey} no={photo.no} className="h-full w-full" indoor={photo.place.includes('局舎') || photo.place.includes('MDF')} board={{ process: photo.process, date: photo.takenAt }} />
       </div>
-      <div className="p-2">
+      <div className="p-2.5">
         <div className="flex items-center justify-between">
-          <span className="text-[11px] font-medium tabular-nums text-ink-soft">{photo.no}</span>
+          <span className="text-[12px] font-medium tabular-nums text-ink-soft">{photo.no}</span>
           <StatusBadge status={photo.confirm} />
         </div>
-        <p className="mt-1 truncate text-xs text-ink">{photo.process}</p>
-        <p className="truncate text-[11px] text-ink-soft">{photo.takenAt} / {photo.photographer}</p>
+        <p className="mt-1 truncate text-[13px] font-medium text-ink">{photo.process}</p>
+        <p className="truncate text-[12px] text-ink-soft">{photo.takenAt} / {photo.photographer}</p>
       </div>
     </div>
   )
@@ -281,7 +281,7 @@ function PhotoTable({ photos, onOpen, onFav, selected, onSelect }: { photos: Pho
     <Panel bodyClassName="p-0" className="overflow-hidden">
       <div className="thin-scroll overflow-x-auto">
         <table className="grid-table text-[13px]">
-          <thead className="bg-canvas text-xs text-ink-soft">
+          <thead className="bg-canvas text-[12.5px] text-ink-soft">
             <tr>
               {['', '写真', '写真番号', '撮影日時', '撮影者', '撮影場所', '工種', '工程', '設備', 'タグ', '確認状況', ''].map((h) => (
                 <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>
@@ -324,7 +324,7 @@ function Lightbox({ photo, hasPrev, hasNext, onPrev, onNext, onClose, onFav, onC
       <div className="relative z-10 flex max-h-[90vh] w-[1000px] overflow-hidden rounded bg-white shadow-pop">
         {/* 画像 */}
         <div className="relative flex-1 bg-ink/90">
-          <PhotoPlaceholder type={photo.colorKey} no={photo.no} className="h-full max-h-[90vh] w-full" indoor={photo.place.includes('局舎') || photo.place.includes('MDF')} />
+          <PhotoPlaceholder type={photo.colorKey} no={photo.no} className="h-full max-h-[90vh] w-full" indoor={photo.place.includes('局舎') || photo.place.includes('MDF')} board={{ process: photo.process, date: photo.takenAt }} />
           {hasPrev && <button onClick={onPrev} className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-white/85 p-2 hover:bg-white"><ChevronLeft size={22} /></button>}
           {hasNext && <button onClick={onNext} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white/85 p-2 hover:bg-white"><ChevronRight size={22} /></button>}
         </div>

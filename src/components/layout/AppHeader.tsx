@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { notifications } from '../../data/notifications'
+import { DemoGuide } from './DemoGuide'
 
 export function AppHeader() {
   const { toggleSidebar, aiPanelOpen, toggleAiPanel, toast } = useApp()
@@ -54,15 +55,18 @@ export function AppHeader() {
 
       <div className="ml-auto flex items-center gap-1">
         {/* 最終同期 */}
-        <div className="mr-2 hidden items-center gap-1.5 text-xs text-ink-soft xl:flex">
+        <div className="mr-2 hidden items-center gap-1.5 text-[12px] text-ink-soft xl:flex">
           <RefreshCw size={13} />
           最終同期：2026/07/21 15:30
         </div>
 
+        {/* デモガイド（発表者向け） */}
+        <DemoGuide />
+
         {/* AIパネル開閉 */}
         <button
           onClick={toggleAiPanel}
-          className="flex items-center gap-1.5 rounded border border-line px-2.5 py-1.5 text-xs text-ink hover:bg-canvas"
+          className="flex items-center gap-1.5 rounded border border-line px-2.5 py-1.5 text-[12.5px] text-ink hover:bg-canvas"
           title="AIサポートパネル開閉"
         >
           {aiPanelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
