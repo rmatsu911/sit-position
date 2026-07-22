@@ -21,22 +21,27 @@ export const qualitySummary = {
   承認済み: 14,
 }
 
-// 異常検知デモ（固定表示・番号付き赤枠）
+// 施工品質比較（固定表示・番号付き枠。確認候補として参考表示）
 export const anomalyFindings = [
-  { no: 1, label: 'ケーブル余長不足の可能性', x: 16, y: 28, w: 30, h: 20 },
-  { no: 2, label: '固定位置の確認が必要', x: 52, y: 24, w: 26, h: 18 },
-  { no: 3, label: 'タグ未装着の可能性', x: 40, y: 60, w: 28, h: 16 },
+  { no: 1, label: 'ケーブル余長', x: 16, y: 28, w: 30, h: 20 },
+  { no: 2, label: '固定位置', x: 52, y: 24, w: 26, h: 18 },
+  { no: 3, label: '表示タグ', x: 40, y: 60, w: 28, h: 16 },
 ]
 
-// 異常検知デモの写真メタ情報
+// 確認候補（施工品質比較）
+export const confirmPoints = ['ケーブル余長', '固定位置', '表示タグ', '完成状態']
+
+// 施工品質比較の写真メタ情報
 export const anomalyMeta = {
   project: '熊本中央局 光設備更改工事',
   process: 'クロージャ設置',
+  equipment: '光接続クロージャ',
   photoNo: 'P-003',
   takenAt: '2026/07/21 10:12',
   photographer: '田中 一郎',
   checker: '品質 管理者',
   inspectItem: 'ケーブル余長・固定間隔・タグ装着',
+  priority: '高',
   level: '要確認（中）',
   dueDate: '2026/07/23',
 }

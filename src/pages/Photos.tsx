@@ -1,15 +1,19 @@
 import { useMemo, useState, useEffect } from 'react'
 import {
   Grid3x3, List as ListIcon, Star, Upload, Download, Trash2, Tag, CheckCircle2,
-  ChevronLeft, ChevronRight, Sparkles, MapPin, Camera, Filter,
+  ChevronLeft, ChevronRight, MapPin, Camera, Filter,
 } from 'lucide-react'
 import { PageHeader } from '../components/layout/Breadcrumb'
-import { Panel, PreparingTag } from '../components/ui/common'
+import { Panel } from '../components/ui/common'
 import { Badge, StatusBadge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
 import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
+import { RecognitionOverlay, RecognitionLegend } from '../components/ui/RecognitionOverlay'
 import { useApp } from '../context/AppContext'
 import { photos as seedPhotos, photoTags } from '../data/photos'
+import {
+  classificationFor, recogBoxesFor, classCandidatesFor, confirmCandidates, classifyNote,
+} from '../data/aiPreview'
 import type { Photo } from '../types'
 
 type ViewMode = 'thumb' | 'list' | 'process' | 'date' | 'equip'
@@ -25,8 +29,8 @@ export default function Photos() {
   const [lightbox, setLightbox] = useState<number | null>(null)
   const [uploadOpen, setUploadOpen] = useState(false)
   const [uploadPct, setUploadPct] = useState(0)
-  const [aiRunning, setAiRunning] = useState(false)
-  const [aiDone, setAiDone] = useState(false)
+  const [classTargetId, setClassTargetId] = useState<string>(seedPhotos[0].id)
+  const [reflected, setReflected] = useState<Set<string>>(new Set())
 
   const filtered = useMemo(() => {
     return photos.filter((p) => {
@@ -83,13 +87,16 @@ export default function Photos() {
     }
   }, [uploadOpen, uploadPct, photos.length, toast])
 
-  function runAi() {
-    setAiRunning(true)
-    setAiDone(false)
-    window.setTimeout(() => {
-      setAiRunning(false)
-      setAiDone(true)
-    }, 1600)
+  // 分類候補を写真情報へ反映（フロント上の表示変更のみ）
+  function reflectClassification(id: string) {
+    const target = photos.find((p) => p.id === id)
+    if (!target) return
+    const c = classificationFor(target)
+    setPhotos((prev) => prev.map((p) => (p.id === id
+      ? { ...p, tags: Array.from(new Set([...p.tags, c.分類候補, c.設備候補])), workType: c.工種候補, process: c.工程候補 }
+      : p)))
+    setReflected((prev) => new Set(prev).add(id))
+    toast('分類候補を写真情報へ反映しました。', 'ok')
   }
 
   const stats = {
@@ -140,15 +147,14 @@ export default function Photos() {
         <span className="ml-auto text-xs text-ink-soft">{filtered.length} 枚表示</span>
       </div>
 
-      {/* AI分類バナー */}
-      <div className="mb-3 flex items-center justify-between rounded border border-dashed border-sysken-300 bg-sysken-50 px-3 py-2">
-        <div className="flex items-center gap-2 text-xs text-sysken-700">
-          <Sparkles size={16} />
-          <span className="font-medium">AI画像分類</span><PreparingTag />
-          <span className="text-ink-soft">分類候補：光ケーブル ／ 信頼度：サンプル表示 ／ 画像解析エンジン：未接続</span>
-        </div>
-        <button className="btn-default btn-xs" onClick={runAi}>AI分類を実行</button>
-      </div>
+      {/* 写真分類支援（画像認識イメージ・参考表示） */}
+      <ClassificationSupport
+        photos={filtered.length ? filtered : photos}
+        targetId={classTargetId}
+        onTarget={setClassTargetId}
+        reflected={reflected}
+        onReflect={reflectClassification}
+      />
 
       {/* 表示本体 */}
       {view === 'list' ? (
@@ -168,6 +174,8 @@ export default function Photos() {
           onPrev={() => setLightbox((i) => (i! > 0 ? i! - 1 : i))}
           onNext={() => setLightbox((i) => (i! < filtered.length - 1 ? i! + 1 : i))}
           onClose={() => setLightbox(null)}
+          reflected={reflected.has(filtered[lightbox].id)}
+          onReflect={() => reflectClassification(filtered[lightbox].id)}
           onFav={() => toggleFav(filtered[lightbox].id)}
           onConfirm={(v) => setConfirm(filtered[lightbox].id, v)}
           onComment={() => toast('コメントを保存しました（デモ）', 'ok')}
@@ -193,20 +201,79 @@ export default function Photos() {
         </div>
       </Modal>
 
-      {/* AI実行モーダル */}
-      <Modal open={aiRunning || aiDone} onClose={() => { setAiRunning(false); setAiDone(false) }} title="AI画像分類（デモ）"
-        footer={aiDone ? <button className="btn-primary" onClick={() => setAiDone(false)}>閉じる</button> : undefined}>
-        {aiRunning ? (
-          <div className="flex flex-col items-center gap-3 py-8 text-ink-soft">
-            <Sparkles size={28} className="animate-pulse text-sysken-500" />
-            <p className="text-[13px]">画像を解析しています...</p>
+    </div>
+  )
+}
+
+function ClassificationSupport({
+  photos, targetId, onTarget, reflected, onReflect,
+}: {
+  photos: Photo[]
+  targetId: string
+  onTarget: (id: string) => void
+  reflected: Set<string>
+  onReflect: (id: string) => void
+}) {
+  const target = photos.find((p) => p.id === targetId) ?? photos[0]
+  if (!target) return null
+  const c = classificationFor(target)
+  const isReflected = reflected.has(target.id)
+  const indoor = target.place.includes('局舎') || target.place.includes('MDF')
+
+  return (
+    <Panel title="写真分類支援（画像認識イメージ）" className="mb-3"
+      action={<span className="text-[12px] text-ink-soft">対象写真の分類候補・確認候補を参考表示します</span>}>
+      <div className="flex gap-4">
+        {/* 対象写真＋認識枠 */}
+        <div className="w-72 shrink-0">
+          <div className="relative overflow-hidden rounded border border-line">
+            <PhotoPlaceholder type={target.colorKey} no={target.no} className="aspect-[4/3] w-full" indoor={indoor} board={{ process: target.process, date: target.takenAt }} />
+            <RecognitionOverlay boxes={recogBoxesFor(target)} />
           </div>
-        ) : (
-          <div className="rounded border border-dashed border-sysken-300 bg-sysken-50 p-4 text-[13px] text-sysken-800">
-            デモ環境のため、AI画像分類は実行されません。将来的には設備種別、工程、写真不足、重複写真などを自動判定する予定です。
+          <div className="mt-2">
+            <label className="label">対象写真</label>
+            <select className="field" value={target.id} onChange={(e) => onTarget(e.target.value)}>
+              {photos.map((p) => <option key={p.id} value={p.id}>{p.no}／{p.process}</option>)}
+            </select>
           </div>
-        )}
-      </Modal>
+          <div className="mt-2"><RecognitionLegend /></div>
+        </div>
+
+        {/* 候補フィールド */}
+        <div className="min-w-0 flex-1">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 text-[13.5px]">
+            <Cand label="分類候補" value={c.分類候補} strong />
+            <Cand label="現場候補" value={c.現場候補} />
+            <Cand label="工種候補" value={c.工種候補} />
+            <Cand label="工程候補" value={c.工程候補} />
+            <Cand label="設備候補" value={c.設備候補} />
+            <div>
+              <p className="text-[11.5px] text-ink-soft">確認状態</p>
+              <p className="mt-0.5">{isReflected ? <Badge tone="ok" dot>反映済み</Badge> : <Badge tone="warn" dot>未反映</Badge>}</p>
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-center gap-3">
+            <button className="btn-primary" disabled={isReflected} onClick={() => onReflect(target.id)}>
+              <CheckCircle2 size={15} />分類候補を反映
+            </button>
+            {isReflected && <span className="text-[12.5px] text-ok">写真情報（タグ・工種・工程・設備）へ反映しました。</span>}
+          </div>
+
+          <p className="mt-3 rounded border border-dashed border-sysken-300 bg-sysken-50 px-3 py-2 text-[12px] text-sysken-700">
+            {classifyNote}
+          </p>
+        </div>
+      </div>
+    </Panel>
+  )
+}
+
+function Cand({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div>
+      <p className="text-[11.5px] text-ink-soft">{label}</p>
+      <p className={`mt-0.5 ${strong ? 'text-[15px] font-bold text-sysken-700' : 'font-medium text-ink'}`}>{value}</p>
     </div>
   )
 }
@@ -312,26 +379,36 @@ function PhotoTable({ photos, onOpen, onFav, selected, onSelect }: { photos: Pho
   )
 }
 
-function Lightbox({ photo, hasPrev, hasNext, onPrev, onNext, onClose, onFav, onConfirm, onComment, onDelete }: {
-  photo: Photo; hasPrev: boolean; hasNext: boolean; onPrev: () => void; onNext: () => void; onClose: () => void
+function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNext, onClose, onFav, onConfirm, onComment, onDelete }: {
+  photo: Photo; hasPrev: boolean; hasNext: boolean; reflected: boolean; onReflect: () => void
+  onPrev: () => void; onNext: () => void; onClose: () => void
   onFav: () => void; onConfirm: (v: Photo['confirm']) => void; onComment: () => void; onDelete: () => void
 }) {
   const [comment, setComment] = useState(photo.comment)
+  const [showBoxes, setShowBoxes] = useState(true)
   useEffect(() => setComment(photo.comment), [photo])
+  const indoor = photo.place.includes('局舎') || photo.place.includes('MDF')
+  const cls = classificationFor(photo)
+  const candidates = classCandidatesFor(photo)
+  const boxes = recogBoxesFor(photo)
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-ink/60" onClick={onClose} />
-      <div className="relative z-10 flex max-h-[90vh] w-[1000px] overflow-hidden rounded bg-white shadow-pop">
+      <div className="relative z-10 flex max-h-[92vh] w-[1120px] overflow-hidden rounded bg-white shadow-pop">
         {/* 画像 */}
         <div className="relative flex-1 bg-ink/90">
-          <PhotoPlaceholder type={photo.colorKey} no={photo.no} className="h-full max-h-[90vh] w-full" indoor={photo.place.includes('局舎') || photo.place.includes('MDF')} board={{ process: photo.process, date: photo.takenAt }} />
+          <PhotoPlaceholder type={photo.colorKey} no={photo.no} className="h-full max-h-[92vh] w-full" indoor={indoor} board={{ process: photo.process, date: photo.takenAt }} />
+          {showBoxes && <RecognitionOverlay boxes={boxes} />}
           {hasPrev && <button onClick={onPrev} className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-white/85 p-2 hover:bg-white"><ChevronLeft size={22} /></button>}
           {hasNext && <button onClick={onNext} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white/85 p-2 hover:bg-white"><ChevronRight size={22} /></button>}
+          <button onClick={() => setShowBoxes((v) => !v)} className="absolute right-3 top-3 rounded border border-white/40 bg-ink/60 px-2 py-1 text-[12px] text-white hover:bg-ink/80">
+            {showBoxes ? '認識イメージを隠す' : '認識イメージを表示'}
+          </button>
         </div>
         {/* 情報 */}
-        <div className="thin-scroll flex w-80 shrink-0 flex-col overflow-y-auto border-l border-line">
+        <div className="thin-scroll flex w-96 shrink-0 flex-col overflow-y-auto border-l border-line">
           <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
-            <span className="text-[13px] font-semibold">{photo.no}</span>
+            <span className="text-[14px] font-semibold">{photo.no}</span>
             <div className="flex items-center gap-1">
               <button onClick={onFav}><Star size={17} className={photo.favorite ? 'fill-warn text-warn' : 'text-slate-400'} /></button>
               <button onClick={onClose} className="text-ink-soft hover:text-ink">✕</button>
@@ -340,22 +417,50 @@ function Lightbox({ photo, hasPrev, hasNext, onPrev, onNext, onClose, onFav, onC
           <dl className="space-y-2 px-4 py-3 text-[13px]">
             <Row label="撮影日時" value={photo.takenAt} />
             <Row label="撮影者" value={photo.photographer} />
-            <Row label="撮影場所" value={photo.place} />
-            <Row label="GPS" value={<span className="flex items-center gap-1 text-ink-soft"><MapPin size={13} />{photo.gps}</span>} />
+            <Row label="案件名" value="熊本中央局 光設備更改工事" />
             <Row label="工種" value={photo.workType} />
             <Row label="工程" value={photo.process} />
             <Row label="設備" value={photo.equipment} />
-            <Row label="タグ" value={<div className="flex flex-wrap gap-1">{photo.tags.map((t) => <Badge key={t} tone="muted">{t}</Badge>)}</div>} />
+            <Row label="分類候補" value={<span className="font-medium text-sysken-700">{cls.分類候補}</span>} />
+            <Row label="反映状況" value={reflected ? <Badge tone="ok" dot>反映済み</Badge> : <Badge tone="warn" dot>未反映</Badge>} />
             <Row label="確認状況" value={<StatusBadge status={photo.confirm} />} />
+            <Row label="GPS" value={<span className="flex items-center gap-1 text-ink-soft"><MapPin size={13} />{photo.gps}</span>} />
+            <Row label="タグ" value={<div className="flex flex-wrap justify-end gap-1">{photo.tags.map((t) => <Badge key={t} tone="muted">{t}</Badge>)}</div>} />
           </dl>
+
+          {/* 画像分類候補 */}
           <div className="border-t border-line px-4 py-3">
-            <div className="mb-2 flex items-center gap-1.5 rounded border border-dashed border-sysken-300 bg-sysken-50 px-2 py-1 text-[11px] text-sysken-700">
-              <Sparkles size={13} />AI分類：{photo.aiCandidate}（準備中・サンプル）
-            </div>
-            <label className="label">コメント</label>
+            <p className="mb-1.5 text-[13px] font-semibold text-ink">画像分類候補<span className="ml-1 text-[11px] font-normal text-ink-soft">（参考表示）</span></p>
+            <ol className="space-y-1">
+              {candidates.map((c, i) => (
+                <li key={i} className="flex items-center gap-2 text-[13px]">
+                  <span className="flex h-4 w-4 items-center justify-center rounded-full bg-sysken-500 text-[10px] font-bold text-white">{i + 1}</span>
+                  <span className="text-ink">{c}</span>
+                  <span className="text-[11px] text-ink-soft">候補</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          {/* 確認候補 */}
+          <div className="border-t border-line px-4 py-3">
+            <p className="mb-1.5 text-[13px] font-semibold text-ink">確認候補<span className="ml-1 text-[11px] font-normal text-ink-soft">（参考表示）</span></p>
+            <ul className="space-y-1 text-[13px] text-ink">
+              {confirmCandidates.map((c) => <li key={c} className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-warn" />{c}</li>)}
+            </ul>
+            <p className="mt-2 text-[11.5px] text-ink-soft">分類候補・確認候補は検証用データに基づく参考表示です。実際の画像認識は行っていません。</p>
+          </div>
+
+          {/* 反映＋コメント */}
+          <div className="border-t border-line px-4 py-3">
+            <button className="btn-primary w-full justify-center" disabled={reflected} onClick={onReflect}>
+              <CheckCircle2 size={15} />分類候補を反映
+            </button>
+            <label className="label mt-3">担当者コメント</label>
             <textarea className="field h-16 resize-none" value={comment} onChange={(e) => setComment(e.target.value)} placeholder="コメントを入力..." />
             <button className="btn-default btn-xs mt-1.5 w-full justify-center" onClick={onComment}>コメントを保存</button>
           </div>
+
           <div className="mt-auto space-y-1.5 border-t border-line px-4 py-3">
             <button className="btn-primary w-full justify-center" onClick={() => onConfirm('確認済み')}><CheckCircle2 size={15} />確認済みにする</button>
             <button className="btn-danger w-full justify-center" onClick={() => onConfirm('再撮影依頼')}>再撮影を依頼</button>

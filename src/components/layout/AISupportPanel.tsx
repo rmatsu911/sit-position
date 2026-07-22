@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Sparkles, MessageSquareText, X, Info } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
-import { aiFeatures, aiPanelNote, type AiFeature } from '../../data/aiPanel'
+import { aiFeatures, aiPanelNote, aiPanelHeading, aiPanelIntro, type AiFeature } from '../../data/aiPanel'
 import { Modal } from '../ui/Modal'
 
 export function AISupportPanel() {
@@ -21,7 +21,7 @@ export function AISupportPanel() {
       <header className="flex items-center justify-between border-b border-line bg-gradient-to-r from-sysken-50 to-white px-4 py-3">
         <div className="flex items-center gap-2">
           <Sparkles size={18} className="text-sysken-500" />
-          <span className="text-[15px] font-semibold text-sysken-700">AIサポート</span>
+          <span className="text-[15px] font-semibold text-sysken-700">{aiPanelHeading}</span>
         </div>
         <button onClick={closeAiPanel} className="rounded p-1 text-ink-soft hover:bg-canvas" title="閉じる">
           <X size={18} />
@@ -31,7 +31,7 @@ export function AISupportPanel() {
       <div className="thin-scroll flex-1 overflow-y-auto p-4">
         <p className="mb-1 text-[14px] font-semibold text-ink">将来追加予定のAI機能</p>
         <p className="mb-3 text-[12px] leading-relaxed text-ink-soft">
-          蓄積した施工データを活用し、段階的に追加を予定している支援機能です。
+          {aiPanelIntro}
         </p>
 
         <div className="space-y-2">
