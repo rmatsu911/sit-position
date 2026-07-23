@@ -96,17 +96,17 @@ export default function Reports() {
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex items-center gap-1 rounded border border-line bg-white px-2 py-1.5">
             <button className="btn-ghost btn-xs" onClick={addRow}><Plus size={14} />行追加</button>
-            <button className="btn-ghost btn-xs" onClick={() => toast('フィルターを適用しました（デモ）')}><Filter size={14} />フィルター</button>
-            <button className="btn-ghost btn-xs" onClick={() => toast('固定行を設定しました（デモ）')}>固定行</button>
-            <button className="btn-ghost btn-xs" onClick={() => toast('コピーしました（デモ）')}>コピー</button>
-            <button className="btn-ghost btn-xs" onClick={() => toast('貼り付けました（デモ）')}>貼り付け</button>
+            <button className="btn-ghost btn-xs" onClick={() => toast('この操作は現在準備中です')}><Filter size={14} />フィルター</button>
+            <button className="btn-ghost btn-xs" onClick={() => toast('この操作は現在準備中です')}>固定行</button>
+            <button className="btn-ghost btn-xs" onClick={() => toast('この操作は現在準備中です')}>コピー</button>
+            <button className="btn-ghost btn-xs" onClick={() => toast('この操作は現在準備中です')}>貼り付け</button>
             <div className="mx-1 h-5 w-px bg-line" />
             <button className="btn-ghost btn-xs" onClick={() => setPreview(true)}><Eye size={14} />プレビュー</button>
             <div className="ml-auto flex items-center gap-1">
               <button className="btn-default btn-xs" disabled={exporting} onClick={() => exportReport('pdf', 'PDF')}><FileText size={14} />PDF出力</button>
               <button className="btn-default btn-xs" disabled={exporting} onClick={() => exportReport('xlsx', 'Excel')}><FileSpreadsheet size={14} />Excel出力</button>
               <button className="btn-default btn-xs" onClick={() => setOutput('CSV')}><FileDown size={14} />CSV出力</button>
-              <button className="btn-default btn-xs" onClick={() => toast('印刷ダイアログを開きます（デモ）')}><Printer size={14} />印刷</button>
+              <button className="btn-default btn-xs" onClick={() => toast('この操作は現在準備中です')}><Printer size={14} />印刷</button>
             </div>
           </div>
 

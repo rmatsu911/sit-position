@@ -77,11 +77,11 @@ export default function Ledger() {
         description="工事情報の一覧管理（Excel風）"
         actions={
           <>
-            <button className="btn-default" onClick={() => toast('列固定を設定しました（デモ）')}><Filter size={15} />列固定</button>
-            <button className="btn-default" onClick={() => toast('コピーしました（デモ）')}><Copy size={15} />コピー</button>
+            <button className="btn-default" onClick={() => toast('この操作は現在準備中です')}><Filter size={15} />列固定</button>
+            <button className="btn-default" onClick={() => toast('この操作は現在準備中です')}><Copy size={15} />コピー</button>
             <button className="btn-default" onClick={() => setOutput({ title: 'CSV出力', steps: ['データを集計しています', 'CSVを生成しています', '出力準備が完了しました'] })}><FileDown size={15} />CSV出力</button>
             <button className="btn-default" onClick={() => setOutput({ title: 'Excel出力', steps: ['データを集計しています', 'Excel帳票を生成しています', '出力準備が完了しました'] })}><FileSpreadsheet size={15} />Excel出力</button>
-            <button className="btn-default" onClick={() => toast('印刷ダイアログを開きます（デモ）')}><Printer size={15} />印刷</button>
+            <button className="btn-default" onClick={() => toast('この操作は現在準備中です')}><Printer size={15} />印刷</button>
           </>
         }
       />

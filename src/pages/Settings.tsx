@@ -4,16 +4,23 @@ import { User, Bell, Palette, Building2, ShieldCheck, Database, MonitorPlay, Pla
 import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
 import { useApp, useDemoReset } from '../context/AppContext'
+import { useAuth } from '../auth/AuthContext'
+import { APP_ENV, APP_VERSION, ENV_LABEL, IS_DEV_VISIBLE } from '../lib/env'
 
-const tabs = [
-  { id: 'demo', label: '発表用デモ', icon: MonitorPlay },
-  { id: 'profile', label: 'プロフィール', icon: User },
-  { id: 'notify', label: '通知', icon: Bell },
-  { id: 'display', label: '表示', icon: Palette },
-  { id: 'org', label: '組織・部署', icon: Building2 },
-  { id: 'security', label: 'セキュリティ', icon: ShieldCheck },
-  { id: 'data', label: 'データ', icon: Database },
+const ROLE_LABELS: Record<string, string> = {
+  ADMIN: '管理者', PROJECT_MANAGER: '案件管理者', FIELD_WORKER: '現場担当者', QUALITY_MANAGER: '品質管理者', VIEWER: '閲覧者',
+}
+
+const allTabs = [
+  { id: 'demo', label: '発表用デモ', icon: MonitorPlay, devOnly: true },
+  { id: 'profile', label: 'プロフィール', icon: User, devOnly: false },
+  { id: 'notify', label: '通知', icon: Bell, devOnly: false },
+  { id: 'display', label: '表示', icon: Palette, devOnly: false },
+  { id: 'org', label: '組織・部署', icon: Building2, devOnly: false },
+  { id: 'security', label: 'セキュリティ', icon: ShieldCheck, devOnly: false },
+  { id: 'data', label: 'システム情報', icon: Database, devOnly: false },
 ] as const
+const tabs = allTabs.filter((t) => IS_DEV_VISIBLE || !t.devOnly)
 
 function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
   return (
@@ -34,9 +41,10 @@ function Line({ label, desc, on, set }: { label: string; desc: string; on: boole
 
 export default function Settings() {
   const { toast, demoMode, setDemoMode } = useApp()
+  const { user } = useAuth()
   const navigate = useNavigate()
   const resetDemo = useDemoReset()
-  const [tab, setTab] = useState<string>('demo')
+  const [tab, setTab] = useState<string>(tabs[0].id)
   const [flags, setFlags] = useState<Record<string, boolean>>({
     n1: true, n2: true, n3: false, n4: true, n5: true,
     d1: true, d2: false, d3: true,
@@ -104,17 +112,13 @@ export default function Settings() {
             </div>
           )}
           {tab === 'profile' && (
-            <Panel title="プロフィール設定">
-              <div className="grid max-w-2xl grid-cols-2 gap-4">
-                <div><label className="label">氏名</label><input className="field" defaultValue="山田 太郎" /></div>
-                <div><label className="label">社員番号</label><input className="field" defaultValue="SK-100234" /></div>
-                <div><label className="label">メールアドレス</label><input className="field" defaultValue="yamada@example.co.jp" /></div>
-                <div><label className="label">内線</label><input className="field" defaultValue="2201" /></div>
-                <div><label className="label">部署</label><select className="field"><option>施工管理部 第一課</option><option>施工管理部 第二課</option><option>施工管理部 第三課</option></select></div>
-                <div><label className="label">役割</label><select className="field"><option>工事長</option><option>現場責任者</option><option>技術者</option><option>品質管理担当</option></select></div>
-                <div className="col-span-2"><label className="label">保有資格</label><input className="field" defaultValue="職長・安全衛生責任者 / 光ファイバ融着 / 普通自動車免許" /></div>
-              </div>
-              <div className="mt-4"><button className="btn-primary" onClick={() => toast('プロフィールを保存しました', 'ok')}>変更を保存</button></div>
+            <Panel title="アカウント情報">
+              <p className="mb-3 text-[13px] text-ink-soft">ログイン中のアカウント情報です。氏名・役割・所属の変更は管理者にご依頼ください。</p>
+              <dl className="max-w-lg divide-y divide-line text-[13px]">
+                <div className="flex justify-between py-2.5"><dt className="text-ink-soft">氏名</dt><dd className="font-medium text-ink">{user?.name ?? '—'}</dd></div>
+                <div className="flex justify-between py-2.5"><dt className="text-ink-soft">メールアドレス</dt><dd className="text-ink">{user?.email ?? '—'}</dd></div>
+                <div className="flex justify-between py-2.5"><dt className="text-ink-soft">役割</dt><dd className="text-ink">{user ? (ROLE_LABELS[user.role] ?? user.role) : '—'}</dd></div>
+              </dl>
             </Panel>
           )}
           {tab === 'notify' && (
@@ -141,35 +145,28 @@ export default function Settings() {
           )}
           {tab === 'org' && (
             <Panel title="組織・部署">
-              <table className="grid-table max-w-2xl text-[13px]">
-                <thead className="bg-canvas text-[12.5px] text-ink-soft"><tr>{['部署', '責任者', '人数', '担当案件数'].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}</tr></thead>
-                <tbody>
-                  {[['施工管理部 第一課', '山田 太郎', 12, 3], ['施工管理部 第二課', '佐藤 花子', 10, 3], ['施工管理部 第三課', '渡辺 修', 8, 2], ['品質管理課', '品質 管理者', 4, '—']].map((r) => (
-                    <tr key={r[0] as string} className="hover:bg-canvas"><td className="px-3 py-1.5 font-medium">{r[0]}</td><td className="px-3">{r[1]}</td><td className="px-3 tabular-nums">{r[2]}名</td><td className="px-3 tabular-nums">{r[3]}</td></tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="max-w-2xl rounded border border-dashed border-line bg-canvas px-4 py-8 text-center text-[13px] text-ink-soft">
+                組織・部署マスタは未整備です。部署・責任者・所属人数の管理機能が連携されると、ここに一覧が表示されます。
+              </div>
             </Panel>
           )}
           {tab === 'security' && (
             <Panel title="セキュリティ">
               <div className="max-w-2xl space-y-3 text-[13px]">
-                <div className="rounded border border-line bg-canvas px-3 py-2"><p className="font-medium text-ink">認証方式</p><p className="text-ink-soft">デモ環境のため認証は無効化されています。</p></div>
-                <div className="flex items-center justify-between rounded border border-line px-3 py-2"><span>パスワード変更</span><button className="btn-default btn-xs" onClick={() => toast('デモ環境では変更できません')}>変更</button></div>
+                <div className="rounded border border-line bg-canvas px-3 py-2"><p className="font-medium text-ink">認証方式</p><p className="text-ink-soft">JWT（Bearer トークン）による認証。5ロールの権限とプロジェクトスコープをAPI側で認可します。</p></div>
+                <div className="rounded border border-line px-3 py-2"><p className="font-medium text-ink">操作監査</p><p className="text-ink-soft">写真・品質・日報・工程反映・図面・要員配置・AIフィードバック等の重要操作を audit_logs に記録します。</p></div>
                 <div className="flex items-center justify-between rounded border border-line px-3 py-2"><span>操作ログの保持期間</span><span className="text-ink-soft">90日</span></div>
               </div>
             </Panel>
           )}
           {tab === 'data' && (
-            <Panel title="データ・システム情報">
-              <div className="max-w-2xl space-y-3 text-[13px]">
-                <div className="rounded border border-line bg-canvas px-3 py-2 text-ink-soft">
-                  <p className="font-medium text-ink">システム情報</p>
-                  <p className="mt-0.5">本画面はAI機能実装後の完成イメージです。実際のAI処理は現在未実装です。</p>
-                </div>
-                <div className="flex items-center justify-between rounded border border-line px-3 py-2"><span>サンプルデータの再読み込み</span><button className="btn-default btn-xs" onClick={() => toast('サンプルデータを再読み込みしました', 'ok')}>再読み込み</button></div>
-                <div className="flex items-center justify-between rounded border border-line px-3 py-2"><span>エクスポート（全案件）</span><button className="btn-default btn-xs" onClick={() => toast('エクスポートを開始しました（デモ）')}>エクスポート</button></div>
-              </div>
+            <Panel title="システム情報">
+              <dl className="max-w-lg divide-y divide-line text-[13px]">
+                <div className="flex justify-between py-2.5"><dt className="text-ink-soft">アプリバージョン</dt><dd className="font-medium text-ink">v{APP_VERSION}</dd></div>
+                <div className="flex justify-between py-2.5"><dt className="text-ink-soft">実行環境</dt><dd className="text-ink">{ENV_LABEL[APP_ENV]}</dd></div>
+                <div className="flex justify-between py-2.5"><dt className="text-ink-soft">構成</dt><dd className="text-ink">React / FastAPI / PostgreSQL / File Storage / AI Worker</dd></div>
+                <div className="flex justify-between py-2.5"><dt className="text-ink-soft">AI（物体検出）</dt><dd className="text-ink">YOLO 接続基盤（学習済みモデル配置後に有効化）</dd></div>
+              </dl>
             </Panel>
           )}
         </div>

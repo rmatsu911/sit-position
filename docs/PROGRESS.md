@@ -89,6 +89,25 @@ AI Worker(分離)＋YOLO推論IF(交換可)＋正規化bbox＋既存UIへの実�
 - **学習基盤**：`datasets/dataset_v001/{images,labels}/{train,val,test}`+`data.yaml`、`scripts/train_yolo.py`・`scripts/evaluate_yolo.py`（dataset/model/epochs/imgsz/batch/device・出力は`runs/`）。weights/実写真は `.gitignore` で除外。ultralytics は `[ai]` optional 依存
 - **テスト**：pytest 41件通過（統合経路 Job→Worker→Prediction→API→Feedback、MODEL_NOT_AVAILABLE時はFAILED/予測0、Worker停止でも本体200、未検出報告、models一覧）。`npm run build` 成功。ブラウザE2E：Lightboxで正規化bbox描画・モデル未学習明示・フィードバック保存（AI予測は保持）を確認
 
+## Ver.0.2.1 で実施（実運用化総点検・デモ要素撤去・2026-07-23）
+
+「プロトタイプ／デモ」を「実運用前提の業務システム」へ整理。API未接続の固定ダミー・架空実績・偽の完成表示を撤去し、データが無い箇所は Empty State に統一。開発／本番の表示分離を徹底。
+
+- **環境分離基盤**：frontend `src/lib/env.ts`（`APP_ENV`/`IS_PRODUCTION`/`IS_DEV_VISIBLE`/`APP_VERSION`/`ENV_LABEL`）、backend `settings.app_env`/`app_version`、`GET /api/meta`。`__APP_VERSION__` を package.json から Vite で注入。開発専用表示（Seed識別・AIのDEMO状態・発表用デモ・デバッグ）は `IS_DEV_VISIBLE`（=APP_ENV≠production）でのみ表示、本番では非表示
+- **Seed＝開発データの明示**：`seed.run(allow_production=False)` で **APP_ENV=production の自動投入をブロック**（`--force-production` で明示上書きのみ）。`audit_logs` に dev-fixture マーカー（`SEED_FIXTURE_VERSION`）を記録。スキーマ変更なし
+- **共通UI**：StatusBar を実運用フッター化（PostgreSQL/件数/環境ラベル[dev only]/実バージョン）、固定日時「最終同期 2026/07/21 15:30」撤去、AppHeader 通知を API 化、Login のデモ資格情報は開発環境のみ表示
+- **ダッシュボード**：全KPI・進捗・アラート・通知を集計API/実データ化。天候は「気象情報未連携」Empty State（将来API接続構造は維持）
+- **施工写真**：AIローカル固定推論（`recognitionFor`/`detectionsFor`/`recogBoxesFor`）を撤去し **AI結果は `ai_predictions` API のみ**、無ければ「AI解析結果がありません」Empty State。実アップロード画像を `PhotoImage`（`original_url`/`thumbnail_url`）で表示、無ければプレースホルダ。モデル状態表示を正直化（ACTIVE=モデル名/版、MODEL_NOT_AVAILABLE=「AIモデル未設定」、DEMO=開発環境のみ「検証用モデル」・本番では内部名を出さない）。物体検出枠/confidence/フィードバックUIは維持
+- **品質管理**：「AI品質チェック」の固定異常検知（`anomalyFindings`/`anomalyMeta`/`detectionPoints`）を撤去し「AI解析結果なし（未連携）」Empty State 化
+- **工程管理**：API取得失敗時の**固定ダミーへのフォールバックを撤去**しエラー明示。「AI工期予測」の固定 forecast/グラフを「工期予測未連携」Empty State 化。ガント日別ヘッダの架空天気アイコンを撤去
+- **要員管理**：架空の週間勤怠グリッド（固定日付＋Seed実績）を撤去し「勤務予定（勤怠）未連携」を明示、日別列は開発環境のみサンプル表示。案件配置ボードの固定案件名を実 projects へ変更
+- **図面**：実ファイル未登録時の偽の系統図SVG＋架空ピンを撤去し「図面ファイルが登録されていません」Empty State 化（実PDF/画像は従来どおり表示）
+- **案件詳細**：固定天候(`todayEnv`)を「未連携」表記へ、施工写真タブを実写真API＋Empty State 化
+- **設定**：組織・部署の固定担当者/人数表を「マスタ未整備」Empty State 化。AI機能パネルの説明を「構想（実装済み＋今後実装予定を含む）」へ正直化
+- **フロントの単一データ経路**：PostgreSQL→FastAPI→TanStack Query→React に統一。API失敗時の固定ダミー自動代替を全廃しエラー/Empty で表示。未使用の固定データファイル（`data/photos`・`data/quality`・`data/dailyReports`・`data/drawings`・`data/ledger`・`data/notifications`・`data/personnel` と `schedule` の固定工程/予測）を削除
+- **デモ検索の最終結果**：`demo/sample/seed/mock/dummy/ダミー/サンプル` の残存は (1)説明コメント (2)**開発/検証環境のみ表示の「発表用デモモード」**（Layoutバナー/DemoGuide/Settings demoタブ=すべて `IS_DEV_VISIBLE`・`devOnly` ゲート、本番非表示） (3)AIの `seed-demo`/`DEMO` モデル状態の**正直な**ハンドリング（本番はSeed非投入のため出現せず、出ても内部名は非表示） (4)PhotoPlaceholder の「サンプル」ラベル（実写真が無い場合の代替と明示）のみ。**本番相当（APP_ENV=production）で表示される固定業務データ・架空実績・偽の完成表示は残っていない**
+- **テスト**：pytest 41件通過、`npx tsc --noEmit` クリーン、`npm run build` 成功、backendスモーク（login/meta/projects/workers/documents/notifications/dashboard・photo AI=seed-demo/DEMO）確認。既存機能の非破壊を確認
+
 ## 残課題（未実装・設計は MASTER_SPEC / ai-design 参照）
 
 - **実weights未配置**（`MODEL_NOT_AVAILABLE`）。SYSKEN実写真のアノテーション→学習→`AI_MODEL_PATH`配置は今後（基盤は完成）
@@ -111,3 +130,4 @@ AI Worker(分離)＋YOLO推論IF(交換可)＋正規化bbox＋既存UIへの実�
 - 2026-07-23 Ver.0.1.2 完了（Task↔Asset・要員/資格・工事台帳・図面/書類・通知・ダッシュボード集計を DB/API 化、migration 062aef7de195[40テーブル]、権限スコープ、Seed、pytest29/build/E2E）
 - 2026-07-23 Ver.0.1.3 完了（要員配置永続化・資材・試験記録・図面実ファイル表示・帳票実出力[施工管理表 PDF/Excel]、migration 6b1c1111572b[44テーブル]、openpyxl/reportlab追加、pytest36/build/E2E）
 - 2026-07-23 Ver.0.2 完了（AI Worker分離・YOLO推論IF[交換可/MODEL_NOT_AVAILABLE]・正規化bbox・既存UI実接続・人間フィードバック[ai_feedback]・data.yamlクラス体系・学習/評価スクリプト、migration 5aeaba61edcb、pytest41/build/E2E。実weightsは未配置）
+- 2026-07-23 Ver.0.2.1 完了（実運用化総点検・デモ要素撤去：APP_ENV環境分離＋Seed production ガード、AI/品質/工程/要員/図面/案件詳細/設定 の固定ダミー撤去→Empty State 化、API失敗時の固定フォールバック全廃、未使用固定データ7ファイル削除、DEMO/Seed表示は開発環境のみ、pytest41/tsc/build/スモーク。本番相当で表示される架空業務データは残存なし）

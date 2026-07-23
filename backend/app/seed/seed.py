@@ -23,6 +23,7 @@ from app.models import (
     AiThresholdSetting,
     Asset,
     AssetType,
+    AuditLog,
     Branch,
     Company,
     ConstructionType,
@@ -60,6 +61,7 @@ from app.models import (
 from app.services.storage import get_storage  # noqa: E402
 
 DEMO_PASSWORD = "Passw0rd!"
+SEED_FIXTURE_VERSION = "fixture-2026.07"  # 開発用フィクスチャの識別子（audit_logs に記録）
 
 
 def _sample_pdf(title: str) -> bytes:
@@ -206,12 +208,17 @@ def reset(session):
     session.commit()
 
 
-def run(reset_first: bool = False) -> None:
+def run(reset_first: bool = False, allow_production: bool = False) -> None:
+    # production では Seed（開発用フィクスチャ）を自動投入しない
+    if settings.app_env == "production" and not allow_production:
+        print("APP_ENV=production のため Seed をスキップしました。"
+              "本番でどうしても投入する場合は --force-production を指定してください。")
+        return
     with SessionLocal() as s:
         if reset_first:
             reset(s)
         if s.execute(select(Project).limit(1)).first():
-            print("既にSeedデータがあるためスキップしましたA（--reset で再投入）")
+            print("既にSeedデータがあるためスキップしました（--reset で再投入）")
             return
 
         # 組織
@@ -547,15 +554,18 @@ def run(reset_first: bool = False) -> None:
                                target_url=link, is_read=read, important=imp,
                                created_at=datetime.strptime(at, "%Y/%m/%d %H:%M")))
 
+        # 開発用フィクスチャであることを内部的に識別できるマーカー（既存 audit_logs を利用・スキーマ変更なし）
+        s.add(AuditLog(user_id=None, action="SEED", entity_type="dev_fixture", entity_id=SEED_FIXTURE_VERSION,
+                       after=json.dumps({"app_env": settings.app_env, "note": "development seed fixture — not production data"}, ensure_ascii=False)))
         s.commit()
-        print("Seed 完了:")
+        print("Seed 完了（開発用フィクスチャ）:")
         print(f"  ユーザー {len(users)}名 / 案件 {len(projects)}件 / 工程 {len(TASKS)}件 / 写真 27枚 / 品質 7 / 日報 3")
         print(f"  要員 {len(WORKERS)} / 図面 {len(DRAWINGS)} / 通知 {len(NOTIFS)} / 台帳 {len(PROJECTS)}")
         print(f"  資材 {len(MATERIALS)} / 試験記録 {len(TESTS)}")
+        print(f"  fixture={SEED_FIXTURE_VERSION} / APP_ENV={settings.app_env}")
         print(f"  管理者ログイン: {settings.seed_admin_email} / {settings.seed_admin_password}")
-        print(f"  デモユーザー: yamada@example.co.jp ほか / {DEMO_PASSWORD}")
 
 
 if __name__ == "__main__":
-    run(reset_first="--reset" in sys.argv)
+    run(reset_first="--reset" in sys.argv, allow_production="--force-production" in sys.argv)
     engine.dispose()

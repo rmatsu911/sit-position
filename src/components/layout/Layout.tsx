@@ -6,18 +6,19 @@ import { StatusBar } from './StatusBar'
 import { ToastHost } from '../ui/ToastHost'
 import { ConfirmDialog } from '../ui/ConfirmDialog'
 import { useApp } from '../../context/AppContext'
-import { MonitorPlay, Bell } from 'lucide-react'
+import { MonitorPlay } from 'lucide-react'
+import { IS_DEV_VISIBLE } from '../../lib/env'
 
 export function Layout() {
   const { demoEpoch, demoMode } = useApp()
   return (
     <div className="flex h-screen w-screen min-w-[1280px] flex-col overflow-hidden bg-canvas">
       <AppHeader />
-      {demoMode && (
+      {/* 発表用デモモードのバナーは開発/検証環境でのみ表示（本番では出さない） */}
+      {IS_DEV_VISIBLE && demoMode && (
         <div className="flex h-8 shrink-0 items-center gap-3 border-b border-sysken-200 bg-sysken-50 px-4 text-[12.5px] text-sysken-700">
-          <span className="flex items-center gap-1.5 font-semibold"><MonitorPlay size={15} />発表用デモモード</span>
-          <span className="text-ink-soft">サンプル案件：熊本中央局 光設備更改工事</span>
-          <span className="ml-auto flex items-center gap-1.5 text-ng"><Bell size={14} />要対応：接続損失測定が4日遅延／写真3枚未提出／品質確認待ち7件</span>
+          <span className="flex items-center gap-1.5 font-semibold"><MonitorPlay size={15} />発表用デモモード（開発表示）</span>
+          <span className="text-ink-soft">画面の見せ方を発表向けに調整します</span>
         </div>
       )}
       <div className="flex min-h-0 flex-1">

@@ -6,11 +6,10 @@ import { Panel, EmptyState } from '../components/ui/common'
 import { StatusBadge, Badge } from '../components/ui/Badge'
 import { Progress } from '../components/ui/Progress'
 import { Modal } from '../components/ui/Modal'
-import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
-import { todayEnv } from '../data/projects'
-import { photos } from '../data/photos'
+import { PhotoImage } from '../components/ui/PhotoImage'
 import { manYen } from '../lib/format'
 import { useProject } from '../api/projects'
+import { usePhotos } from '../api/photos'
 import { useProjectMaterials, useCreateMaterial } from '../api/materials'
 import { ApiError } from '../lib/apiClient'
 import NotFound from './NotFound'
@@ -135,9 +134,8 @@ function Overview({ manager }: { manager: string }) {
             <li className="flex items-start gap-1.5"><AlertTriangle size={15} className="mt-0.5 shrink-0 text-warn" />局前道路の通行車両に注意、交通誘導員配置</li>
             <li className="flex items-start gap-1.5"><AlertTriangle size={15} className="mt-0.5 shrink-0 text-warn" />高所作業時の墜落防止（フルハーネス）</li>
           </ul>
-          <div className="mt-2 grid grid-cols-2 gap-2 border-t border-line pt-2 text-xs">
-            <div><span className="text-ink-soft">天候：</span>{todayEnv.weather}</div>
-            <div><span className="text-ink-soft">熱中症指数：</span><span className="font-medium text-warn">WBGT {todayEnv.wbgt}</span></div>
+          <div className="mt-2 border-t border-line pt-2 text-xs text-ink-soft">
+            天候・熱中症指数（WBGT）は気象情報が未連携のため表示していません。
           </div>
         </Panel>
         <Panel title="未対応事項">
@@ -250,25 +248,28 @@ function History() {
   )
 }
 
+function PhotoTabContent({ projectId }: { projectId: string }) {
+  const { data: sample = [], isLoading, isError } = usePhotos(Number(projectId))
+  if (isLoading) return <div className="py-6 text-center text-[13px] text-ink-soft">写真を読み込んでいます…</div>
+  if (isError) return <div className="py-6 text-center text-[13px] text-ng">写真の取得に失敗しました。</div>
+  if (sample.length === 0) return <div className="py-6"><EmptyState label="この案件の施工写真はまだ登録されていません" /></div>
+  return (
+    <div className="grid grid-cols-6 gap-3">
+      {sample.slice(0, 6).map((p) => (
+        <div key={p.id} className="overflow-hidden rounded border border-line">
+          <PhotoImage url={p.thumbUrl ?? p.imageUrl} type={p.colorKey} no={p.no} className="aspect-[4/3] w-full" />
+          <div className="px-2 py-1"><StatusBadge status={p.confirm} /></div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function LinkTab({ tab, onGo, projectId }: { tab: Tab; to: string; onGo: () => void; projectId: string }) {
-  const sample = photos.filter((p) => p.projectId === projectId).slice(0, 6)
   return (
     <Panel title={tab} action={<button className="btn-default btn-xs" onClick={onGo}><ExternalLink size={14} />{tab}画面を開く</button>}>
       {tab === '施工写真' ? (
-        <div className="grid grid-cols-6 gap-3">
-          {sample.map((p) => (
-            <div key={p.id} className="overflow-hidden rounded border border-line">
-              <PhotoPlaceholder type={p.colorKey} no={p.no} className="aspect-[4/3] w-full" />
-              <div className="px-2 py-1"><StatusBadge status={p.confirm} /></div>
-            </div>
-          ))}
-        </div>
-      ) : tab === '工程' ? (
-        <div className="text-[13px] text-ink">
-          <p className="mb-2">現在の工程：<span className="font-medium">接続・試験工（接続損失測定）</span> ／ 全体進捗 72%（予定80%）</p>
-          <div className="flex items-center gap-2"><Badge tone="ng" dot>遅延あり</Badge><Badge tone="info">クリティカル工程進行中</Badge></div>
-          <p className="mt-3 text-ink-soft">詳細なWBS・ガントチャートは工程管理画面でご確認ください。</p>
-        </div>
+        <PhotoTabContent projectId={projectId} />
       ) : (
         <div className="py-6">
           <EmptyState label={`${tab}の詳細は「${tab}画面を開く」からご確認いただけます`} />

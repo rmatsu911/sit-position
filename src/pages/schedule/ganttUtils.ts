@@ -43,9 +43,3 @@ export function addDaysIso(iso: string, n: number): string {
 export function spanDays(startIso: string, endIso: string): number {
   return differenceInCalendarDays(parseISO(endIso), parseISO(startIso)) + 1
 }
-
-// 天気アイコン（ダミー・日付固定）
-const weatherSeq = ['☀', '☀', '⛅', '☁', '☀', '🌧', '⛅']
-export function weatherFor(d: Date): string {
-  return weatherSeq[differenceInCalendarDays(d, rangeStart) % weatherSeq.length]
-}

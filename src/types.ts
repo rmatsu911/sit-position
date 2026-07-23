@@ -85,6 +85,8 @@ export interface Photo {
   aiCandidate: string
   favorite: boolean
   colorKey: string // プレースホルダ画像の色分け
+  imageUrl?: string | null // 原本画像URL（アップロード実写真。無ければプレースホルダ表示）
+  thumbUrl?: string | null // サムネイルURL
 }
 
 // ============ 品質管理 ============

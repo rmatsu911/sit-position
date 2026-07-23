@@ -7,12 +7,11 @@ import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
 import { Badge, StatusBadge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
-import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
+import { PhotoImage } from '../components/ui/PhotoImage'
 import { RecognitionOverlay, RecognitionLegend } from '../components/ui/RecognitionOverlay'
 import { useApp } from '../context/AppContext'
-import {
-  recognitionFor, recogBoxesFor, detectionsFor, qualityJudgeFor, boxColor,
-} from '../data/aiPreview'
+import { qualityJudgeFor, boxColor, type Recognition } from '../data/aiPreview'
+import { IS_DEV_VISIBLE } from '../lib/env'
 import {
   usePhotos, usePhotoAi, useUploadPhoto, useUpdatePhoto, useConfirmPhoto, useDeletePhoto,
   usePredictionFeedback, useReportMissed, DEMO_PROJECT_ID,
@@ -119,14 +118,18 @@ export default function Photos() {
     )
   }
 
-  // AI認識結果を写真情報へ反映（タグはAPIへ保存、工種/工程はUI表示へ反映）
-  function reflectClassification(id: string) {
+  // AI認識結果を写真情報へ反映（AI結果＝APIのrecognitionのみ。固定推定は使わない）
+  function reflectClassification(id: string, recog: Partial<Recognition>) {
     const target = photos.find((p) => p.id === id)
     if (!target) return
-    const c = recognitionFor(target)
-    const nextTags = Array.from(new Set([...target.tags, c.認識結果, c.設備判定]))
+    const addTags = [recog.認識結果, recog.設備判定].filter((t): t is string => Boolean(t))
+    if (!addTags.length && !recog.工種判定 && !recog.工程判定) {
+      toast('反映できるAI認識結果がありません', 'warn')
+      return
+    }
+    const nextTags = Array.from(new Set([...target.tags, ...addTags]))
     setPhotos((prev) => prev.map((p) => (p.id === id
-      ? { ...p, tags: nextTags, workType: c.工種判定, process: c.工程判定 }
+      ? { ...p, tags: nextTags, workType: recog.工種判定 ?? p.workType, process: recog.工程判定 ?? p.process }
       : p)))
     setReflected((prev) => new Set(prev).add(id))
     updateMut.mutate({ id, tags: nextTags }, { onError: () => toast('反映結果の保存に失敗しました', 'ng') })
@@ -148,8 +151,8 @@ export default function Photos() {
         description={`全 ${stats.total} 枚 ／ 未確認 ${stats.unconfirmed} 枚 ／ 再撮影依頼 ${stats.recheck} 枚 ／ お気に入り ${stats.fav} 枚`}
         actions={
           <>
-            <button className="btn-default" onClick={() => selected.size ? toast(`${selected.size}件に一括タグを設定しました（デモ）`, 'ok') : toast('写真を選択してください')}><Tag size={15} />一括タグ</button>
-            <button className="btn-default" onClick={() => toast('選択写真をダウンロードします（デモ）')}><Download size={15} />ダウンロード</button>
+            <button className="btn-default" onClick={() => selected.size ? toast('一括タグ設定は現在準備中です', 'info') : toast('写真を選択してください')}><Tag size={15} />一括タグ</button>
+            <button className="btn-default" onClick={() => toast('この操作は現在準備中です')}><Download size={15} />ダウンロード</button>
             <button className="btn-primary" onClick={startUpload}><Upload size={15} />写真追加</button>
           </>
         }
@@ -224,7 +227,7 @@ export default function Photos() {
           onNext={() => setLightbox((i) => (i! < filtered.length - 1 ? i! + 1 : i))}
           onClose={() => setLightbox(null)}
           reflected={reflected.has(filtered[lightbox].id)}
-          onReflect={() => reflectClassification(filtered[lightbox].id)}
+          onReflect={(recog) => reflectClassification(filtered[lightbox].id, recog)}
           onFav={() => toggleFav(filtered[lightbox].id)}
           onConfirm={(v) => setConfirm(filtered[lightbox].id, v)}
           onComment={(text) => updateMut.mutate(
@@ -317,18 +320,19 @@ function ClassificationSupport({
   targetId: string
   onTarget: (id: string) => void
   reflected: Set<string>
-  onReflect: (id: string) => void
+  onReflect: (id: string, recog: Partial<Recognition>) => void
 }) {
   const target = photos.find((p) => p.id === targetId) ?? photos[0]
-  const { data: ai } = usePhotoAi(target?.id)
+  const { data: ai, isLoading } = usePhotoAi(target?.id)
   if (!target) return null
-  // AI推論結果はAPI(ai_predictions)を優先。無ければローカル導出でフォールバック。
-  const useApi = ai && ai.source !== 'none'
-  const c = { ...recognitionFor(target), ...(useApi ? ai!.recognition : {}) }
-  const detections = useApi && ai!.detections.length ? ai!.detections : detectionsFor(target)
-  const boxes = useApi && ai!.boxes.length ? ai!.boxes : recogBoxesFor(target)
+  // AI推論結果はAPI(ai_predictions)のみ。無ければEmpty State（固定推定は行わない）。
+  const useApi = !!ai && ai.source !== 'none'
+  const c = ai?.recognition ?? {}
+  const detections = useApi ? ai!.detections : []
+  const boxes = useApi ? ai!.boxes : []
   const isReflected = reflected.has(target.id)
   const indoor = target.place.includes('局舎') || target.place.includes('MDF')
+  const note = modelNote(ai)
 
   return (
     <Panel title="AI施工写真分類" className="mb-3"
@@ -337,8 +341,8 @@ function ClassificationSupport({
         {/* 対象写真＋検出枠 */}
         <div className="w-72 shrink-0">
           <div className="relative overflow-hidden rounded border border-line">
-            <PhotoPlaceholder type={target.colorKey} no={target.no} className="aspect-[4/3] w-full" indoor={indoor} board={{ process: target.process, date: target.takenAt }} />
-            <RecognitionOverlay boxes={boxes} />
+            <PhotoImage url={target.thumbUrl ?? target.imageUrl} type={target.colorKey} no={target.no} className="aspect-[4/3] w-full" indoor={indoor} board={{ process: target.process, date: target.takenAt }} />
+            {useApi && <RecognitionOverlay boxes={boxes} />}
           </div>
           <div className="mt-2">
             <label className="label">対象写真</label>
@@ -346,56 +350,76 @@ function ClassificationSupport({
               {photos.map((p) => <option key={p.id} value={p.id}>{p.no}／{p.process}</option>)}
             </select>
           </div>
-          <div className="mt-2"><RecognitionLegend /></div>
+          {useApi && <div className="mt-2"><RecognitionLegend /></div>}
         </div>
 
         {/* AI認識結果 */}
         <div className="min-w-0 flex-1">
-          <p className="mb-2 text-[13px] font-semibold text-sysken-700">AI認識結果</p>
-          <div className="grid grid-cols-2 gap-4">
-            {/* 物体検出 */}
-            <div>
-              <p className="mb-1 text-[11.5px] text-ink-soft">物体検出</p>
-              <div className="space-y-1.5">
-                {detections.map((d) => (
-                  <div key={d.label} className="flex items-center gap-2">
-                    <span className="w-28 shrink-0 text-[13px] text-ink">{d.label}</span>
-                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
-                      <div className="h-full rounded-full" style={{ width: `${d.pct}%`, background: boxColor[d.kind] }} />
-                    </div>
-                    <span className="w-10 shrink-0 text-right text-[13px] font-semibold tabular-nums text-ink">{d.pct}%</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            {/* 判定 */}
-            <div className="grid grid-cols-1 gap-y-2.5 text-[13.5px]">
-              <Cand label="認識結果" value={c.認識結果} strong />
-              <Cand label="工種判定" value={c.工種判定} />
-              <Cand label="工程判定" value={c.工程判定} />
-              <Cand label="設備判定" value={c.設備判定} />
-              <Cand label="現場判定" value={c.現場判定} />
-            </div>
+          <div className="mb-2 flex items-center gap-2">
+            <p className="text-[13px] font-semibold text-sysken-700">AI認識結果</p>
+            {note && <Badge tone={note.tone}>{note.text}</Badge>}
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-line pt-3">
-            <button className="btn-primary" disabled={isReflected} onClick={() => onReflect(target.id)}>
-              <CheckCircle2 size={15} />認識結果を写真情報へ反映
-            </button>
-            {isReflected ? (
-              <div className="flex items-center gap-3 text-[12.5px]">
-                <Badge tone="ok" dot>反映済み</Badge>
-                <span className="text-ink-soft">反映者：山田 太郎</span>
-                <span className="text-ink-soft">反映日時：2026/07/21 15:32</span>
+          {!useApi ? (
+            <div className="rounded border border-dashed border-line bg-canvas px-4 py-8 text-center text-[13px] text-ink-soft">
+              {isLoading ? 'AI解析結果を確認しています…' : 'この写真のAI解析結果はまだありません。'}
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                {/* 物体検出 */}
+                <div>
+                  <p className="mb-1 text-[11.5px] text-ink-soft">物体検出</p>
+                  {detections.length ? (
+                    <div className="space-y-1.5">
+                      {detections.map((d) => (
+                        <div key={d.label} className="flex items-center gap-2">
+                          <span className="w-28 shrink-0 text-[13px] text-ink">{d.label}</span>
+                          <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                            <div className="h-full rounded-full" style={{ width: `${d.pct}%`, background: boxColor[d.kind] }} />
+                          </div>
+                          <span className="w-10 shrink-0 text-right text-[13px] font-semibold tabular-nums text-ink">{d.pct}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[12.5px] text-ink-soft">検出対象はありませんでした。</p>
+                  )}
+                </div>
+                {/* 判定 */}
+                <div className="grid grid-cols-1 gap-y-2.5 text-[13.5px]">
+                  <Cand label="認識結果" value={c.認識結果 ?? '—'} strong />
+                  <Cand label="工種判定" value={c.工種判定 ?? '—'} />
+                  <Cand label="工程判定" value={c.工程判定 ?? '—'} />
+                  <Cand label="設備判定" value={c.設備判定 ?? '—'} />
+                  <Cand label="現場判定" value={c.現場判定 ?? '—'} />
+                </div>
               </div>
-            ) : (
-              <Badge tone="warn" dot>未反映</Badge>
-            )}
-          </div>
+
+              <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-line pt-3">
+                <button className="btn-primary" disabled={isReflected} onClick={() => onReflect(target.id, c)}>
+                  <CheckCircle2 size={15} />認識結果を写真情報へ反映
+                </button>
+                {isReflected ? <Badge tone="ok" dot>反映済み</Badge> : <Badge tone="warn" dot>未反映</Badge>}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </Panel>
   )
+}
+
+// モデル状態の表示（実学習済みが未配置のときは「実AIが完成」に見せない）。
+// DEMO/検証用の内部状態は開発/検証環境でのみ明示する。
+function modelNote(ai: ReturnType<typeof usePhotoAi>['data']): { text: string; tone: 'ok' | 'warn' | 'info' } | null {
+  if (!ai || ai.source === 'none') return null
+  const status = (ai.modelStatus ?? '').toUpperCase()
+  if (status === 'ACTIVE') return { text: `${ai.model ?? 'AIモデル'}（${ai.modelVersion ?? '-'}）`, tone: 'ok' }
+  if (status === 'MODEL_NOT_AVAILABLE') return { text: 'AIモデル未設定', tone: 'warn' }
+  // DEMO / seed-demo 等の内部状態は本番ユーザーには見せない
+  if (IS_DEV_VISIBLE) return { text: `検証用モデル（${ai.modelVersion ?? '-'}）`, tone: 'warn' }
+  return { text: 'AI解析結果', tone: 'info' }
 }
 
 function Cand({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
@@ -417,7 +441,7 @@ function PhotoCard({ photo, onOpen, onFav, selected, onSelect }: { photo: Photo;
         <Star size={15} className={photo.favorite ? 'fill-warn text-warn' : 'text-slate-400'} />
       </button>
       <div className="aspect-[4/3] cursor-pointer" onClick={onOpen}>
-        <PhotoPlaceholder type={photo.colorKey} no={photo.no} className="h-full w-full" indoor={photo.place.includes('局舎') || photo.place.includes('MDF')} board={{ process: photo.process, date: photo.takenAt }} />
+        <PhotoImage url={photo.thumbUrl ?? photo.imageUrl} type={photo.colorKey} no={photo.no} className="h-full w-full" indoor={photo.place.includes('局舎') || photo.place.includes('MDF')} board={{ process: photo.process, date: photo.takenAt }} />
       </div>
       <div className="p-2.5">
         <div className="flex items-center justify-between">
@@ -488,7 +512,7 @@ function PhotoTable({ photos, onOpen, onFav, selected, onSelect }: { photos: Pho
             {photos.map((p) => (
               <tr key={p.id} className="hover:bg-canvas">
                 <td className="px-3"><input type="checkbox" checked={selected.has(p.id)} onChange={() => onSelect(p.id)} className="h-4 w-4 accent-sysken-500" /></td>
-                <td className="py-1.5 pl-3"><div className="h-10 w-14 cursor-pointer overflow-hidden rounded" onClick={() => onOpen(p)}><PhotoPlaceholder type={p.colorKey} className="h-full w-full" /></div></td>
+                <td className="py-1.5 pl-3"><div className="h-10 w-14 cursor-pointer overflow-hidden rounded" onClick={() => onOpen(p)}><PhotoImage url={p.thumbUrl ?? p.imageUrl} type={p.colorKey} className="h-full w-full" /></div></td>
                 <td className="px-3 tabular-nums text-ink-soft">{p.no}</td>
                 <td className="px-3 tabular-nums text-ink-soft">{p.takenAt}</td>
                 <td className="px-3">{p.photographer}</td>
@@ -509,7 +533,7 @@ function PhotoTable({ photos, onOpen, onFav, selected, onSelect }: { photos: Pho
 }
 
 function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNext, onClose, onFav, onConfirm, onComment, onDelete }: {
-  photo: Photo; hasPrev: boolean; hasNext: boolean; reflected: boolean; onReflect: () => void
+  photo: Photo; hasPrev: boolean; hasNext: boolean; reflected: boolean; onReflect: (recog: Partial<Recognition>) => void
   onPrev: () => void; onNext: () => void; onClose: () => void
   onFav: () => void; onConfirm: (v: Photo['confirm']) => void; onComment: (text: string) => void; onDelete: () => void
 }) {
@@ -518,20 +542,16 @@ function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNex
   const missedMut = useReportMissed()
   const [comment, setComment] = useState(photo.comment)
   const [showBoxes, setShowBoxes] = useState(true)
-  const { data: ai } = usePhotoAi(photo.id)
+  const { data: ai, isLoading: aiLoading } = usePhotoAi(photo.id)
   useEffect(() => setComment(photo.comment), [photo])
   const indoor = photo.place.includes('局舎') || photo.place.includes('MDF')
-  // AI推論結果はAPI(ai_predictions)を優先。無ければローカル導出でフォールバック。
-  const useApi = ai && ai.source !== 'none'
-  const cls = { ...recognitionFor(photo), ...(useApi ? ai!.recognition : {}) }
-  const detections = useApi && ai!.detections.length ? ai!.detections : detectionsFor(photo)
-  const boxes = useApi && ai!.boxes.length ? ai!.boxes : recogBoxesFor(photo)
+  // AI推論結果はAPI(ai_predictions)のみ。無ければEmpty State（固定推定は行わない）。
+  const useApi = !!ai && ai.source !== 'none'
+  const cls: Partial<Recognition> = ai?.recognition ?? {}
+  const detections = useApi ? ai!.detections : []
+  const boxes = useApi ? ai!.boxes : []
   const judge = qualityJudgeFor(photo)
-  // モデル状態の明示表示（実学習済みが未配置のときは「実AIが完成」に見せない）
-  const modelNote = !useApi ? 'ローカル推定（AI結果なし）'
-    : ai!.modelStatus === 'ACTIVE' ? `${ai!.model}（${ai!.modelVersion}）`
-    : ai!.modelStatus === 'MODEL_NOT_AVAILABLE' ? '実モデル未配置（MODEL_NOT_AVAILABLE）'
-    : `デモ表示・未学習（${ai!.modelVersion ?? '-'}）`
+  const note = modelNote(ai)
   function sendFeedback(predictionId: number | null | undefined, verdict: 'correct' | 'reclassify' | 'false_positive') {
     if (!predictionId) { toast('この結果はフィードバック対象外です', 'warn'); return }
     const corrected = verdict === 'reclassify' ? (window.prompt('正しい設備名を入力') ?? undefined) : undefined
@@ -555,13 +575,15 @@ function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNex
       <div className="relative z-10 flex max-h-[92vh] w-[1120px] overflow-hidden rounded bg-white shadow-pop">
         {/* 画像 */}
         <div className="relative flex-1 bg-ink/90">
-          <PhotoPlaceholder type={photo.colorKey} no={photo.no} className="h-full max-h-[92vh] w-full" indoor={indoor} board={{ process: photo.process, date: photo.takenAt }} />
-          {showBoxes && <RecognitionOverlay boxes={boxes} />}
+          <PhotoImage url={photo.imageUrl ?? photo.thumbUrl} type={photo.colorKey} no={photo.no} className="h-full max-h-[92vh] w-full" indoor={indoor} board={{ process: photo.process, date: photo.takenAt }} />
+          {useApi && showBoxes && <RecognitionOverlay boxes={boxes} />}
           {hasPrev && <button onClick={onPrev} className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-white/85 p-2 hover:bg-white"><ChevronLeft size={22} /></button>}
           {hasNext && <button onClick={onNext} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white/85 p-2 hover:bg-white"><ChevronRight size={22} /></button>}
-          <button onClick={() => setShowBoxes((v) => !v)} className="absolute right-3 top-3 rounded border border-white/40 bg-ink/60 px-2 py-1 text-[12px] text-white hover:bg-ink/80">
-            {showBoxes ? '認識結果を非表示' : '認識結果を表示'}
-          </button>
+          {useApi && (
+            <button onClick={() => setShowBoxes((v) => !v)} className="absolute right-3 top-3 rounded border border-white/40 bg-ink/60 px-2 py-1 text-[12px] text-white hover:bg-ink/80">
+              {showBoxes ? '認識結果を非表示' : '認識結果を表示'}
+            </button>
+          )}
         </div>
         {/* 情報 */}
         <div className="thin-scroll flex w-96 shrink-0 flex-col overflow-y-auto border-l border-line">
@@ -576,49 +598,57 @@ function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNex
           <div className="border-b border-line px-4 py-3">
             <div className="mb-2 flex items-center justify-between">
               <p className="text-[13px] font-semibold text-sysken-700">AI画像認識結果</p>
-              <Badge tone={ai?.modelStatus === 'ACTIVE' ? 'ok' : 'warn'}>{modelNote}</Badge>
+              {note && <Badge tone={note.tone}>{note.text}</Badge>}
             </div>
-            <p className="mb-1 text-[11.5px] text-ink-soft">物体検出結果（正しくない場合は下のボタンで訂正）</p>
-            <div className="space-y-2">
-              {detections.map((d, i) => {
-                const pid = (d as { predictionId?: number | null }).predictionId ?? null
-                const fb = (d as { feedback?: string | null }).feedback ?? null
-                return (
-                  <div key={`${d.label}-${i}`}>
-                    <div className="flex items-center gap-2">
-                      <span className="w-24 shrink-0 text-[13px] text-ink">{d.label}</span>
-                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
-                        <div className="h-full rounded-full" style={{ width: `${d.pct}%`, background: boxColor[d.kind] }} />
-                      </div>
-                      <span className="w-10 shrink-0 text-right text-[13px] font-semibold tabular-nums text-ink">{d.pct}%</span>
-                    </div>
-                    {useApi && (
-                      <div className="mt-0.5 flex items-center gap-1 pl-24 text-[11px]">
-                        {fb ? (
-                          <Badge tone={fb === 'correct' ? 'ok' : 'warn'}>
-                            {fb === 'correct' ? '正しい' : fb === 'reclassify' ? 'クラス修正' : '誤検出'}
-                          </Badge>
-                        ) : (
-                          <>
-                            <button className="rounded border border-line px-1.5 py-0.5 hover:bg-canvas" onClick={() => sendFeedback(pid, 'correct')}>正しい</button>
-                            <button className="rounded border border-line px-1.5 py-0.5 hover:bg-canvas" onClick={() => sendFeedback(pid, 'reclassify')}>クラス修正</button>
-                            <button className="rounded border border-line px-1.5 py-0.5 text-ng hover:bg-red-50" onClick={() => sendFeedback(pid, 'false_positive')}>誤検出</button>
-                          </>
-                        )}
-                      </div>
-                    )}
+            {!useApi ? (
+              <p className="rounded border border-dashed border-line bg-canvas px-3 py-4 text-center text-[12.5px] text-ink-soft">
+                {aiLoading ? 'AI解析結果を確認しています…' : 'この写真のAI解析結果はまだありません。'}
+              </p>
+            ) : (
+              <>
+                <p className="mb-1 text-[11.5px] text-ink-soft">物体検出結果（正しくない場合は下のボタンで訂正）</p>
+                {detections.length ? (
+                  <div className="space-y-2">
+                    {detections.map((d, i) => {
+                      const pid = (d as { predictionId?: number | null }).predictionId ?? null
+                      const fb = (d as { feedback?: string | null }).feedback ?? null
+                      return (
+                        <div key={`${d.label}-${i}`}>
+                          <div className="flex items-center gap-2">
+                            <span className="w-24 shrink-0 text-[13px] text-ink">{d.label}</span>
+                            <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                              <div className="h-full rounded-full" style={{ width: `${d.pct}%`, background: boxColor[d.kind] }} />
+                            </div>
+                            <span className="w-10 shrink-0 text-right text-[13px] font-semibold tabular-nums text-ink">{d.pct}%</span>
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-1 pl-24 text-[11px]">
+                            {fb ? (
+                              <Badge tone={fb === 'correct' ? 'ok' : 'warn'}>
+                                {fb === 'correct' ? '正しい' : fb === 'reclassify' ? 'クラス修正' : '誤検出'}
+                              </Badge>
+                            ) : (
+                              <>
+                                <button className="rounded border border-line px-1.5 py-0.5 hover:bg-canvas" onClick={() => sendFeedback(pid, 'correct')}>正しい</button>
+                                <button className="rounded border border-line px-1.5 py-0.5 hover:bg-canvas" onClick={() => sendFeedback(pid, 'reclassify')}>クラス修正</button>
+                                <button className="rounded border border-line px-1.5 py-0.5 text-ng hover:bg-red-50" onClick={() => sendFeedback(pid, 'false_positive')}>誤検出</button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
-                )
-              })}
-            </div>
-            {useApi && (
-              <button className="btn-default btn-xs mt-2 w-full justify-center" onClick={reportMissed}>未検出を報告</button>
+                ) : (
+                  <p className="text-[12.5px] text-ink-soft">検出対象はありませんでした。</p>
+                )}
+                <button className="btn-default btn-xs mt-2 w-full justify-center" onClick={reportMissed}>未検出を報告</button>
+                <dl className="mt-2.5 space-y-1.5 text-[13px]">
+                  <Row label="工程判定" value={cls.工程判定 ?? '—'} />
+                  <Row label="設備判定" value={cls.設備判定 ?? '—'} />
+                  <Row label="品質判定" value={<span className={`font-medium ${judge === '良好' ? 'text-ok' : judge === '要修正' ? 'text-ng' : 'text-warn'}`}>{judge}</span>} />
+                </dl>
+              </>
             )}
-            <dl className="mt-2.5 space-y-1.5 text-[13px]">
-              <Row label="工程判定" value={cls.工程判定} />
-              <Row label="設備判定" value={cls.設備判定} />
-              <Row label="品質判定" value={<span className={`font-medium ${judge === '良好' ? 'text-ok' : judge === '要修正' ? 'text-ng' : 'text-warn'}`}>{judge}</span>} />
-            </dl>
           </div>
 
           <dl className="space-y-2 px-4 py-3 text-[13px]">
@@ -628,7 +658,7 @@ function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNex
             <Row label="工種" value={photo.workType} />
             <Row label="工程" value={photo.process} />
             <Row label="設備" value={photo.equipment} />
-            <Row label="認識結果" value={<span className="font-medium text-sysken-700">{cls.認識結果}</span>} />
+            <Row label="認識結果" value={<span className="font-medium text-sysken-700">{cls.認識結果 ?? '—'}</span>} />
             <Row label="反映状況" value={reflected ? <Badge tone="ok" dot>反映済み</Badge> : <Badge tone="warn" dot>未反映</Badge>} />
             <Row label="確認状況" value={<StatusBadge status={photo.confirm} />} />
             <Row label="GPS" value={<span className="flex items-center gap-1 text-ink-soft"><MapPin size={13} />{photo.gps}</span>} />
@@ -637,7 +667,7 @@ function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNex
 
           {/* 反映＋コメント */}
           <div className="border-t border-line px-4 py-3">
-            <button className="btn-primary w-full justify-center" disabled={reflected} onClick={onReflect}>
+            <button className="btn-primary w-full justify-center" disabled={reflected || !useApi} onClick={() => onReflect(cls)}>
               <CheckCircle2 size={15} />認識結果を反映
             </button>
             <label className="label mt-3">担当者コメント</label>

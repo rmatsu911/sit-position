@@ -53,4 +53,4 @@ export const aiFeatures: AiFeature[] = [
 
 export const aiPanelHeading = 'AI機能'
 export const aiPanelIntro =
-  '施工写真・工程・品質確認データをAIが解析し、施工写真の分類、物体検出、品質判定、工期・要員の予測、施工判断を行います。'
+  '施工写真・工程・品質確認データを活用したAI機能の構想です。現在は施工写真の物体検出を中心に整備を進めており、品質判定・工期/要員予測・施工判断は今後実装予定の機能を含みます。'

@@ -3,7 +3,7 @@ import { api } from '../lib/apiClient'
 import type { Photo, PhotoConfirm } from '../types'
 import type { Detection, RecogBox, Recognition } from '../data/aiPreview'
 
-// このデモ画面が対象とする案件（熊本中央局 光設備更改工事）
+// 施工写真関連画面が既定で対象とする案件ID（熊本中央局 光設備更改工事）
 export const DEMO_PROJECT_ID = 1
 
 // バックエンド PhotoOut に対応
@@ -70,6 +70,8 @@ export function toPhoto(p: ApiPhoto): Photo {
     aiCandidate: p.ai_candidate ?? p.equipment ?? '—',
     favorite: p.favorite,
     colorKey: p.equipment ?? '光ケーブル',
+    imageUrl: p.original_url,
+    thumbUrl: p.thumbnail_url,
   }
 }
 

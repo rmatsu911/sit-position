@@ -235,14 +235,3 @@ export const progressChart = [
   { name: '合志市 基地局設備更新工事', plan: 40, actual: 35 },
   { name: '玉名局 クロージャ更新工事', plan: 90, actual: 91 },
 ]
-
-/** 天候・環境（固定ダミー） */
-export const todayEnv = {
-  date: '2026/07/21',
-  weather: '晴れ時々曇り',
-  temp: '最高 34℃ / 最低 26℃',
-  wbgt: 29, // 熱中症指数
-  wbgtLevel: '厳重警戒',
-  wind: '南の風 やや強く 最大7m/s',
-  advisory: ['強風注意', '熱中症 厳重警戒'],
-}

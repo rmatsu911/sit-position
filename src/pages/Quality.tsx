@@ -2,11 +2,10 @@ import { useMemo, useState } from 'react'
 import { ScanSearch, CheckCircle2, RotateCcw, PauseCircle, ArrowRight } from 'lucide-react'
 import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
-import { StatusBadge, Badge } from '../components/ui/Badge'
+import { StatusBadge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
 import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
 import { useApp } from '../context/AppContext'
-import { anomalyFindings, anomalyMeta, detectionPoints } from '../data/quality'
 import { useQualityChecks, useUpdateQualityCheck } from '../api/quality'
 import { usePhotos, DEMO_PROJECT_ID } from '../api/photos'
 import { useTestRecords, useCreateTestRecord } from '../api/testRecords'
@@ -24,7 +23,6 @@ export default function Quality() {
   const [detail, setDetail] = useState<QualityItem | null>(null)
   const [anomalyOpen, setAnomalyOpen] = useState(false)
   const [comment, setComment] = useState('')
-  const [anomalyStatus, setAnomalyStatus] = useState('確認待ち')
 
   const photoById = useMemo(() => new Map(photos.map((p) => [p.id, p])), [photos])
 
@@ -180,77 +178,18 @@ export default function Quality() {
         })()}
       </Modal>
 
-      {/* AI施工品質チェック */}
-      <Modal open={anomalyOpen} onClose={() => setAnomalyOpen(false)} title="AI施工品質チェック" size="xl"
-        footer={
-          <div className="flex w-full items-center justify-between">
-            <div className="flex items-center gap-2 text-[12.5px] text-ink-soft">確認状況：<StatusBadge status={anomalyStatus} /></div>
-            <div className="flex items-center gap-2">
-              <button className="btn-default" onClick={() => { setAnomalyStatus('確認済み'); toast('問題なしとして確認しました', 'ok') }}>問題なし</button>
-              <button className="btn-default" onClick={() => toast('コメントを追加しました', 'ok')}>コメントを追加</button>
-              <button className="btn-danger" onClick={() => { setAnomalyStatus('再撮影依頼'); toast('再撮影を依頼しました', 'ng') }}>再撮影を依頼</button>
-              <button className="btn-default" onClick={() => { setAnomalyStatus('再撮影依頼'); toast('修正を依頼しました', 'ng') }}>修正を依頼</button>
-              <button className="btn-default" onClick={() => { setAnomalyStatus('保留'); toast('保留にしました', 'warn') }}>保留</button>
-              <button className="btn-primary" onClick={() => { setAnomalyStatus('承認済み'); toast('承認しました', 'ok') }}>承認</button>
-            </div>
-          </div>
-        }>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <p className="mb-1.5 text-[14px] font-semibold text-ink">確認対象写真</p>
-            <div className="relative overflow-hidden rounded border border-line">
-              <PhotoPlaceholder type="クロージャ" no={anomalyMeta.photoNo} className="aspect-[4/3] w-full" board={{ process: anomalyMeta.process, date: anomalyMeta.takenAt }} />
-              <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 75" preserveAspectRatio="none">
-                {anomalyFindings.map((a) => (
-                  <g key={a.no}>
-                    <rect x={a.x} y={a.y} width={a.w} height={a.h} fill="#d64545" fillOpacity={0.08} stroke="#d64545" strokeWidth={1} rx={1} />
-                    <circle cx={a.x} cy={a.y} r="3.4" fill="#d64545" />
-                    <text x={a.x} y={a.y + 1.2} fontSize="3.6" fill="#fff" textAnchor="middle" fontWeight="bold">{a.no}</text>
-                    <rect x={a.x + 4.5} y={a.y - 2.6} width={a.label.length * 3.4 + 3} height={5} rx={1} fill="#d64545" />
-                    <text x={a.x + 6} y={a.y + 1.1} fontSize="3.2" fill="#fff">{a.label}</text>
-                  </g>
-                ))}
-              </svg>
-              <span className="absolute bottom-1 left-1 rounded bg-ink/70 px-1.5 py-0.5 text-[10px] text-white">AI検出結果</span>
-            </div>
-          </div>
-          <div>
-            <p className="mb-1.5 text-[14px] font-semibold text-ink">完成基準写真</p>
-            <div className="overflow-hidden rounded border border-line">
-              <PhotoPlaceholder type="完成状態" no="基準" className="aspect-[4/3] w-full" board={{ process: 'クロージャ設置（完成基準）', date: '基準' }} />
-            </div>
-            <div className="mt-2 flex items-center gap-2">
-              <Badge tone="ok" dot>完成基準</Badge>
-              <span className="text-[13px] text-ink-soft">比較用の完成基準写真</span>
-            </div>
-          </div>
-        </div>
-
-        {/* AI検出結果 */}
-        <div className="mt-3 rounded border border-line bg-canvas px-4 py-3">
-          <p className="mb-1.5 text-[13px] font-semibold text-ink">AI検出結果</p>
-          <div className="flex flex-wrap gap-2">
-            {detectionPoints.map((p, i) => (
-              <span key={p} className="inline-flex items-center gap-1.5 rounded border border-red-200 bg-red-50 px-2.5 py-1 text-[13px] text-ng">
-                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-ng text-[10px] font-bold text-white">{i + 1}</span>{p}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        {/* 詳細情報 */}
-        <div className="mt-3 grid grid-cols-5 gap-x-4 gap-y-2 rounded border border-line bg-canvas px-4 py-3 text-[13px]">
-          <Meta label="案件名" value={anomalyMeta.project} span={2} />
-          <Meta label="工程" value={anomalyMeta.process} />
-          <Meta label="設備" value={anomalyMeta.equipment} />
-          <Meta label="写真番号" value={anomalyMeta.photoNo} />
-          <Meta label="撮影日時" value={anomalyMeta.takenAt} />
-          <Meta label="撮影者" value={anomalyMeta.photographer} />
-          <Meta label="確認担当者" value={anomalyMeta.checker} />
-          <Meta label="AI判定結果" value={<span className="font-medium text-ng">{anomalyMeta.judge}</span>} />
-          <Meta label="重要度" value={<span className="font-medium text-warn">{anomalyMeta.priority}</span>} />
-          <Meta label="確認状況" value={<StatusBadge status={anomalyStatus} />} />
-          <Meta label="対応期限" value={anomalyMeta.dueDate} />
+      {/* AI施工品質チェック（AI解析結果が登録されると表示。現在は未連携） */}
+      <Modal open={anomalyOpen} onClose={() => setAnomalyOpen(false)} title="AI施工品質チェック" size="lg">
+        <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center">
+          <ScanSearch size={40} className="text-slate-300" />
+          <p className="text-[14px] font-semibold text-ink">AI解析結果なし</p>
+          <p className="max-w-md text-[13px] leading-relaxed text-ink-soft">
+            施工写真と完成基準を比較し、不良箇所を自動検出するAI施工品質チェックは現在準備中です。
+            AI解析結果が登録されると、検出箇所・判定結果・対応期限がここに表示されます。
+          </p>
+          <p className="text-[12px] text-ink-soft">
+            写真単位のAI物体検出結果は「施工写真」画面の各写真詳細で確認できます。
+          </p>
         </div>
       </Modal>
     </div>
@@ -322,14 +261,5 @@ function TestRecordsPanel() {
         </div>
       </Modal>
     </Panel>
-  )
-}
-
-function Meta({ label, value, span }: { label: string; value: React.ReactNode; span?: number }) {
-  return (
-    <div className={span === 2 ? 'col-span-2' : ''}>
-      <p className="text-[11.5px] text-ink-soft">{label}</p>
-      <p className="mt-0.5 font-medium text-ink">{value}</p>
-    </div>
   )
 }

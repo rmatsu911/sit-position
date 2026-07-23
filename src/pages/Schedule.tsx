@@ -11,7 +11,6 @@ import { StatusBadge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
 import { ContextMenu, type MenuItem } from '../components/ui/ContextMenu'
 import { useApp } from '../context/AppContext'
-import { wbsTasks, forecast, forecastSeries } from '../data/schedule'
 import { useProjectTasks } from '../api/tasks'
 import type { WbsTask } from '../types'
 
@@ -19,11 +18,8 @@ import type { WbsTask } from '../types'
 const SCHEDULE_PROJECT_ID = 1
 import {
   days, dayWidthByMode, ROW_H, dayIndex, isHoliday, isWeekend, weekdayLabel,
-  weatherFor, addDaysIso, todayDate, type ViewMode,
+  addDaysIso, todayDate, type ViewMode,
 } from './schedule/ganttUtils'
-import {
-  Area, AreaChart, CartesianGrid, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from 'recharts'
 
 const statusColor: Record<string, string> = {
   完了: '#2e8b57',
@@ -56,11 +52,10 @@ export default function Schedule() {
   const { data: apiTasks, isLoading: tasksLoading, isError: tasksError } = useProjectTasks(SCHEDULE_PROJECT_ID)
   const [tasks, setTasks] = useState<WbsTask[]>([])
 
-  // API取得（read）→ ローカルstateへ。取得失敗時はダミーへフォールバック。
+  // API取得（read）→ ローカルstateへ。取得失敗時は固定ダミーへフォールバックしない。
   useEffect(() => {
-    if (apiTasks && apiTasks.length) setTasks(apiTasks.map((t) => ({ ...t })))
-    else if (tasksError) setTasks(wbsTasks.map((t) => ({ ...t })))
-  }, [apiTasks, tasksError])
+    if (apiTasks) setTasks(apiTasks.map((t) => ({ ...t })))
+  }, [apiTasks])
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [view, setView] = useState<ViewMode>('day')
   const [filterStatus, setFilterStatus] = useState<string>('all')
@@ -97,7 +92,7 @@ export default function Schedule() {
               : t,
           ),
         )
-        toast('工程の日程を変更しました（デモ）', 'ok')
+        toast('この操作は現在準備中です', 'info')
       }
       dragRef.current = null
       setPreview(null)
@@ -178,21 +173,21 @@ export default function Schedule() {
     })
     if (ok) {
       setTasks((prev) => prev.filter((x) => x.id !== t.id && !x.wbs.startsWith(t.wbs + '.')))
-      toast('工程を削除しました（デモ）', 'ok')
+      toast('この操作は現在準備中です', 'info')
     }
   }
 
   const menuTask = menu ? tasks.find((t) => t.id === menu.id) : null
   const menuItems: MenuItem[] = menuTask
     ? [
-        { label: '工程を追加', icon: Plus, onClick: () => toast('工程を追加しました（デモ）', 'ok') },
-        { label: '子工程を追加', icon: CornerDownRight, onClick: () => toast('子工程を追加しました（デモ）', 'ok') },
-        { label: '工程を編集', icon: Pencil, onClick: () => toast('編集ダイアログを開きます（デモ）') },
-        { label: '工程をコピー', icon: Copy, onClick: () => toast('工程をコピーしました（デモ）') },
+        { label: '工程を追加', icon: Plus, onClick: () => toast('この操作は現在準備中です', 'info') },
+        { label: '子工程を追加', icon: CornerDownRight, onClick: () => toast('この操作は現在準備中です', 'info') },
+        { label: '工程を編集', icon: Pencil, onClick: () => toast('この操作は現在準備中です') },
+        { label: '工程をコピー', icon: Copy, onClick: () => toast('この操作は現在準備中です') },
         { label: '', onClick: () => {}, divider: true },
-        { label: '担当者を割り当て', icon: UserPlus, onClick: () => toast('担当者割当を開きます（デモ）') },
-        { label: '前工程と関連付け', icon: Link2, onClick: () => toast('先行工程を設定しました（デモ）') },
-        { label: '後工程と関連付け', icon: Link2, onClick: () => toast('後続工程を設定しました（デモ）') },
+        { label: '担当者を割り当て', icon: UserPlus, onClick: () => toast('この操作は現在準備中です') },
+        { label: '前工程と関連付け', icon: Link2, onClick: () => toast('この操作は現在準備中です') },
+        { label: '後工程と関連付け', icon: Link2, onClick: () => toast('この操作は現在準備中です') },
         { label: '進捗を更新', icon: TrendingUp, onClick: () => { setProgressModal(menuTask); setProgressVal(menuTask.progress) } },
         { label: '完了にする', icon: CheckCircle2, onClick: () => { setTasks((p) => p.map((t) => t.id === menuTask.id ? { ...t, progress: 100, status: '完了' } : t)); toast(`「${menuTask.name}」を完了にしました`, 'ok') } },
         { label: '詳細を表示', icon: Eye, onClick: () => { setProgressModal(menuTask); setProgressVal(menuTask.progress) } },
@@ -223,27 +218,27 @@ export default function Schedule() {
 
   const toolbarGroups: { icon: typeof Plus; label: string; onClick: () => void }[][] = [
     [
-      { icon: Plus, label: '工程追加', onClick: () => toast('工程を追加しました（デモ）', 'ok') },
-      { icon: FolderPlus, label: '親工程追加', onClick: () => toast('親工程を追加しました（デモ）', 'ok') },
-      { icon: CornerDownRight, label: '子工程追加', onClick: () => toast('子工程を追加しました（デモ）', 'ok') },
+      { icon: Plus, label: '工程追加', onClick: () => toast('この操作は現在準備中です', 'info') },
+      { icon: FolderPlus, label: '親工程追加', onClick: () => toast('この操作は現在準備中です', 'info') },
+      { icon: CornerDownRight, label: '子工程追加', onClick: () => toast('この操作は現在準備中です', 'info') },
     ],
     [
-      { icon: Pencil, label: '編集', onClick: () => toast('編集（デモ）') },
+      { icon: Pencil, label: '編集', onClick: () => toast('この操作は現在準備中です') },
       { icon: Trash2, label: '削除', onClick: () => toast('削除対象を選択してください') },
-      { icon: Copy, label: 'コピー', onClick: () => toast('コピーしました（デモ）') },
-      { icon: ClipboardPaste, label: '貼り付け', onClick: () => toast('貼り付けました（デモ）') },
-      { icon: Undo2, label: '元に戻す', onClick: () => toast('元に戻しました（デモ）') },
-      { icon: Redo2, label: 'やり直す', onClick: () => toast('やり直しました（デモ）') },
+      { icon: Copy, label: 'コピー', onClick: () => toast('この操作は現在準備中です') },
+      { icon: ClipboardPaste, label: '貼り付け', onClick: () => toast('この操作は現在準備中です') },
+      { icon: Undo2, label: '元に戻す', onClick: () => toast('この操作は現在準備中です') },
+      { icon: Redo2, label: 'やり直す', onClick: () => toast('この操作は現在準備中です') },
     ],
     [
-      { icon: UserPlus, label: '担当者割当', onClick: () => toast('担当者を割り当てます（デモ）') },
-      { icon: Users2, label: '要員割当', onClick: () => toast('要員を割り当てます（デモ）') },
+      { icon: UserPlus, label: '担当者割当', onClick: () => toast('この操作は現在準備中です') },
+      { icon: Users2, label: '要員割当', onClick: () => toast('この操作は現在準備中です') },
       { icon: TrendingUp, label: '進捗更新', onClick: () => toast('工程を右クリックして進捗更新できます') },
-      { icon: Save, label: '基準工程保存', onClick: () => toast('基準工程を保存しました（デモ）', 'ok') },
+      { icon: Save, label: '基準工程保存', onClick: () => toast('この操作は現在準備中です', 'info') },
     ],
     [
       { icon: TrendingUp, label: '工期予測', onClick: () => setForecastOpen(true) },
-      { icon: SlidersHorizontal, label: '表示設定', onClick: () => toast('表示設定を開きます（デモ）') },
+      { icon: SlidersHorizontal, label: '表示設定', onClick: () => toast('この操作は現在準備中です') },
       { icon: Filter, label: 'フィルター', onClick: () => setFilterOpen((v) => !v) },
       { icon: Crosshair, label: '今日へ移動', onClick: scrollToToday },
     ],
@@ -258,7 +253,7 @@ export default function Schedule() {
           { label: '工程管理' },
         ]}
         title="工程管理"
-        description={`熊本中央局 光設備更改工事 ／ WBS・ガントチャート ${tasksLoading ? '（工程データを読み込み中...）' : tasksError ? '（オフライン: サンプル表示）' : '（API連携）'}`}
+        description={`熊本中央局 光設備更改工事 ／ WBS・ガントチャート ${tasksLoading ? '（工程データを読み込み中...）' : tasksError ? '（工程データの取得に失敗しました）' : '（API連携）'}`}
         actions={
           <div className="flex items-center gap-1 rounded border border-line bg-white p-0.5">
             {(['day', 'week', 'month'] as ViewMode[]).map((v) => (
@@ -270,7 +265,7 @@ export default function Schedule() {
                 {v === 'day' ? '日' : v === 'week' ? '週' : '月'}表示
               </button>
             ))}
-            <button onClick={() => toast('全画面表示（デモ）')} className="ml-1 rounded p-1 text-ink-soft hover:bg-canvas" title="全画面表示"><Maximize2 size={15} /></button>
+            <button onClick={() => toast('この操作は現在準備中です')} className="ml-1 rounded p-1 text-ink-soft hover:bg-canvas" title="全画面表示"><Maximize2 size={15} /></button>
             <button onClick={() => setView('week')} className="rounded p-1 text-ink-soft hover:bg-canvas" title="縮小"><ZoomOut size={15} /></button>
             <button onClick={() => setView('day')} className="rounded p-1 text-ink-soft hover:bg-canvas" title="拡大"><ZoomIn size={15} /></button>
           </div>
@@ -312,6 +307,18 @@ export default function Schedule() {
           </div>
         )}
       </div>
+
+      {/* エラー時は固定ダミーへ切り替えず、状態を明示する */}
+      {tasksError && (
+        <div className="mb-2 rounded border border-red-200 bg-red-50 px-4 py-3 text-center text-[13px] text-ng">
+          工程データの取得に失敗しました。ネットワーク接続とAPIの状態をご確認ください。
+        </div>
+      )}
+      {!tasksLoading && !tasksError && tasks.length === 0 && (
+        <div className="mb-2 rounded border border-line bg-white px-4 py-6 text-center text-[13px] text-ink-soft">
+          工程がまだ登録されていません。
+        </div>
+      )}
 
       {/* ガント本体 */}
       <Panel className="overflow-hidden" bodyClassName="p-0">
@@ -513,7 +520,6 @@ function GanttHeader({ dw, view }: { dw: number; view: ViewMode }) {
             <div key={i} className={`flex flex-col items-center justify-center gap-0.5 border-r border-line/70 ${hol ? 'bg-red-50 text-ng' : wk ? 'bg-slate-50 text-slate-400' : 'text-ink-soft'}`} style={{ width: dw }}>
               {showNum && <span className="text-[11px] font-medium leading-none tabular-nums">{d.getDate()}</span>}
               {view === 'day' && <span className="text-[11px] leading-none">{weekdayLabel(d)}</span>}
-              {view === 'day' && <span className="text-[11px] leading-none">{weatherFor(d)}</span>}
             </div>
           )
         })}
@@ -598,46 +604,16 @@ function GanttRow({
 
 function ForecastView() {
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 rounded border border-sysken-200 bg-sysken-50 px-3 py-2 text-xs text-sysken-700">
-        AIが実績進捗・天候・要員稼働を解析し、完了予定日と遅延リスクを予測しています。
-      </div>
-      <div className="grid grid-cols-5 gap-2">
-        {[
-          { l: '現在の進捗率', v: `${forecast.progressActual}%` },
-          { l: '予定進捗率', v: `${forecast.progressPlan}%` },
-          { l: '当初完了予定', v: forecast.originalDue.slice(5) },
-          { l: '予測完了日', v: forecast.forecastDue.slice(5), tone: 'ng' },
-          { l: '予測差分', v: `+${forecast.diffDays}日`, tone: 'ng' },
-          { l: '残り工程数', v: `${forecast.remainingTasks}` },
-          { l: '遅延工程数', v: `${forecast.delayedTasks}`, tone: 'warn' },
-          { l: '必要要員数', v: `${forecast.requiredPeople}名` },
-          { l: '天候影響', v: forecast.weatherImpact },
-          { l: 'リスクレベル', v: forecast.riskLevel, tone: 'warn' },
-        ].map((k) => (
-          <div key={k.l} className="rounded border border-line bg-white p-2">
-            <p className="text-[11px] text-ink-soft">{k.l}</p>
-            <p className={`mt-0.5 text-sm font-bold ${k.tone === 'ng' ? 'text-ng' : k.tone === 'warn' ? 'text-warn' : 'text-ink'}`}>{k.v}</p>
-          </div>
-        ))}
-      </div>
-      <div className="h-64 rounded border border-line p-2">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={forecastSeries} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-            <defs>
-              <linearGradient id="pf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#005bac" stopOpacity={0.2} /><stop offset="100%" stopColor="#005bac" stopOpacity={0} /></linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#eef1f5" />
-            <XAxis dataKey="week" tick={{ fontSize: 12, fill: '#667085' }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fontSize: 12, fill: '#667085' }} axisLine={false} tickLine={false} unit="%" />
-            <Tooltip contentStyle={{ borderRadius: 4, border: '1px solid #d6dce3', fontSize: 12 }} />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Area type="monotone" dataKey="plan" name="予定進捗" stroke="#94a3b8" strokeWidth={2} fill="none" />
-            <Area type="monotone" dataKey="actual" name="実績進捗" stroke="#005bac" strokeWidth={2.5} fill="url(#pf)" />
-            <Line type="monotone" dataKey="predict" name="予測進捗" stroke="#d64545" strokeWidth={2} strokeDasharray="5 4" dot={false} />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
+    <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center">
+      <TrendingUp size={40} className="text-slate-300" />
+      <p className="text-[14px] font-semibold text-ink">AI工期予測は未連携です</p>
+      <p className="max-w-md text-[13px] leading-relaxed text-ink-soft">
+        実績進捗・天候・要員稼働を解析し、完了予定日と遅延リスクを予測する機能は現在準備中です。
+        予測モデルが連携されると、予測完了日・遅延リスク・進捗推移グラフがここに表示されます。
+      </p>
+      <p className="text-[12px] text-ink-soft">
+        現在の予定・実績進捗は本画面のガントチャートで確認できます。
+      </p>
     </div>
   )
 }

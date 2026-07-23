@@ -6,6 +6,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # 実行環境（development / staging / production）
+    app_env: str = "development"
+    app_version: str = "1.0.0"
+
     # DB
     database_url: str = "postgresql+psycopg2://sysken:sysken@localhost:5432/sysken"
 

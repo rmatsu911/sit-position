@@ -124,8 +124,8 @@ export default function DailyReportPage() {
                 onError: () => toast('コピーに失敗しました', 'ng'),
               })
             }}><Copy size={15} />前日をコピー</button>
-            <button className="btn-default" onClick={() => toast('PDFを表示します（デモ）')}><FileText size={15} />PDF表示</button>
-            <button className="btn-default" onClick={() => toast('印刷ダイアログを開きます（デモ）')}><Printer size={15} />印刷</button>
+            <button className="btn-default" onClick={() => toast('この操作は現在準備中です')}><FileText size={15} />PDF表示</button>
+            <button className="btn-default" onClick={() => toast('この操作は現在準備中です')}><Printer size={15} />印刷</button>
           </>
         }
       />

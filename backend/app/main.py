@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 
-app = FastAPI(title="株式会社SYSKEN AI施工管理システム API", version="0.1.0")
+app = FastAPI(title="株式会社SYSKEN AI施工管理システム API", version=settings.app_version)
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,7 +24,13 @@ if settings.storage_backend == "local":
 
 @app.get("/health", tags=["system"])
 def health() -> dict:
-    return {"status": "ok", "version": "0.1.0"}
+    return {"status": "ok", "version": settings.app_version}
+
+
+@app.get("/api/meta", tags=["system"])
+def meta() -> dict:
+    """実行環境・バージョン（環境変数由来）。フロントの環境表示の情報源。"""
+    return {"app_env": settings.app_env, "version": settings.app_version}
 
 
 # ルーター登録（api パッケージ側で集約）

@@ -3,20 +3,18 @@ import { useNavigate } from 'react-router-dom'
 import {
   Search,
   Bell,
-  HelpCircle,
   ChevronDown,
   PanelRightOpen,
   PanelRightClose,
-  RefreshCw,
   Menu as MenuIcon,
-  User,
   LogOut,
   Settings as SettingsIcon,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
-import { notifications } from '../../data/notifications'
+import { useNotifications } from '../../api/notifications'
 import { DemoGuide } from './DemoGuide'
 import { useAuth } from '../../auth/AuthContext'
+import { IS_DEV_VISIBLE } from '../../lib/env'
 
 const ROLE_LABELS: Record<string, string> = {
   ADMIN: '管理者',
@@ -27,11 +25,13 @@ const ROLE_LABELS: Record<string, string> = {
 }
 
 export function AppHeader() {
-  const { toggleSidebar, aiPanelOpen, toggleAiPanel, toast } = useApp()
+  const { toggleSidebar, aiPanelOpen, toggleAiPanel } = useApp()
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const { data: notifications = [] } = useNotifications()
   const [openNotif, setOpenNotif] = useState(false)
   const [openUser, setOpenUser] = useState(false)
+  const [query, setQuery] = useState('')
   const unread = notifications.filter((n) => !n.read).length
   const displayName = user?.name ?? 'ゲスト'
   const roleLabel = user ? (ROLE_LABELS[user.role] ?? user.role) : ''
@@ -53,27 +53,23 @@ export function AppHeader() {
         </div>
       </div>
 
-      {/* 全体検索 */}
-      <div className="relative ml-2 w-[380px]">
+      {/* 案件検索 */}
+      <form
+        className="relative ml-2 w-[360px]"
+        onSubmit={(e) => { e.preventDefault(); navigate(`/projects${query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ''}`) }}
+      >
         <Search size={16} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-soft" />
         <input
-          placeholder="案件・工事名・担当者・写真を検索"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="案件・工事名・工事番号で検索"
           className="w-full rounded border border-line bg-canvas py-1.5 pl-8 pr-3 text-[13px] outline-none focus:border-sysken-400 focus:bg-white"
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') toast('検索を実行しました（デモ）', 'info')
-          }}
         />
-      </div>
+      </form>
 
       <div className="ml-auto flex items-center gap-1">
-        {/* 最終同期 */}
-        <div className="mr-2 hidden items-center gap-1.5 text-[12px] text-ink-soft xl:flex">
-          <RefreshCw size={13} />
-          最終同期：2026/07/21 15:30
-        </div>
-
-        {/* デモガイド（発表者向け） */}
-        <DemoGuide />
+        {/* デモガイド（発表者向け・開発/検証環境のみ） */}
+        {IS_DEV_VISIBLE && <DemoGuide />}
 
         {/* AIパネル開閉 */}
         <button
@@ -83,15 +79,6 @@ export function AppHeader() {
         >
           {aiPanelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
           AIパネル
-        </button>
-
-        {/* ヘルプ */}
-        <button
-          onClick={() => toast('ヘルプ：デモ環境です。左メニューから各機能をお試しください。', 'info')}
-          className="rounded p-2 text-ink-soft hover:bg-canvas"
-          title="ヘルプ"
-        >
-          <HelpCircle size={19} />
         </button>
 
         {/* 通知 */}
@@ -177,9 +164,6 @@ export function AppHeader() {
                   <p className="text-[13px] font-semibold text-ink">{displayName}</p>
                   <p className="text-xs text-ink-soft">{roleLabel}{user?.email ? ` / ${user.email}` : ''}</p>
                 </div>
-                <button className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-canvas" onClick={() => { setOpenUser(false); toast('プロフィールを表示します（デモ）') }}>
-                  <User size={15} /> プロフィール
-                </button>
                 <button className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-canvas" onClick={() => { setOpenUser(false); navigate('/settings') }}>
                   <SettingsIcon size={15} /> 設定
                 </button>

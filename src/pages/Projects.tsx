@@ -107,8 +107,8 @@ export default function Projects() {
         description={`全 ${rows.length} 件 ／ 検索結果 ${filtered.length} 件`}
         actions={
           <>
-            <button className="btn-default" onClick={() => toast('表示列設定を開きます（デモ）')}><Columns3 size={15} />表示列設定</button>
-            <button className="btn-default" onClick={() => toast('CSVを出力しました（デモ）', 'ok')}><FileDown size={15} />CSV出力</button>
+            <button className="btn-default" onClick={() => toast('この操作は現在準備中です')}><Columns3 size={15} />表示列設定</button>
+            <button className="btn-default" onClick={() => toast('この操作は現在準備中です', 'info')}><FileDown size={15} />CSV出力</button>
             <button className="btn-primary" onClick={() => setNewOpen(true)}><Plus size={15} />新規案件登録</button>
           </>
         }
@@ -156,8 +156,8 @@ export default function Projects() {
       {selected.size > 0 && (
         <div className="mb-2 flex items-center gap-3 rounded border border-sysken-200 bg-sysken-50 px-3 py-2 text-[13px]">
           <span className="font-medium text-sysken-700">{selected.size}件を選択中</span>
-          <button className="btn-default btn-xs" onClick={() => toast('一括でステータスを変更しました（デモ）', 'ok')}>ステータス変更</button>
-          <button className="btn-default btn-xs" onClick={() => toast('選択案件をCSV出力しました（デモ）', 'ok')}>CSV出力</button>
+          <button className="btn-default btn-xs" onClick={() => toast('この操作は現在準備中です', 'info')}>ステータス変更</button>
+          <button className="btn-default btn-xs" onClick={() => toast('この操作は現在準備中です', 'info')}>CSV出力</button>
           <button className="ml-auto text-xs text-ink-soft hover:underline" onClick={() => setSelected(new Set())}>選択解除</button>
         </div>
       )}
