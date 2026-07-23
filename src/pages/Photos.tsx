@@ -14,7 +14,8 @@ import {
   recognitionFor, recogBoxesFor, detectionsFor, qualityJudgeFor, boxColor,
 } from '../data/aiPreview'
 import {
-  usePhotos, usePhotoAi, useUploadPhoto, useUpdatePhoto, useConfirmPhoto, useDeletePhoto, DEMO_PROJECT_ID,
+  usePhotos, usePhotoAi, useUploadPhoto, useUpdatePhoto, useConfirmPhoto, useDeletePhoto,
+  usePredictionFeedback, useReportMissed, DEMO_PROJECT_ID,
 } from '../api/photos'
 import { useProjects } from '../api/projects'
 import { useSites, useAssets } from '../api/sites'
@@ -512,6 +513,9 @@ function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNex
   onPrev: () => void; onNext: () => void; onClose: () => void
   onFav: () => void; onConfirm: (v: Photo['confirm']) => void; onComment: (text: string) => void; onDelete: () => void
 }) {
+  const { toast } = useApp()
+  const feedbackMut = usePredictionFeedback()
+  const missedMut = useReportMissed()
   const [comment, setComment] = useState(photo.comment)
   const [showBoxes, setShowBoxes] = useState(true)
   const { data: ai } = usePhotoAi(photo.id)
@@ -523,6 +527,28 @@ function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNex
   const detections = useApi && ai!.detections.length ? ai!.detections : detectionsFor(photo)
   const boxes = useApi && ai!.boxes.length ? ai!.boxes : recogBoxesFor(photo)
   const judge = qualityJudgeFor(photo)
+  // モデル状態の明示表示（実学習済みが未配置のときは「実AIが完成」に見せない）
+  const modelNote = !useApi ? 'ローカル推定（AI結果なし）'
+    : ai!.modelStatus === 'ACTIVE' ? `${ai!.model}（${ai!.modelVersion}）`
+    : ai!.modelStatus === 'MODEL_NOT_AVAILABLE' ? '実モデル未配置（MODEL_NOT_AVAILABLE）'
+    : `デモ表示・未学習（${ai!.modelVersion ?? '-'}）`
+  function sendFeedback(predictionId: number | null | undefined, verdict: 'correct' | 'reclassify' | 'false_positive') {
+    if (!predictionId) { toast('この結果はフィードバック対象外です', 'warn'); return }
+    const corrected = verdict === 'reclassify' ? (window.prompt('正しい設備名を入力') ?? undefined) : undefined
+    if (verdict === 'reclassify' && !corrected) return
+    feedbackMut.mutate({ photoId: photo.id, predictionId, verdict, corrected_label: corrected }, {
+      onSuccess: () => toast('フィードバックを保存しました（AI結果は保持）', 'ok'),
+      onError: () => toast('フィードバックの保存に失敗しました', 'ng'),
+    })
+  }
+  function reportMissed() {
+    const label = window.prompt('未検出だった設備名を入力') ?? ''
+    if (!label) return
+    missedMut.mutate({ photoId: photo.id, label }, {
+      onSuccess: () => toast('未検出を報告しました', 'ok'),
+      onError: () => toast('報告に失敗しました', 'ng'),
+    })
+  }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-ink/60" onClick={onClose} />
@@ -548,19 +574,46 @@ function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNex
           </div>
           {/* AI画像認識結果 */}
           <div className="border-b border-line px-4 py-3">
-            <p className="mb-2 text-[13px] font-semibold text-sysken-700">AI画像認識結果</p>
-            <p className="mb-1 text-[11.5px] text-ink-soft">物体検出結果</p>
-            <div className="space-y-1.5">
-              {detections.map((d) => (
-                <div key={d.label} className="flex items-center gap-2">
-                  <span className="w-24 shrink-0 text-[13px] text-ink">{d.label}</span>
-                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
-                    <div className="h-full rounded-full" style={{ width: `${d.pct}%`, background: boxColor[d.kind] }} />
-                  </div>
-                  <span className="w-10 shrink-0 text-right text-[13px] font-semibold tabular-nums text-ink">{d.pct}%</span>
-                </div>
-              ))}
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[13px] font-semibold text-sysken-700">AI画像認識結果</p>
+              <Badge tone={ai?.modelStatus === 'ACTIVE' ? 'ok' : 'warn'}>{modelNote}</Badge>
             </div>
+            <p className="mb-1 text-[11.5px] text-ink-soft">物体検出結果（正しくない場合は下のボタンで訂正）</p>
+            <div className="space-y-2">
+              {detections.map((d, i) => {
+                const pid = (d as { predictionId?: number | null }).predictionId ?? null
+                const fb = (d as { feedback?: string | null }).feedback ?? null
+                return (
+                  <div key={`${d.label}-${i}`}>
+                    <div className="flex items-center gap-2">
+                      <span className="w-24 shrink-0 text-[13px] text-ink">{d.label}</span>
+                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                        <div className="h-full rounded-full" style={{ width: `${d.pct}%`, background: boxColor[d.kind] }} />
+                      </div>
+                      <span className="w-10 shrink-0 text-right text-[13px] font-semibold tabular-nums text-ink">{d.pct}%</span>
+                    </div>
+                    {useApi && (
+                      <div className="mt-0.5 flex items-center gap-1 pl-24 text-[11px]">
+                        {fb ? (
+                          <Badge tone={fb === 'correct' ? 'ok' : 'warn'}>
+                            {fb === 'correct' ? '正しい' : fb === 'reclassify' ? 'クラス修正' : '誤検出'}
+                          </Badge>
+                        ) : (
+                          <>
+                            <button className="rounded border border-line px-1.5 py-0.5 hover:bg-canvas" onClick={() => sendFeedback(pid, 'correct')}>正しい</button>
+                            <button className="rounded border border-line px-1.5 py-0.5 hover:bg-canvas" onClick={() => sendFeedback(pid, 'reclassify')}>クラス修正</button>
+                            <button className="rounded border border-line px-1.5 py-0.5 text-ng hover:bg-red-50" onClick={() => sendFeedback(pid, 'false_positive')}>誤検出</button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            {useApi && (
+              <button className="btn-default btn-xs mt-2 w-full justify-center" onClick={reportMissed}>未検出を報告</button>
+            )}
             <dl className="mt-2.5 space-y-1.5 text-[13px]">
               <Row label="工程判定" value={cls.工程判定} />
               <Row label="設備判定" value={cls.設備判定} />

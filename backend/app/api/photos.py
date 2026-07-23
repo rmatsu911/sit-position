@@ -14,6 +14,8 @@ from app.core.db import get_db
 from app.core.deps import ensure_project_access, get_current_user
 from app.models import (
     AiAnalysisJob,
+    AiFeedback,
+    AiModel,
     AiPrediction,
     AssetType,
     Photo,
@@ -21,7 +23,15 @@ from app.models import (
     User,
     WorkType,
 )
-from app.schemas import DetectionOut, PhotoAiOut, PhotoConfirmUpdate, PhotoOut, PhotoUpdate
+from app.schemas import (
+    DetectionOut,
+    MissedFeedbackIn,
+    PhotoAiOut,
+    PhotoConfirmUpdate,
+    PhotoOut,
+    PhotoUpdate,
+    PredictionFeedbackIn,
+)
 from app.services.storage import get_storage
 
 router = APIRouter()
@@ -209,29 +219,72 @@ def delete_photo(
     db.commit()
 
 
-_KIND_BY_LABEL = {"クロージャ": "closure", "固定金具": "closure", "融着点": "closure"}
+_KIND_BY_CODE = {"closure": "closure", "onu": "closure", "optical_termination_box": "closure",
+                 "optical_cable": "cable", "utility_pole": "check"}
+_KIND_BY_LABEL = {"クロージャ": "closure", "固定金具": "closure", "融着点": "closure",
+                  "ONU": "closure", "光成端箱": "closure", "光ケーブル": "cable", "電柱": "check"}
+# 表示座標系（RecognitionOverlay の viewBox 100x75）へ正規化座標を変換
+_DISP_W, _DISP_H = 100.0, 75.0
+
+
+def _bbox_to_display(raw: str | None) -> tuple[list[float] | None, list[float] | None]:
+    """ai_predictions.bounding_box を (表示座標[x,y,w,h], 正規化[x,y,w,h]) に変換。
+    新形式=正規化dict {format:xywhn,...}、旧形式=表示座標list [x,y,w,h] の両対応。"""
+    if not raw:
+        return None, None
+    try:
+        v = json.loads(raw)
+    except json.JSONDecodeError:
+        return None, None
+    if isinstance(v, dict) and v.get("format") == "xywhn":
+        x, y, w, h = v["x"], v["y"], v["w"], v["h"]
+        return [x * _DISP_W, y * _DISP_H, w * _DISP_W, h * _DISP_H], [x, y, w, h]
+    if isinstance(v, list) and len(v) == 4:  # 旧形式（表示座標）
+        x, y, w, h = v
+        return [x, y, w, h], [x / _DISP_W, y / _DISP_H, w / _DISP_W, h / _DISP_H]
+    return None, None
 
 
 @router.get("/{photo_id}/ai", response_model=PhotoAiOut)
 def photo_ai(photo_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> PhotoAiOut:
-    """AI推論結果（ai_predictions）を返す。将来YOLOが書き込めば同じ経路で表示される。"""
+    """AI推論結果（ai_predictions）を返す。YOLO Worker が書き込めば同じ経路で表示される。
+    座標は正規化(0-1)で保存し、表示用に変換して返す（画像サイズが変わっても正しく描画）。"""
     p = db.get(Photo, photo_id)
     if not p or p.deleted_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "写真が見つかりません")
     ensure_project_access(db, user, p.project_id)
-    preds = db.execute(select(AiPrediction).where(AiPrediction.photo_id == photo_id)).scalars().all()
+    preds = db.execute(select(AiPrediction).where(AiPrediction.photo_id == photo_id).order_by(AiPrediction.id)).scalars().all()
+    # 既に付いた人間フィードバックを prediction_id で引く
+    fb_by_pred = {
+        f.prediction_id: f for f in db.execute(select(AiFeedback).where(AiFeedback.photo_id == photo_id)).scalars().all()
+        if f.prediction_id
+    }
     detections: list[DetectionOut] = []
     recognition: dict = {}
+    model_obj = None
     for i, r in enumerate(preds):
+        if r.model_id and model_obj is None:
+            model_obj = db.get(AiModel, r.model_id)
         if r.prediction_type == "detection":
-            bbox = None
-            if r.bounding_box:
+            disp, norm = _bbox_to_display(r.bounding_box)
+            code = None
+            if r.raw_result:
                 try:
-                    bbox = json.loads(r.bounding_box)
+                    code = json.loads(r.raw_result).get("code")
                 except json.JSONDecodeError:
-                    bbox = None
-            kind = _KIND_BY_LABEL.get(r.predicted_label or "", "check" if i >= 2 else "cable")
-            detections.append(DetectionOut(label=r.predicted_label or "-", confidence=float(r.confidence or 0), kind=kind, bbox=bbox))
+                    code = None
+            kind = _KIND_BY_CODE.get(code or "", _KIND_BY_LABEL.get(r.predicted_label or "", "check" if i >= 2 else "cable"))
+            fb = fb_by_pred.get(r.id)
+            verdict = None
+            if fb and fb.human_result:
+                try:
+                    verdict = json.loads(fb.human_result).get("verdict")
+                except json.JSONDecodeError:
+                    verdict = None
+            detections.append(DetectionOut(
+                label=r.predicted_label or "-", confidence=float(r.confidence or 0), kind=kind,
+                bbox=disp, bbox_norm=norm, prediction_id=r.id, class_id=r.predicted_class_id, code=code, feedback=verdict,
+            ))
         elif r.prediction_type == "classification":
             if r.raw_result:
                 try:
@@ -240,6 +293,68 @@ def photo_ai(photo_id: int, db: Session = Depends(get_db), user: User = Depends(
                     recognition = {"認識結果": r.predicted_label}
             else:
                 recognition = {"認識結果": r.predicted_label}
-    # ジョブ状態も返せるよう source を設定
-    source = "ai_predictions" if preds else "none"
-    return PhotoAiOut(detections=detections, recognition=recognition, source=source)
+    source = ("ai_predictions" if preds else "none")
+    if model_obj and (model_obj.status or "").upper() in ("DEMO", "DEMO_SEED"):
+        source = "seed-demo"
+    return PhotoAiOut(
+        detections=detections, recognition=recognition, source=source,
+        model=model_obj.name if model_obj else None,
+        model_version=model_obj.version if model_obj else None,
+        model_status=model_obj.status if model_obj else None,
+    )
+
+
+@router.post("/{photo_id}/predictions/{prediction_id}/feedback", status_code=status.HTTP_201_CREATED)
+def prediction_feedback(
+    photo_id: int, prediction_id: int, body: PredictionFeedbackIn,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+) -> dict:
+    """AI予測への人間フィードバック。**AI予測は上書きせず** ai_feedback に別途保存する（再学習用）。"""
+    p = db.get(Photo, photo_id)
+    if not p or p.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "写真が見つかりません")
+    ensure_project_access(db, user, p.project_id)
+    pred = db.get(AiPrediction, prediction_id)
+    if not pred or pred.photo_id != photo_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "予測が見つかりません")
+    if body.verdict not in ("correct", "reclassify", "false_positive"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "不正な判定です")
+    ai_result = {"predicted_label": pred.predicted_label, "predicted_class_id": pred.predicted_class_id,
+                 "confidence": float(pred.confidence or 0)}
+    human_result = {"verdict": body.verdict, "corrected_label": body.corrected_label}
+    fb = AiFeedback(
+        prediction_id=prediction_id, photo_id=photo_id,
+        ai_result=json.dumps(ai_result, ensure_ascii=False),
+        human_result=json.dumps(human_result, ensure_ascii=False),
+        accepted=(body.verdict == "correct"),
+        corrected_value=body.corrected_label if body.verdict == "reclassify" else None,
+        feedback_by=user.id, feedback_at=datetime.now(timezone.utc), comment=body.comment,
+    )
+    db.add(fb)
+    db.flush()
+    write_audit(db, user, "FEEDBACK", "ai_prediction", prediction_id, project_id=p.project_id,
+                before=ai_result, after=human_result)
+    db.commit()
+    return {"id": fb.id, "verdict": body.verdict, "accepted": fb.accepted}
+
+
+@router.post("/{photo_id}/missed-feedback", status_code=status.HTTP_201_CREATED)
+def missed_feedback(
+    photo_id: int, body: MissedFeedbackIn, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+) -> dict:
+    """未検出（AIが出せなかった設備）の報告。prediction_id を持たない ai_feedback として保存。"""
+    p = db.get(Photo, photo_id)
+    if not p or p.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "写真が見つかりません")
+    ensure_project_access(db, user, p.project_id)
+    fb = AiFeedback(
+        prediction_id=None, photo_id=photo_id, ai_result=None,
+        human_result=json.dumps({"verdict": "missed", "label": body.label}, ensure_ascii=False),
+        accepted=False, corrected_value=body.label,
+        feedback_by=user.id, feedback_at=datetime.now(timezone.utc), comment=body.comment,
+    )
+    db.add(fb)
+    db.flush()
+    write_audit(db, user, "FEEDBACK", "photo", photo_id, project_id=p.project_id, after={"verdict": "missed", "label": body.label})
+    db.commit()
+    return {"id": fb.id, "verdict": "missed"}

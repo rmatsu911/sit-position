@@ -313,7 +313,7 @@ class AiFeedback(Base, TimestampMixin):
     """AI結果と人間確定結果を分離保存。誤りも再学習データとして保持。"""
     __tablename__ = "ai_feedback"
     id: Mapped[int] = mapped_column(primary_key=True)
-    prediction_id: Mapped[int] = mapped_column(ForeignKey("ai_predictions.id"), index=True)
+    prediction_id: Mapped[int | None] = mapped_column(ForeignKey("ai_predictions.id"), index=True)  # None=未検出報告
     photo_id: Mapped[int] = mapped_column(ForeignKey("photos.id"))
     ai_result: Mapped[str | None] = mapped_column(Text)
     human_result: Mapped[str | None] = mapped_column(Text)

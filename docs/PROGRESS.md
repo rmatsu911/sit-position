@@ -19,8 +19,9 @@
 
 ## 現在のバージョン
 
-Ver.0.1.3（実用基盤仕上げ）完了。ブランチ `claude/session-rkd93u`。
-要員配置の永続化・資材管理・試験記録・図面の実ファイル表示・帳票の実出力(PDF/Excel)を実装（UI維持）。
+Ver.0.2（AI施工写真認識 PoC基盤）完了。ブランチ `claude/session-rkd93u`。
+AI Worker(分離)＋YOLO推論IF(交換可)＋正規化bbox＋既存UIへの実接続＋人間フィードバック(ai_feedback)を実装。
+**実学習済みweightsは未配置＝MODEL_NOT_AVAILABLE**（Seedのデモ予測はDEMO明示・本物のAI完成には見せない）。
 
 ## 完了済み（要点のみ）
 
@@ -76,18 +77,30 @@ Ver.0.1.3（実用基盤仕上げ）完了。ブランチ `claude/session-rkd93u
 - **権限/監査**：配置・資材・試験・帳票出力は案件スコープ＋ロール認可（配置=PM、資材=PM/FIELD_WORKER、試験=PM/FIELD_WORKER/QUALITY_MANAGER）。登録/変更/削除/配置/出力を audit_logs 記録
 - **テスト**：`test_features.py` に 要員配置/資材/試験記録/帳票PDF・Excel/権限スコープ を追加 → pytest 36件通過。`npm run build` 成功。ブラウザE2E：要員配置→reload保持、資材登録→reload保持、試験記録(Asset/Task紐付け)→reload保持、図面PDF表示、帳票PDF＋Excelダウンロード を確認
 
-## 残課題（未実装・設計は MASTER_SPEC 参照）
+## Ver.0.2 で追加（AI施工写真認識 PoC基盤・2026-07-23）
 
-- weather_records（工期予測）未実装
-- 帳票は施工管理表のみ実装（他6種は共通基盤に追加するだけの状態）
-- AI実推論（YOLO/ViT/OCR/RAG/LLM/工期予測）と AI Worker（`ai_analysis_jobs`購読→`ai_predictions`書込）
-- CADファイルの本格ビューア（今回はPDF/画像のみ対応・対応外はDL）
+- **AI Worker**（`backend/ai_worker/`・別プロセス）：`python -m ai_worker.worker`（常駐）/`--once`。QUEUED→PROCESSING→COMPLETED（`ai_predictions`保存）／FAILED（`error_message`/`retry_count`）。**Worker停止でも本体は正常**（依存しない）
+- **Predictor分離**（`ai_worker/predictor.py`）：`YoloPredictor`（Ultralytics実推論・weightsは`AI_MODEL_PATH`から・コード埋込なし・交換可・未配置は`MODEL_NOT_AVAILABLE`）と`FakePredictor`（**テスト専用**・実結果として保存表示しない）。既定は yolo
+- **クラス体系**：`backend/datasets/data.yaml`（YOLO metadata）が正。`utility_pole/optical_cable/closure/onu/optical_termination_box`（電柱/光ケーブル/クロージャ/ONU/光成端箱）。コードにハードコードしない（`ai_worker/classes.py` がローダ）
+- **Prediction正規化**：`bounding_box` は正規化(0-1)左上原点 xywh(`{"format":"xywhn"}`)で保存。`GET /photos/{id}/ai` が表示座標(100x75)へ変換＋`bbox_norm`も返す（画像サイズ非依存）。`model_id` でModel/Dataset Version追跡（別Versionで再解析しても過去結果を残す）
+- **人間フィードバック**：`POST /photos/{id}/predictions/{pid}/feedback`（correct/reclassify/false_positive）・`POST /photos/{id}/missed-feedback`（未検出）。**AI予測は上書きせず** `ai_feedback` にAI結果+人間結果を両方保存。migration `5aeaba61edcb`（ai_feedback.prediction_id を nullable 化）
+- **既存施工写真UI**：Lightbox の物体検出枠/設備名/confidence/認識結果はそのまま利用し、`ai_predictions` API へ接続。モデル状態バッジ（ACTIVE/未学習DEMO/MODEL_NOT_AVAILABLE）＋検出ごとに 正しい/クラス修正/誤検出＋未検出報告を追加
+- **モデル状態の明示**：実weights未配置＝`MODEL_NOT_AVAILABLE`。Seedのデモ予測は `AiModel.status=DEMO`（未学習）としてUIに明示（本物のSYSKEN認識が完成したようには見せない）。`GET /ai/models` でVersion一覧
+- **学習基盤**：`datasets/dataset_v001/{images,labels}/{train,val,test}`+`data.yaml`、`scripts/train_yolo.py`・`scripts/evaluate_yolo.py`（dataset/model/epochs/imgsz/batch/device・出力は`runs/`）。weights/実写真は `.gitignore` で除外。ultralytics は `[ai]` optional 依存
+- **テスト**：pytest 41件通過（統合経路 Job→Worker→Prediction→API→Feedback、MODEL_NOT_AVAILABLE時はFAILED/予測0、Worker停止でも本体200、未検出報告、models一覧）。`npm run build` 成功。ブラウザE2E：Lightboxで正規化bbox描画・モデル未学習明示・フィードバック保存（AI予測は保持）を確認
+
+## 残課題（未実装・設計は MASTER_SPEC / ai-design 参照）
+
+- **実weights未配置**（`MODEL_NOT_AVAILABLE`）。SYSKEN実写真のアノテーション→学習→`AI_MODEL_PATH`配置は今後（基盤は完成）
+- weather_records（工期予測）未実装。帳票は施工管理表のみ
+- ViT/OCR/RAG/LLM/品質AI本格実装（今回対象外）
+- CADの本格ビューア（PDF/画像のみ対応）
 
 ## 次回作業（1〜3項目）
 
-1. AI Worker雛形（`ai_analysis_jobs`購読→ダミー`ai_predictions`書込→写真/品質画面が既存経路で表示）
-2. 帳票の共通基盤へ他帳票（施工写真台帳/工程表/日報/品質/試験記録）を追加
-3. weather_records と工期予測の基盤
+1. SYSKEN実施工写真のアノテーション＋YOLO学習→weights配置→実推論の有効化（`pip install -e ".[ai]"` → train → AI_MODEL_PATH）
+2. AI結果採用率/修正率/確認時間のKPI集計API（`ai_feedback`ベース）＋ダッシュボード表示
+3. 帳票の共通基盤へ他帳票追加 / weather_records基盤
 
 ## 変更ログ（差分のみ追記）
 
@@ -97,3 +110,4 @@ Ver.0.1.3（実用基盤仕上げ）完了。ブランチ `claude/session-rkd93u
 - 2026-07-23 Ver.0.1.1 残課題対応（写真アップロード連動UI・日報の写真/工程紐付け・工程実績へ反映[確認画面付き]、assets/tasks の site_id フィルタ、reflect dry-run、pytest22/build/E2E）
 - 2026-07-23 Ver.0.1.2 完了（Task↔Asset・要員/資格・工事台帳・図面/書類・通知・ダッシュボード集計を DB/API 化、migration 062aef7de195[40テーブル]、権限スコープ、Seed、pytest29/build/E2E）
 - 2026-07-23 Ver.0.1.3 完了（要員配置永続化・資材・試験記録・図面実ファイル表示・帳票実出力[施工管理表 PDF/Excel]、migration 6b1c1111572b[44テーブル]、openpyxl/reportlab追加、pytest36/build/E2E）
+- 2026-07-23 Ver.0.2 完了（AI Worker分離・YOLO推論IF[交換可/MODEL_NOT_AVAILABLE]・正規化bbox・既存UI実接続・人間フィードバック[ai_feedback]・data.yamlクラス体系・学習/評価スクリプト、migration 5aeaba61edcb、pytest41/build/E2E。実weightsは未配置）

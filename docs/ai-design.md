@@ -56,3 +56,29 @@
 
 - 上記テーブルとジョブ登録API（`/ai/*`）まで。**実推論は未実装**（Workerは未稼働、`analyze` はジョブをQUEUEDにするのみ）。
 - フロントの「AI施工写真分類 / AI品質チェック」表示は、実運用ではこのジョブ結果（`ai_predictions`）に接続する。
+
+## Ver.0.2 の実装範囲（YOLO 施工写真認識 PoC 基盤）
+
+**目的**：将来 SYSKEN の実施工写真をアノテーション・学習して作る本物のYOLOモデルを接続するための基盤。今回はダミーAIを増やすのではなく、経路を実接続する。
+
+- **AI Worker**（`backend/ai_worker/`・施工管理Backendと分離した別プロセス）
+  - `python -m ai_worker.worker`（常駐poll）/ `--once`（QUEUEDを処理して終了）。
+  - `ai_analysis_jobs` の QUEUED → PROCESSING → COMPLETED（`ai_predictions`保存）／失敗時 FAILED（`error_message`/`retry_count`保存）。
+  - **Worker停止中でも施工管理Backendは正常**（本体はWorkerに依存しない）。
+- **Predictor 分離**（`ai_worker/predictor.py`）
+  - `YoloPredictor`：Ultralytics YOLO 実推論。weights は `AI_MODEL_PATH` から読む（コードに埋め込まない・交換可能）。未導入/未配置は `MODEL_NOT_AVAILABLE` を返し本体を止めない。
+  - `FakePredictor`：**テスト専用**。実AI結果として保存・表示しない（Worker既定は `yolo`）。
+- **クラス体系**は `backend/datasets/data.yaml`（YOLO metadata）を正とし、コードにハードコードしない。PoCクラス：`utility_pole/optical_cable/closure/onu/optical_termination_box`（電柱/光ケーブル/クロージャ/ONU/光成端箱）。
+- **Prediction**：`ai_predictions.bounding_box` は**正規化(0-1)左上原点 xywh**（`{"format":"xywhn",...}`）で保存。API `/photos/{id}/ai` が表示座標(100x75)へ変換して返す（画像サイズが変わっても正しく描画）。`model_id` で Model/Dataset Version を追跡（別Versionで再解析しても過去結果を残す）。
+- **人間フィードバック**：`POST /photos/{id}/predictions/{pid}/feedback`（correct/reclassify/false_positive）・`POST /photos/{id}/missed-feedback`（未検出）。**AI予測は上書きせず** `ai_feedback` に AI結果+人間結果の両方を保存（再学習・KPI用）。
+- **モデル状態の明示**：実weights未配置時は `MODEL_NOT_AVAILABLE`、Seedのデモ予測は `status=DEMO`（未学習）としてUIに明示。「本物のSYSKEN認識が完成した」ようには見せない。
+- **学習基盤**：`datasets/dataset_vNNN/{images,labels}/{train,val,test}` + `data.yaml`、`scripts/train_yolo.py`・`scripts/evaluate_yolo.py`（dataset/model/epochs/imgsz/batch/device 指定可、出力は `runs/` にVersion管理）。weights・実写真は Git管理外。
+- **評価/KPI**：評価は Precision/Recall/mAP50/mAP50-95（evaluate_yolo.py）。業務KPI（AI結果採用率/修正率/確認時間）は `ai_feedback` から集計できる関連を保持。
+
+実行例（学習環境で）:
+```
+pip install -e ".[ai]"                 # ultralytics 導入
+python scripts/train_yolo.py --data datasets/data.yaml --model yolov8n.pt --epochs 100
+# → AI_MODEL_PATH=runs/detect/.../weights/best.pt, AI_MODEL_VERSION=... を設定し Worker 起動
+python -m ai_worker.worker
+```

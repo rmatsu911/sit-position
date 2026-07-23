@@ -458,3 +458,105 @@ def test_report_export_scope_forbidden(client):
     fw = token(client, "partner@test.jp")
     # partner は案件2にアクセス不可
     assert client.get("/api/reports/construction-management?project_id=2&format=pdf", headers=H(fw)).status_code == 403
+
+
+# ========== Ver.0.2 AI 施工写真認識 PoC ==========
+import io as _io2  # noqa: E402
+
+from app.models import AiFeedback, AiModel, AiPrediction as _AiPred  # noqa: E402
+from ai_worker.predictor import FakePredictor, YoloPredictor, MODEL_NOT_AVAILABLE  # noqa: E402
+from ai_worker.worker import process_one  # noqa: E402
+
+
+def _photo_with_image() -> int:
+    from app.services.storage import get_storage
+    buf = _io2.BytesIO(); Image.new("RGB", (640, 480), (120, 160, 200)).save(buf, format="JPEG")
+    key = "photos/test/ai_int.jpg"
+    get_storage().save(key, buf.getvalue(), "image/jpeg")
+    with TestingSessionLocal() as s:
+        p = Photo(project_id=1, original_file_path=key, confirmation_status="未確認")
+        s.add(p); s.commit()
+        return p.id
+
+
+def test_ai_pipeline_job_worker_prediction_api_feedback(client):
+    """統合経路: Photo→Job作成→Worker取得→状態遷移→Prediction保存→API取得→Feedback保存。"""
+    pid = _photo_with_image()
+    t = token(client, "pm@test.jp")
+    # Job作成
+    r = client.post(f"/api/ai/photos/{pid}/analyze?job_type=detection", headers=H(t))
+    assert r.status_code == 202 and r.json()["status"] == "QUEUED"
+    # Worker が Fake で処理（テスト専用predictor。実AIではない）
+    with TestingSessionLocal() as s:
+        job = process_one(s, FakePredictor())
+        assert job is not None
+        s.refresh(job)
+        assert job.status == "COMPLETED"
+        assert s.query(_AiPred).filter_by(photo_id=pid, prediction_type="detection").count() == 3
+    # API取得（正規化→表示座標へ変換、prediction_id 付き）
+    ai = client.get(f"/api/photos/{pid}/ai", headers=H(t)).json()
+    assert ai["source"] == "ai_predictions" and len(ai["detections"]) == 3
+    d0 = ai["detections"][0]
+    assert d0["prediction_id"] and d0["bbox"] and d0["bbox_norm"]
+    # bbox_norm は 0-1、bbox は表示座標(100x75)
+    assert 0 <= d0["bbox_norm"][0] <= 1 and d0["bbox"][0] > d0["bbox_norm"][0]
+    # Feedback保存（AI予測は上書きせず ai_feedback に別途保存）
+    predid = d0["prediction_id"]
+    fr = client.post(f"/api/photos/{pid}/predictions/{predid}/feedback", headers=H(t), json={"verdict": "correct"})
+    assert fr.status_code == 201 and fr.json()["accepted"] is True
+    # AI予測は残る（上書きされない）＋ feedbackが記録される
+    with TestingSessionLocal() as s:
+        assert s.get(_AiPred, predid) is not None
+        assert s.query(AiFeedback).filter_by(prediction_id=predid).count() == 1
+    # 再取得すると feedback verdict が反映
+    ai2 = client.get(f"/api/photos/{pid}/ai", headers=H(t)).json()
+    assert ai2["detections"][0]["feedback"] == "correct"
+
+
+def test_ai_missed_feedback(client):
+    pid = _photo_with_image()
+    t = token(client, "pm@test.jp")
+    r = client.post(f"/api/photos/{pid}/missed-feedback", headers=H(t), json={"label": "光成端箱"})
+    assert r.status_code == 201 and r.json()["verdict"] == "missed"
+    with TestingSessionLocal() as s:
+        fb = s.query(AiFeedback).filter_by(photo_id=pid, prediction_id=None).first()
+        assert fb is not None and fb.corrected_value == "光成端箱"
+
+
+def test_ai_model_not_available_fails_job_without_predictions(client):
+    """実weights未配置(YOLO)ではジョブはFAILED、Fake結果は保存しない。"""
+    pid = _photo_with_image()
+    t = token(client, "pm@test.jp")
+    client.post(f"/api/ai/photos/{pid}/analyze", headers=H(t))
+    assert YoloPredictor().status() == MODEL_NOT_AVAILABLE
+    with TestingSessionLocal() as s:
+        job = process_one(s, YoloPredictor())
+        s.refresh(job)
+        assert job.status == "FAILED"
+        assert job.error_message == "MODEL_NOT_AVAILABLE" and job.retry_count == 1
+        assert s.query(_AiPred).filter_by(photo_id=pid).count() == 0
+
+
+def test_backend_works_while_worker_stopped(client):
+    """Worker停止中でも施工管理APIは正常（本体はWorkerに依存しない）。"""
+    t = token(client, "pm@test.jp")
+    # Worker を一切動かさずに主要APIが200
+    assert client.get("/api/projects", headers=H(t)).status_code == 200
+    assert client.get("/api/photos?project_id=1", headers=H(t)).status_code == 200
+    pid = _photo_with_image()
+    # 未処理(QUEUED)のままでも写真AI取得は source=none で正常応答
+    client.post(f"/api/ai/photos/{pid}/analyze", headers=H(t))
+    ai = client.get(f"/api/photos/{pid}/ai", headers=H(t))
+    assert ai.status_code == 200 and ai.json()["source"] == "none"
+
+
+def test_ai_models_endpoint(client):
+    t = token(client, "admin@test.jp")
+    # ensure at least one model via worker
+    pid = _photo_with_image()
+    client.post(f"/api/ai/photos/{pid}/analyze", headers=H(t))
+    with TestingSessionLocal() as s:
+        process_one(s, FakePredictor())
+    r = client.get("/api/ai/models", headers=H(t))
+    assert r.status_code == 200 and len(r.json()) >= 1
+    assert all({"name", "version", "status", "dataset_version"} <= set(m) for m in r.json())

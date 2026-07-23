@@ -34,9 +34,12 @@ export interface ApiPhoto {
 
 // バックエンド PhotoAiOut に対応
 interface ApiPhotoAi {
-  detections: { label: string; confidence: number; kind: string; bbox: number[] | null }[]
+  detections: { label: string; confidence: number; kind: string; bbox: number[] | null; bbox_norm: number[] | null; prediction_id: number | null; class_id: number | null; code: string | null; feedback: string | null }[]
   recognition: Partial<Recognition>
   source: string
+  model: string | null
+  model_version: string | null
+  model_status: string | null
 }
 
 function fmtDate(iso: string | null): string {
@@ -78,12 +81,15 @@ export function usePhotos(projectId: number = DEMO_PROJECT_ID) {
 }
 
 // AI推論結果（ai_predictions 由来）を既存表示部品の形へ変換して返す。
-// 将来 YOLO が ai_predictions に書けば、同じ経路で同じUIに反映される。
+// YOLO Worker が ai_predictions に書けば、同じ経路で同じUIに反映される。
 export interface PhotoAi {
-  detections: Detection[]
+  detections: (Detection & { predictionId: number | null; feedback: string | null })[]
   boxes: RecogBox[]
   recognition: Partial<Recognition>
   source: string
+  model: string | null
+  modelVersion: string | null
+  modelStatus: string | null
 }
 
 export function usePhotoAi(photoId: string | number | undefined) {
@@ -92,10 +98,12 @@ export function usePhotoAi(photoId: string | number | undefined) {
     enabled: photoId !== undefined,
     queryFn: async (): Promise<PhotoAi> => {
       const r = await api<ApiPhotoAi>(`/photos/${photoId}/ai`)
-      const detections: Detection[] = r.detections.map((d) => ({
+      const detections = r.detections.map((d) => ({
         label: d.label,
         pct: Math.round((d.confidence ?? 0) * 100),
         kind: (d.kind as Detection['kind']) ?? 'check',
+        predictionId: d.prediction_id,
+        feedback: d.feedback,
       }))
       const boxes: RecogBox[] = r.detections.map((d, i) => {
         const b = d.bbox ?? [12, 24, 36, 26]
@@ -107,8 +115,32 @@ export function usePhotoAi(photoId: string | number | undefined) {
           x: b[0], y: b[1], w: b[2], h: b[3],
         }
       })
-      return { detections, boxes, recognition: r.recognition ?? {}, source: r.source }
+      return {
+        detections, boxes, recognition: r.recognition ?? {}, source: r.source,
+        model: r.model, modelVersion: r.model_version, modelStatus: r.model_status,
+      }
     },
+  })
+}
+
+// AI予測への人間フィードバック（AI予測は上書きせず ai_feedback に保存）
+export function usePredictionFeedback() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { photoId: string | number; predictionId: number; verdict: 'correct' | 'reclassify' | 'false_positive'; corrected_label?: string; comment?: string }) =>
+      api(`/photos/${input.photoId}/predictions/${input.predictionId}/feedback`, {
+        method: 'POST', body: { verdict: input.verdict, corrected_label: input.corrected_label, comment: input.comment },
+      }),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['photo-ai', v.photoId] }),
+  })
+}
+
+export function useReportMissed() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { photoId: string | number; label: string; comment?: string }) =>
+      api(`/photos/${input.photoId}/missed-feedback`, { method: 'POST', body: { label: input.label, comment: input.comment } }),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['photo-ai', v.photoId] }),
   })
 }
 

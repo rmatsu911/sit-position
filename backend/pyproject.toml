@@ -18,9 +18,11 @@ dependencies = [
   "boto3>=1.34",
   "openpyxl>=3.1",
   "reportlab>=4.0",
+  "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
+ai = ["ultralytics>=8.2"]  # YOLO 実推論（GPU/学習環境に導入。本体は未導入でも動作）
 dev = ["pytest>=8", "httpx>=0.27"]
 
 [tool.pytest.ini_options]

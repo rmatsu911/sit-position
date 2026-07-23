@@ -354,13 +354,44 @@ class DetectionOut(BaseModel):
     label: str
     confidence: float
     kind: str
-    bbox: list[float] | None = None
+    bbox: list[float] | None = None  # 表示座標系 [x, y, w, h]（viewBox 100x75）
+    bbox_norm: list[float] | None = None  # 正規化 [x, y, w, h]（0-1・左上原点）
+    prediction_id: int | None = None
+    class_id: int | None = None
+    code: str | None = None
+    feedback: str | None = None  # 既に付いた人間フィードバックの verdict
 
 
 class PhotoAiOut(BaseModel):
     detections: list[DetectionOut] = []
     recognition: dict = {}
-    source: str  # "ai_predictions" | "none"
+    source: str  # "ai_predictions" | "seed-demo" | "none"
+    model: str | None = None
+    model_version: str | None = None
+    model_status: str | None = None  # ACTIVE / MODEL_NOT_AVAILABLE / DEMO ...
+
+
+# ===== AI フィードバック（Ver.0.2）=====
+class PredictionFeedbackIn(BaseModel):
+    verdict: str  # correct（正しい）/ reclassify（クラス修正）/ false_positive（誤検出）
+    corrected_label: str | None = None
+    comment: str | None = None
+
+
+class MissedFeedbackIn(BaseModel):
+    label: str  # 未検出だった設備の表示名 or コード
+    comment: str | None = None
+
+
+class AiModelOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    model_type: str
+    version: str
+    dataset_version: str | None = None
+    trained_at: datetime | None = None
+    status: str
 
 
 # ===== 要員・資格（Ver.0.1.2）=====

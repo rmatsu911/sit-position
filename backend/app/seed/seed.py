@@ -295,9 +295,9 @@ def run(reset_first: bool = False) -> None:
             )
             s.add(t); s.flush(); wbs_map[wbs] = t
 
-        # AIモデル（構造のみ）
-        yolo = AiModel(name="設備検出モデル", model_type="YOLO", version="v0.1", status="ACTIVE")
-        vit = AiModel(name="工種分類モデル", model_type="ViT", version="v0.1", status="ACTIVE")
+        # AIモデル（デモ表示用・未学習。実学習済みweightsは未配置＝実AIとして扱わない）
+        yolo = AiModel(name="デモ表示用 設備検出（未学習）", model_type="YOLO", version="demo-seed", status="DEMO")
+        vit = AiModel(name="デモ表示用 工種分類（未学習）", model_type="ViT", version="demo-seed", status="DEMO")
         s.add_all([yolo, vit])
         s.add(AiThresholdSetting(job_type="detection", auto_accept_threshold=0.90, review_threshold=0.70))
         s.add(AiThresholdSetting(job_type="classification", auto_accept_threshold=0.85, review_threshold=0.65))
@@ -317,7 +317,13 @@ def run(reset_first: bool = False) -> None:
         }
         procs = ["光ケーブル敷設", "クロージャ設置", "光ファイバ融着", "接続損失測定", "ONU設置", "既設設備確認"]
         works = ["敷設", "接続", "試験", "宅内", "調査"]
-        positions = [[12, 24, 36, 26], [55, 20, 28, 24], [38, 52, 28, 18]]
+        # 正規化(0-1)左上原点 xywh（表示座標100x75から換算）。実Workerと同一フォーマット。
+        positions = [
+            {"format": "xywhn", "x": 0.12, "y": 0.32, "w": 0.36, "h": 0.347},
+            {"format": "xywhn", "x": 0.55, "y": 0.267, "w": 0.28, "h": 0.32},
+            {"format": "xywhn", "x": 0.38, "y": 0.693, "w": 0.28, "h": 0.24},
+        ]
+        codes3 = ["optical_cable", "closure", "utility_pole"]
         pcts = [0.92, 0.84, 0.61]
         for i in range(27):
             equip = ASSET_TYPES[i % len(ASSET_TYPES)]
@@ -345,8 +351,10 @@ def run(reset_first: bool = False) -> None:
             labels = [equip, secondary.get(equip, "関連設備"), "電柱"]
             for k in range(3):
                 s.add(AiPrediction(job_id=job.id, photo_id=ph.id, model_id=yolo.id, prediction_type="detection",
-                                   predicted_class_id=atypes[equip].id if k == 0 else None, predicted_label=labels[k],
-                                   confidence=pcts[k], bounding_box=json.dumps(positions[k])))
+                                   predicted_class_id=k, predicted_label=labels[k],
+                                   confidence=pcts[k], bounding_box=json.dumps(positions[k], ensure_ascii=False),
+                                   raw_result=json.dumps({"code": codes3[k], "label": labels[k], "confidence": pcts[k],
+                                                          "predictor": "demo-seed"}, ensure_ascii=False)))
             wj, pj, aj = recog.get(equip, ("光設備工事", proc, equip))
             s.add(AiPrediction(job_id=job.id, photo_id=ph.id, model_id=vit.id, prediction_type="classification",
                                predicted_label=equip, confidence=0.9,

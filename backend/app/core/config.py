@@ -33,6 +33,17 @@ class Settings(BaseSettings):
     seed_admin_email: str = "admin@example.co.jp"
     seed_admin_password: str = "Passw0rd!"
 
+    # AI（YOLO 施工写真認識 PoC）— weights はコードに埋め込まず設定で指定
+    ai_predictor: str = "yolo"  # yolo（実推論）| fake（テスト専用・実結果としては保存しない）
+    ai_model_path: str = ""      # 学習済みweights(.pt)への絶対/相対パス。空=未配置(MODEL_NOT_AVAILABLE)
+    ai_model_name: str = "SYSKEN 設備検出モデル"
+    ai_model_version: str = "poc-v0"
+    ai_dataset_version: str = "dataset_v001"
+    ai_data_yaml: str = "datasets/data.yaml"  # クラス体系の正（YOLO data.yaml）
+    ai_confidence_threshold: float = 0.25
+    ai_worker_poll_seconds: float = 3.0
+    ai_max_retries: int = 3
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

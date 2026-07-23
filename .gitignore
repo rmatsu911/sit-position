@@ -24,6 +24,16 @@ backend/storage/
 storage/
 *.pyc
 
+# AI: 学習済みweights・実写真データセット・学習出力はコミットしない
+backend/models/weights/
+*.pt
+*.onnx
+backend/runs/
+backend/datasets/**/images/**
+backend/datasets/**/labels/**
+!backend/datasets/**/.gitkeep
+!backend/datasets/**/README.md
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

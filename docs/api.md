@@ -49,10 +49,18 @@
 | DELETE | `/photos/{id}?reason=` | 論理削除 |
 | GET | `/photos/{id}/ai` | **ai_predictions 由来の検出枠（bbox）＋認識/工種/工程/設備判定。`source`=`ai_predictions`\|`none`。将来 YOLO が ai_predictions に書けば同じ経路で表示** |
 
-## AI（構造のみ・推論未実装）
+## AI 施工写真認識（Ver.0.2 YOLO PoC）
 
-| POST | `/ai/photos/{photo_id}/analyze?job_type=detection` | ジョブを QUEUED 登録 |
-| GET | `/ai/jobs?photo_id=` , `/ai/predictions?photo_id=` | 参照 |
+| メソッド | パス | 説明 |
+| --- | --- | --- |
+| POST | `/ai/photos/{photo_id}/analyze?job_type=detection` | 解析ジョブを QUEUED 登録（AI Worker が処理） |
+| GET | `/ai/jobs?photo_id=` , `/ai/predictions?photo_id=` | ジョブ・予測の参照 |
+| GET | `/ai/models` | 登録AIモデル一覧（name/version/dataset_version/trained_at/status） |
+| GET | `/photos/{id}/ai` | 予測結果（正規化bbox→表示座標変換・model情報・model_status・prediction_id付） |
+| POST | `/photos/{id}/predictions/{pid}/feedback` | 人間フィードバック（correct/reclassify/false_positive）。AI予測は上書きせず `ai_feedback` へ |
+| POST | `/photos/{id}/missed-feedback` | 未検出報告（prediction_id なしの ai_feedback） |
+
+AI Worker（別プロセス）: `python -m ai_worker.worker [--once]`。実weights未配置時は `MODEL_NOT_AVAILABLE` でジョブFAILED・予測は保存しない（Fakeは実結果にしない）。クラス体系は `backend/datasets/data.yaml`。学習/評価は `scripts/train_yolo.py`・`scripts/evaluate_yolo.py`。
 
 ## 品質管理（Ver.0.1.1）
 

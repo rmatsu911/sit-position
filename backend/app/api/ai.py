@@ -11,10 +11,17 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.deps import ensure_project_access, get_current_user
-from app.models import AiAnalysisJob, AiPrediction, Photo, User
-from app.schemas import AiJobOut
+from app.models import AiAnalysisJob, AiModel, AiPrediction, Photo, User
+from app.schemas import AiJobOut, AiModelOut
 
 router = APIRouter()
+
+
+@router.get("/models", response_model=list[AiModelOut])
+def list_models(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list:
+    """登録済みAIモデル（name+version+dataset_version+trained_at+status）。
+    同じ写真を別Versionで再解析しても過去結果を追跡できるよう、Prediction は model_id を持つ。"""
+    return list(db.execute(select(AiModel).order_by(AiModel.id.desc())).scalars().all())
 
 
 @router.post("/photos/{photo_id}/analyze", response_model=AiJobOut, status_code=status.HTTP_202_ACCEPTED)
