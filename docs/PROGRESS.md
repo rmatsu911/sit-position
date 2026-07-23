@@ -19,8 +19,8 @@
 
 ## 現在のバージョン
 
-Ver.0.1.2（業務基盤完成）完了。ブランチ `claude/session-rkd93u`。
-Task↔Asset 正式関連・要員/資格・工事台帳・図面/書類・通知・ダッシュボード集計を DB/API 化（UI維持）。
+Ver.0.1.3（実用基盤仕上げ）完了。ブランチ `claude/session-rkd93u`。
+要員配置の永続化・資材管理・試験記録・図面の実ファイル表示・帳票の実出力(PDF/Excel)を実装（UI維持）。
 
 ## 完了済み（要点のみ）
 
@@ -65,19 +65,29 @@ Task↔Asset 正式関連・要員/資格・工事台帳・図面/書類・通�
 - **フロント接続**（UI維持）：`src/api/personnel.ts` `ledger.ts` `documents.ts` `notifications.ts` `dashboard.ts` 追加、`Personnel/Ledger/Drawings/Notifications/Dashboard.tsx` を接続。ローディング/エラー/空データ状態を追加
 - **テスト**：`test_features.py` に Task/Asset・要員・台帳・図面版管理・通知・ダッシュボード・権限スコープを追加 → pytest 29件通過。`npm run build` 成功。ブラウザE2E：5画面が実データ描画・通知全既読・要員配置・写真アップロードのAsset→Task絞り込みを確認
 
+## Ver.0.1.3 で追加（実用基盤仕上げ・2026-07-23）
+
+- **migration** `6b1c1111572b`（新テーブル4：materials/project_materials/test_records/report_exports、既存非破壊）→ 44テーブル。`openpyxl`/`reportlab` を依存に追加
+- **要員配置の永続化**：`POST /workers/{id}/assign`（案件/工程へ配置＝稼働化・監査）・`DELETE /workers/{id}/assign/{aid}`（解除＝配置無しなら待機化）・`GET /workers/assignment-check/{project_id}`（予定人数 vs 配置人数）。Personnel のドラッグ配置を実際にDB保存し reload保持（既存UI維持、PM のみ）
+- **資材管理**（`materials`/`project_materials`）：`GET /materials?project_id=&task_id=`・`POST /materials`（マスタ自動作成＋案件/工程紐付け）・`PUT /materials/{id}`。ProjectDetail「資材」タブを実データ化＋登録フォーム。Seed 5件
+- **試験記録**（`test_records`）：`GET /test-records?project_id=&asset_id=&task_id=&test_type=`・`GET /{id}`・`POST`（Asset/Task紐付け・測定者記録）。Quality 画面に試験記録パネル＋登録モーダル。光工事Seed 4件（光損失測定/OTDR/導通確認）
+- **図面の実ファイル表示**：`document_versions` に `file_url`/`mime_type` を露出。Drawings で PDF=iframe・PNG/JPEG=img 表示、対応外形式はファイル情報＋ダウンロード、実ファイル無しは従来SVG。版管理維持。Seed が実PDF/PNGを生成
+- **帳票の実出力基盤**（`app/services/reports.py`：タイトル＋メタ＋表 に正規化する共通ビルダー）：`GET /reports/construction-management?project_id=&format=pdf|xlsx` が tasks から施工管理表を生成しダウンロード（PDF=reportlab日本語CID / Excel=openpyxl）。Reports 画面のPDF/Excelボタンを実DL化。`GET /reports/types` で対応帳票を列挙。将来 施工写真台帳/工程表/日報/品質/試験記録/完成報告書 へ共通化可能
+- **権限/監査**：配置・資材・試験・帳票出力は案件スコープ＋ロール認可（配置=PM、資材=PM/FIELD_WORKER、試験=PM/FIELD_WORKER/QUALITY_MANAGER）。登録/変更/削除/配置/出力を audit_logs 記録
+- **テスト**：`test_features.py` に 要員配置/資材/試験記録/帳票PDF・Excel/権限スコープ を追加 → pytest 36件通過。`npm run build` 成功。ブラウザE2E：要員配置→reload保持、資材登録→reload保持、試験記録(Asset/Task紐付け)→reload保持、図面PDF表示、帳票PDF＋Excelダウンロード を確認
+
 ## 残課題（未実装・設計は MASTER_SPEC 参照）
 
-- テーブル未実装：資材(materials)、試験記録(test_records)、weather_records
-- フロント未API化：報告書（reports 画面のPDF/Excel実出力）
+- weather_records（工期予測）未実装
+- 帳票は施工管理表のみ実装（他6種は共通基盤に追加するだけの状態）
 - AI実推論（YOLO/ViT/OCR/RAG/LLM/工期予測）と AI Worker（`ai_analysis_jobs`購読→`ai_predictions`書込）
-- 要員の案件配置（ドラッグ配置）は表示のみ（WorkerAssignment の書込APIは未実装）
-- 図面ビューアはSVGプレースホルダ（アップロードした実ファイルの表示は未対応）
+- CADファイルの本格ビューア（今回はPDF/画像のみ対応・対応外はDL）
 
 ## 次回作業（1〜3項目）
 
 1. AI Worker雛形（`ai_analysis_jobs`購読→ダミー`ai_predictions`書込→写真/品質画面が既存経路で表示）
-2. 要員の案件・工程配置の書込API（WorkerAssignment 追加/解除）とドラッグ配置の永続化
-3. 資材・試験記録のDB/API化
+2. 帳票の共通基盤へ他帳票（施工写真台帳/工程表/日報/品質/試験記録）を追加
+3. weather_records と工期予測の基盤
 
 ## 変更ログ（差分のみ追記）
 
@@ -86,3 +96,4 @@ Task↔Asset 正式関連・要員/資格・工事台帳・図面/書類・通�
 - 2026-07-23 Ver.0.1.1 完了（施工写真・品質・日報を DB/API 化、ai_predictions経由のAI表示、監査ログ、権限、Seed、pytest18/build/E2E）
 - 2026-07-23 Ver.0.1.1 残課題対応（写真アップロード連動UI・日報の写真/工程紐付け・工程実績へ反映[確認画面付き]、assets/tasks の site_id フィルタ、reflect dry-run、pytest22/build/E2E）
 - 2026-07-23 Ver.0.1.2 完了（Task↔Asset・要員/資格・工事台帳・図面/書類・通知・ダッシュボード集計を DB/API 化、migration 062aef7de195[40テーブル]、権限スコープ、Seed、pytest29/build/E2E）
+- 2026-07-23 Ver.0.1.3 完了（要員配置永続化・資材・試験記録・図面実ファイル表示・帳票実出力[施工管理表 PDF/Excel]、migration 6b1c1111572b[44テーブル]、openpyxl/reportlab追加、pytest36/build/E2E）

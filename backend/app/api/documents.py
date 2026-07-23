@@ -43,12 +43,25 @@ def get_document(document_id: int, db: Session = Depends(get_db), user: User = D
     versions = db.execute(
         select(DocumentVersion).where(DocumentVersion.document_id == document_id).order_by(DocumentVersion.id.desc())
     ).scalars().all()
+    storage = get_storage()
     vout = []
     for v in versions:
         editor = db.get(User, v.updated_by) if v.updated_by else None
-        vout.append(DocumentVersionOut(id=v.id, rev=v.rev, original_filename=v.original_filename,
-                                       note=v.note, updated_by=editor.name if editor else None, updated_at=v.updated_at))
+        vout.append(DocumentVersionOut(
+            id=v.id, rev=v.rev, original_filename=v.original_filename, note=v.note,
+            updated_by=editor.name if editor else None, updated_at=v.updated_at,
+            file_url=storage.url(v.file_path) if v.file_path else None,
+            mime_type=_guess_mime(v.original_filename or v.file_path or ""),
+        ))
     return DocumentDetailOut(**to_out(db, d).model_dump(), versions=vout)
+
+
+def _guess_mime(name: str) -> str:
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    return {
+        "pdf": "application/pdf", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "gif": "image/gif", "webp": "image/webp",
+    }.get(ext, "application/octet-stream")
 
 
 def _next_rev(current: str | None) -> str:

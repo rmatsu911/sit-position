@@ -47,7 +47,7 @@ export function useDocuments(projectId?: number) {
 }
 
 export interface ApiDocumentDetail extends ApiDocument {
-  versions: { id: number; rev: string; original_filename: string | null; note: string | null; updated_by: string | null; updated_at: string | null }[]
+  versions: { id: number; rev: string; original_filename: string | null; note: string | null; updated_by: string | null; updated_at: string | null; file_url: string | null; mime_type: string | null }[]
 }
 
 export function useDocument(id: string | number | undefined) {

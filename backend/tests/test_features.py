@@ -364,3 +364,97 @@ def test_dashboard_summary_and_scope(client):
     partner = token(client, "partner@test.jp")
     rp = client.get("/api/dashboard/summary", headers=H(partner))
     assert rp.json()["total"] == 1  # 割当案件のみ
+
+
+# ========== Ver.0.1.3 実用基盤仕上げ ==========
+from app.models import (  # noqa: E402
+    Material,
+    ProjectMaterial as _PM,
+    TestRecord as _TR,
+    Worker as _Worker2,
+    WorkerAssignment as _WA,
+)
+
+
+def _make_worker2(status="待機"):
+    with TestingSessionLocal() as s:
+        w = _Worker2(name="配置 太郎", org="第一課", role="技術者", status=status)
+        s.add(w); s.commit()
+        return w.id
+
+
+def test_worker_assign_and_unassign(client):
+    wid = _make_worker2("待機")
+    pm = token(client, "pm@test.jp")
+    # 配置（案件1へ）→ 稼働になる
+    r = client.post(f"/api/workers/{wid}/assign", headers=H(pm), json={"project_id": 1, "role": "技術者"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "稼働"
+    assert r.json()["assignments"][0]["project_id"] == 1
+    aid = None
+    with TestingSessionLocal() as s:
+        aid = s.query(_WA).filter_by(worker_id=wid).first().id
+    # 解除 → 待機へ戻る
+    r = client.request("DELETE", f"/api/workers/{wid}/assign/{aid}", headers=H(pm))
+    assert r.status_code == 200 and r.json()["status"] == "待機"
+
+
+def test_worker_assign_forbidden_for_field_worker(client):
+    wid = _make_worker2()
+    fw = token(client, "partner@test.jp")
+    assert client.post(f"/api/workers/{wid}/assign", headers=H(fw), json={"project_id": 1}).status_code == 403
+
+
+def test_material_create_and_list(client):
+    pm = token(client, "pm@test.jp")
+    r = client.post("/api/materials", headers=H(pm), json={"project_id": 1, "name": "光成端箱", "unit": "台", "qty_planned": 4, "qty_used": 2, "status": "入荷済"})
+    assert r.status_code == 201, r.text
+    assert r.json()["name"] == "光成端箱" and r.json()["qty_planned"] == 4
+    rows = client.get("/api/materials?project_id=1", headers=H(pm)).json()
+    assert any(m["name"] == "光成端箱" for m in rows)
+
+
+def test_material_scope_forbidden(client):
+    # partner は割当案件1のみ。案件2への登録は403
+    fw = token(client, "partner@test.jp")
+    assert client.post("/api/materials", headers=H(fw), json={"project_id": 2, "name": "x"}).status_code == 403
+
+
+def test_test_record_create_link_and_filter(client):
+    with TestingSessionLocal() as s:
+        from app.models import Asset as _A, Site as _S, Task as _T
+        site = _S(project_id=1, name="TR現場"); s.add(site); s.flush()
+        a = _A(project_id=1, site_id=site.id, name="TR設備"); s.add(a); s.flush()
+        t = _T(project_id=1, site_id=site.id, wbs_code="TR.1", name="TR工程"); s.add(t); s.commit()
+        aid, tid = a.id, t.id
+    pm = token(client, "pm@test.jp")
+    r = client.post("/api/test-records", headers=H(pm), json={
+        "project_id": 1, "asset_id": aid, "task_id": tid, "test_type": "光損失測定",
+        "measured_value": "0.28", "unit": "dB", "standard_value": "≤0.5dB", "judge": "合格", "instrument": "PM-200",
+    })
+    assert r.status_code == 201, r.text
+    rid = r.json()["id"]
+    assert r.json()["asset_id"] == aid and r.json()["task_id"] == tid and r.json()["tester"]
+    # Asset/Task で絞り込み → 保持
+    rows = client.get(f"/api/test-records?project_id=1&asset_id={aid}", headers=H(pm)).json()
+    assert any(x["id"] == rid for x in rows)
+    rows2 = client.get(f"/api/test-records?project_id=1&task_id={tid}", headers=H(pm)).json()
+    assert any(x["id"] == rid for x in rows2)
+
+
+def test_report_export_pdf_and_xlsx(client):
+    admin = token(client, "admin@test.jp")
+    rp = client.get("/api/reports/construction-management?project_id=1&format=pdf", headers=H(admin))
+    assert rp.status_code == 200 and rp.headers["content-type"] == "application/pdf"
+    assert rp.content[:5] == b"%PDF-"
+    rx = client.get("/api/reports/construction-management?project_id=1&format=xlsx", headers=H(admin))
+    assert rx.status_code == 200 and "spreadsheetml" in rx.headers["content-type"]
+    assert rx.content[:2] == b"PK"  # xlsx = zip
+    # 未対応帳票は404
+    assert client.get("/api/reports/unknown?project_id=1", headers=H(admin)).status_code == 404
+
+
+def test_report_export_scope_forbidden(client):
+    fw = token(client, "partner@test.jp")
+    # partner は案件2にアクセス不可
+    assert client.get("/api/reports/construction-management?project_id=2&format=pdf", headers=H(fw)).status_code == 403

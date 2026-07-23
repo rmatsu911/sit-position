@@ -5,6 +5,11 @@ import { Panel } from '../components/ui/common'
 import { Modal } from '../components/ui/Modal'
 import { StepRunner } from '../components/ui/StepRunner'
 import { useApp } from '../context/AppContext'
+import { downloadReport } from '../api/reports'
+import { DEMO_PROJECT_ID } from '../api/photos'
+
+// バックエンドで実生成に対応した帳票（type表示名 → APIキー）
+const REPORT_KEY: Record<string, string> = { 施工管理表: 'construction-management' }
 
 const reportTypes = [
   '施工管理表', '工程進捗報告書', '施工写真台帳', '現場日報一覧',
@@ -35,6 +40,22 @@ export default function Reports() {
   const [rows, setRows] = useState<Row[]>(initialRows)
   const [output, setOutput] = useState<null | string>(null)
   const [preview, setPreview] = useState(false)
+  const [exporting, setExporting] = useState(false)
+
+  // 実ファイル生成（PostgreSQL→FastAPI→帳票→ダウンロード）。未対応帳票はデモ表示。
+  async function exportReport(format: 'pdf' | 'xlsx', label: string) {
+    const key = REPORT_KEY[type]
+    if (!key) { setOutput(label); return }
+    setExporting(true)
+    try {
+      await downloadReport(key, DEMO_PROJECT_ID, format)
+      toast(`${label}を出力しました`, 'ok')
+    } catch {
+      toast('帳票の生成に失敗しました', 'ng')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   function setCell(ri: number, key: keyof Row, val: string) {
     setRows((prev) => prev.map((r, i) => (i === ri ? { ...r, [key]: val } : r)))
@@ -82,8 +103,8 @@ export default function Reports() {
             <div className="mx-1 h-5 w-px bg-line" />
             <button className="btn-ghost btn-xs" onClick={() => setPreview(true)}><Eye size={14} />プレビュー</button>
             <div className="ml-auto flex items-center gap-1">
-              <button className="btn-default btn-xs" onClick={() => setOutput('PDF')}><FileText size={14} />PDF出力</button>
-              <button className="btn-default btn-xs" onClick={() => setOutput('Excel')}><FileSpreadsheet size={14} />Excel出力</button>
+              <button className="btn-default btn-xs" disabled={exporting} onClick={() => exportReport('pdf', 'PDF')}><FileText size={14} />PDF出力</button>
+              <button className="btn-default btn-xs" disabled={exporting} onClick={() => exportReport('xlsx', 'Excel')}><FileSpreadsheet size={14} />Excel出力</button>
               <button className="btn-default btn-xs" onClick={() => setOutput('CSV')}><FileDown size={14} />CSV出力</button>
               <button className="btn-default btn-xs" onClick={() => toast('印刷ダイアログを開きます（デモ）')}><Printer size={14} />印刷</button>
             </div>

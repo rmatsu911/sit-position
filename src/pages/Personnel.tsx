@@ -4,7 +4,8 @@ import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
 import { StatusBadge, Badge } from '../components/ui/Badge'
 import { useApp } from '../context/AppContext'
-import { useWorkers } from '../api/personnel'
+import { useWorkers, useAssignWorker } from '../api/personnel'
+import { useProjects } from '../api/projects'
 import type { Worker, WorkStatus } from '../types'
 
 const scheduleDates = ['7/21(月)', '7/22(火)', '7/23(水)', '7/24(木)', '7/25(金)', '7/26(土)', '7/27(日)']
@@ -20,6 +21,17 @@ const cellColor: Record<WorkStatus, string> = {
 export default function Personnel() {
   const { toast } = useApp()
   const { data: workers = [], isLoading, isError } = useWorkers()
+  const { data: projectList = [] } = useProjects()
+  const assignMut = useAssignWorker()
+  const nameToId = useMemo(() => new Map(projectList.map((p) => [p.name, p.id])), [projectList])
+  function persistAssign(workerId: string, projName: string) {
+    const pid = nameToId.get(projName)
+    if (!pid) { toast('案件が見つかりません', 'ng'); return }
+    assignMut.mutate({ worker_id: workerId, project_id: pid }, {
+      onSuccess: () => toast('配置を保存しました', 'ok'),
+      onError: () => toast('配置の保存に失敗しました', 'ng'),
+    })
+  }
   const [view, setView] = useState<'week' | 'assign'>('week')
   const [keyword, setKeyword] = useState('')
   const [license, setLicense] = useState('all')
@@ -106,13 +118,13 @@ export default function Personnel() {
           </div>
         </Panel>
       ) : (
-        <AssignBoard workers={workers} dragId={dragId} setDragId={setDragId} onAssign={(name, proj) => toast(`${name}を「${proj}」に配置しました（デモ）`, 'ok')} onWarn={(msg) => toast(msg, 'warn')} />
+        <AssignBoard workers={workers} dragId={dragId} setDragId={setDragId} onAssign={persistAssign} onWarn={(msg) => toast(msg, 'warn')} />
       )}
     </div>
   )
 }
 
-function AssignBoard({ workers, dragId, setDragId, onAssign, onWarn }: { workers: Worker[]; dragId: string | null; setDragId: (v: string | null) => void; onAssign: (name: string, proj: string) => void; onWarn: (m: string) => void }) {
+function AssignBoard({ workers, dragId, setDragId, onAssign, onWarn }: { workers: Worker[]; dragId: string | null; setDragId: (v: string | null) => void; onAssign: (workerId: string, proj: string) => void; onWarn: (m: string) => void }) {
   const projectsList = ['熊本中央局 光設備更改工事', '菊陽町 通信管路敷設工事', '合志市 基地局設備更新工事']
   const idle = workers.filter((w) => w.status === '待機')
   return (
@@ -141,7 +153,7 @@ function AssignBoard({ workers, dragId, setDragId, onAssign, onWarn }: { workers
                 if (!dragId) return
                 const w = workers.find((x) => x.id === dragId)!
                 if (idx === 2 && !w.licenses.includes('電気工事士')) onWarn(`資格不足の可能性：${w.name}に「電気工事士」がありません`)
-                else onAssign(w.name, proj)
+                else onAssign(w.id, proj)
                 setDragId(null)
               }}
               className="min-h-[180px] space-y-2 rounded border border-dashed border-line bg-canvas p-2"

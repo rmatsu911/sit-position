@@ -32,14 +32,17 @@ from app.models import (
     Department,
     Document,
     DocumentVersion,
+    Material,
     Notification,
     PhotoType,
     Photo,
     ProcessType,
     Project,
     ProjectLedger,
+    ProjectMaterial,
     ProjectMember,
     Qualification,
+    TestRecord,
     QualityCheck,
     QualityRule,
     QualityRuleType,
@@ -54,7 +57,53 @@ from app.models import (
     WorkType,
 )
 
+from app.services.storage import get_storage  # noqa: E402
+
 DEMO_PASSWORD = "Passw0rd!"
+
+
+def _sample_pdf(title: str) -> bytes:
+    """Seed用の実PDFを生成（reportlab、日本語CIDフォント）。"""
+    import io as _io
+
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.pdfgen import canvas
+
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
+        font = "HeiseiKakuGo-W5"
+    except Exception:
+        font = "Helvetica"
+    buf = _io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    c.setFont(font, 18)
+    c.drawString(60, 780, "SYSKEN 施工管理システム")
+    c.setFont(font, 13)
+    c.drawString(60, 745, title)
+    c.setFont(font, 10)
+    c.drawString(60, 715, "※ Seed生成のサンプル図面PDF（実ファイル閲覧デモ用）")
+    c.rect(60, 300, 470, 380)
+    c.save()
+    return buf.getvalue()
+
+
+def _sample_png(label: str) -> bytes:
+    """Seed用の実PNGを生成（Pillow）。"""
+    import io as _io
+
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (640, 460), (243, 247, 250))
+    d = ImageDraw.Draw(img)
+    d.rectangle([20, 20, 620, 440], outline=(0, 91, 172), width=3)
+    d.text((40, 40), f"SYSKEN Drawing {label}", fill=(31, 41, 51))
+    d.line([60, 200, 580, 200], fill=(0, 91, 172), width=2)
+    d.ellipse([420, 120, 480, 180], outline=(46, 139, 87), width=3)
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 # ===== マスタ =====
 CONSTRUCTION_TYPES = [
@@ -427,8 +476,49 @@ def run(reset_first: bool = False) -> None:
             s.add(d); s.flush()
             rn = int(rev.split(".")[1])
             for r in range(rn + 1):
-                s.add(DocumentVersion(document_id=d.id, rev=f"Rev.{r}", original_filename=f"{no}_r{r}.pdf",
+                # 最新版には実ファイル（PDF/PNG）を付与しブラウザ閲覧を可能にする
+                fp = fname = None
+                if r == rn:
+                    if no in ("DWG-001", "DWG-003", "DWG-006"):
+                        fp = f"documents/seed/{no}.pdf"; fname = f"{no}.pdf"
+                        get_storage().save(fp, _sample_pdf(f"{no} {name}"), "application/pdf")
+                    elif no in ("DWG-002", "DWG-004"):
+                        fp = f"documents/seed/{no}.png"; fname = f"{no}.png"
+                        get_storage().save(fp, _sample_png(no), "image/png")
+                s.add(DocumentVersion(document_id=d.id, rev=f"Rev.{r}", file_path=fp,
+                                      original_filename=fname or f"{no}_r{r}.dwg",
                                       note=("初版" if r == 0 else f"改訂{r}"), updated_by=eid))
+
+        # 資材（materials / project_materials）
+        MATERIALS = [
+            ("光成端箱", "M-001", "OTB-24", "住友電工", "台", 4, 2, "入荷済", "2.3"),
+            ("パッチコード", "M-002", "SC/APC 2m", "フジクラ", "本", 24, 12, "入荷済", "2.3"),
+            ("融着スリーブ", "M-003", "60mm", "住友電工", "個", 60, 40, "使用中", "2.4"),
+            ("クロージャ", "M-004", "中容量", "古河電工", "台", 3, 3, "消費済", "2.2"),
+            ("ケーブル固定金具", "M-005", "汎用", None, "個", 40, 28, "使用中", "2.1"),
+        ]
+        for mname, mcode, model, maker, unit, plan, used, mst, wbs in MATERIALS:
+            mat = Material(code=mcode, name=mname, model_number=model, manufacturer=maker, unit=unit)
+            s.add(mat); s.flush()
+            s.add(ProjectMaterial(project_id=p1.id, material_id=mat.id, task_id=(wbs_map[wbs].id if wbs in wbs_map else None),
+                                  qty_planned=plan, qty_used=used, arrival_planned=date(2026, 6, 25),
+                                  arrival_actual=(date(2026, 6, 26) if mst != "未入荷" else None), status=mst))
+
+        # 試験記録（光工事）
+        asset_list = list(assets_map.values())
+        TESTS = [
+            ("光損失測定", "0.28", "dB", "≤0.5dB", "合格", "光パワーメータ PM-200", "2.3", 0, "区間A 良好"),
+            ("OTDR", "0.31", "dB", "≤0.5dB", "合格", "OTDR AQ7280", "2.3", 1, "反射・損失異常なし"),
+            ("導通確認", "OK", "—", "導通あり", "合格", "光源・受光器", "2.4", 2, "全芯導通確認"),
+            ("光損失測定", "0.62", "dB", "≤0.5dB", "不合格", "光パワーメータ PM-200", "2.4", 3, "基準超過。再融着予定"),
+        ]
+        for ttype, val, unit, std, judge, instr, wbs, ai, comment in TESTS:
+            s.add(TestRecord(project_id=p1.id, site_id=site.id,
+                             asset_id=asset_list[ai % len(asset_list)].id if asset_list else None,
+                             task_id=wbs_map[wbs].id if wbs in wbs_map else None,
+                             test_type=ttype, measured_at=datetime(2026, 7, 20, 10 + ai, 15),
+                             tester_id=users["田中 一郎"].id, measured_value=val, unit=unit, standard_value=std,
+                             judge=judge, instrument=instr, comment=comment))
 
         # 通知
         NOTIFS = [
@@ -453,6 +543,7 @@ def run(reset_first: bool = False) -> None:
         print("Seed 完了:")
         print(f"  ユーザー {len(users)}名 / 案件 {len(projects)}件 / 工程 {len(TASKS)}件 / 写真 27枚 / 品質 7 / 日報 3")
         print(f"  要員 {len(WORKERS)} / 図面 {len(DRAWINGS)} / 通知 {len(NOTIFS)} / 台帳 {len(PROJECTS)}")
+        print(f"  資材 {len(MATERIALS)} / 試験記録 {len(TESTS)}")
         print(f"  管理者ログイン: {settings.seed_admin_email} / {settings.seed_admin_password}")
         print(f"  デモユーザー: yamada@example.co.jp ほか / {DEMO_PASSWORD}")
 

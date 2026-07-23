@@ -9,13 +9,16 @@ from app.api import (
     documents,
     ledger,
     masters,
+    materials,
     notifications,
     personnel,
     photos,
     projects,
     quality,
+    reports,
     sites,
     tasks,
+    test_records,
 )
 
 api_router = APIRouter()
@@ -34,3 +37,6 @@ api_router.include_router(ledger.router, prefix="/ledger", tags=["ledger"])
 api_router.include_router(documents.router, prefix="/documents", tags=["documents"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
+api_router.include_router(materials.router, prefix="/materials", tags=["materials"])
+api_router.include_router(test_records.router, prefix="/test-records", tags=["test-records"])
+api_router.include_router(reports.router, prefix="/reports", tags=["reports"])

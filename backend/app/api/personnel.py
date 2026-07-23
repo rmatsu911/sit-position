@@ -1,11 +1,12 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.audit import write_audit
 from app.core.db import get_db
-from app.core.deps import get_current_user
+from app.core.deps import ensure_project_access, get_current_user, require_roles
 from app.models import (
     Company,
     Project,
@@ -18,6 +19,8 @@ from app.models import (
     WorkerQualification,
 )
 from app.schemas import (
+    AssignmentCheckRow,
+    WorkerAssignmentCreate,
     WorkerAssignmentOut,
     WorkerDetailOut,
     WorkerOut,
@@ -110,3 +113,72 @@ def get_worker(worker_id: int, db: Session = Depends(get_db), user: User = Depen
         **base.model_dump(), company=company.name if company else None,
         team=_team_name(db, w), qualifications=qual_out, assignments=assign_out,
     )
+
+
+@router.post("/{worker_id}/assign", response_model=WorkerDetailOut)
+def assign_worker(
+    worker_id: int,
+    body: WorkerAssignmentCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("PROJECT_MANAGER")),
+) -> WorkerDetailOut:
+    """要員を案件（および工程）へ配置。配置すると稼働扱いにする。"""
+    w = db.get(Worker, worker_id)
+    if not w or w.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "要員が見つかりません")
+    ensure_project_access(db, user, body.project_id)
+    a = WorkerAssignment(
+        worker_id=worker_id, project_id=body.project_id, task_id=body.task_id,
+        assigned_from=body.assigned_from, assigned_to=body.assigned_to, role=body.role or w.role, status="稼働",
+    )
+    db.add(a)
+    w.status = "稼働"
+    db.flush()
+    write_audit(db, user, "CREATE", "worker_assignment", a.id, project_id=body.project_id,
+                after={"worker_id": worker_id, "task_id": body.task_id})
+    db.commit()
+    return get_worker(worker_id, db, user)
+
+
+@router.delete("/{worker_id}/assign/{assignment_id}", response_model=WorkerDetailOut)
+def unassign_worker(
+    worker_id: int,
+    assignment_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("PROJECT_MANAGER")),
+) -> WorkerDetailOut:
+    """配置解除。他の配置が無ければ待機に戻す。"""
+    a = db.get(WorkerAssignment, assignment_id)
+    if not a or a.worker_id != worker_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "配置が見つかりません")
+    ensure_project_access(db, user, a.project_id)
+    pid = a.project_id
+    db.delete(a)
+    db.flush()
+    remaining = db.execute(select(WorkerAssignment).where(WorkerAssignment.worker_id == worker_id)).scalars().first()
+    if not remaining:
+        w = db.get(Worker, worker_id)
+        if w:
+            w.status = "待機"
+    write_audit(db, user, "DELETE", "worker_assignment", assignment_id, project_id=pid, before={"worker_id": worker_id})
+    db.commit()
+    return get_worker(worker_id, db, user)
+
+
+@router.get("/assignment-check/{project_id}", response_model=list[AssignmentCheckRow])
+def assignment_check(
+    project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> list[AssignmentCheckRow]:
+    """工程ごとに 予定人数 と 配置人数 の整合を確認。"""
+    ensure_project_access(db, user, project_id)
+    tasks = db.execute(
+        select(Task).where(Task.project_id == project_id, Task.deleted_at.is_(None), Task.wbs_code.like("%.%"))
+    ).scalars().all()
+    rows = []
+    for t in tasks:
+        cnt = db.execute(
+            select(func.count(WorkerAssignment.id)).where(WorkerAssignment.project_id == project_id, WorkerAssignment.task_id == t.id)
+        ).scalar() or 0
+        rows.append(AssignmentCheckRow(task_id=t.id, task_name=t.name, planned_workers=t.planned_workers,
+                                       assigned_count=cnt, ok=cnt <= t.planned_workers))
+    return rows

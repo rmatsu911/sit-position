@@ -5,11 +5,13 @@ import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel, EmptyState } from '../components/ui/common'
 import { StatusBadge, Badge } from '../components/ui/Badge'
 import { Progress } from '../components/ui/Progress'
+import { Modal } from '../components/ui/Modal'
 import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
 import { todayEnv } from '../data/projects'
 import { photos } from '../data/photos'
 import { manYen } from '../lib/format'
 import { useProject } from '../api/projects'
+import { useProjectMaterials, useCreateMaterial } from '../api/materials'
 import { ApiError } from '../lib/apiClient'
 import NotFound from './NotFound'
 
@@ -86,7 +88,7 @@ export default function ProjectDetail() {
 
       {tab === '概要' && <Overview manager={dash(p.manager)} />}
       {tab === '作業内容' && <WorkContent />}
-      {tab === '資材' && <Materials />}
+      {tab === '資材' && <Materials projectId={pid} />}
       {tab === '操作履歴' && <History />}
       {(['工程', '施工写真', '図面', '現場日報', '品質', '要員', '報告書'] as Tab[]).includes(tab) && (
         <LinkTab tab={tab} to={routeByTab[tab]!} onGo={() => navigate(routeByTab[tab]!)} projectId={String(p.id)} />
@@ -170,24 +172,57 @@ function WorkContent() {
   )
 }
 
-function Materials() {
-  const rows = [
-    { name: '光成端箱', spec: '24芯', plan: 4, used: 2, unit: '台' },
-    { name: 'パッチコード', spec: 'SC/APC 2m', plan: 24, used: 12, unit: '本' },
-    { name: '融着スリーブ', spec: '60mm', plan: 60, used: 40, unit: '個' },
-    { name: 'クロージャ', spec: '中容量', plan: 3, used: 3, unit: '台' },
-    { name: 'ケーブル固定金具', spec: '—', plan: 40, used: 28, unit: '個' },
-  ]
+function Materials({ projectId }: { projectId: number }) {
+  const { data: rows = [], isLoading, isError } = useProjectMaterials(projectId)
+  const createMut = useCreateMaterial()
+  const [open, setOpen] = useState(false)
+  const [form, setForm] = useState({ name: '', model_number: '', unit: '台', qty_planned: '', qty_used: '', status: '未入荷' })
+
+  function submit() {
+    if (!form.name) return
+    createMut.mutate({
+      project_id: projectId, name: form.name, model_number: form.model_number || undefined, unit: form.unit,
+      qty_planned: form.qty_planned ? Number(form.qty_planned) : null, qty_used: form.qty_used ? Number(form.qty_used) : null,
+      status: form.status,
+    }, {
+      onSuccess: () => { setOpen(false); setForm({ name: '', model_number: '', unit: '台', qty_planned: '', qty_used: '', status: '未入荷' }) },
+    })
+  }
+
   return (
-    <Panel title="資材" bodyClassName="p-0">
+    <Panel title="資材" bodyClassName="p-0"
+      action={<button className="btn-default btn-xs" onClick={() => setOpen(true)}>＋ 資材を追加</button>}>
       <table className="grid-table text-[13px]">
-        <thead className="bg-canvas text-[12.5px] text-ink-soft"><tr>{['資材名', '仕様', '予定数', '使用数', '残', '単位'].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}</tr></thead>
+        <thead className="bg-canvas text-[12.5px] text-ink-soft"><tr>{['資材名', '仕様/型番', '予定数', '使用数', '残', '単位', '使用工程', '状態'].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}</tr></thead>
         <tbody>
+          {isLoading && <tr><td colSpan={8} className="px-3 py-6 text-center text-ink-soft">読み込み中…</td></tr>}
+          {isError && <tr><td colSpan={8} className="px-3 py-6 text-center text-ng">資材の取得に失敗しました。</td></tr>}
+          {!isLoading && !isError && rows.length === 0 && <tr><td colSpan={8} className="px-3 py-6 text-center text-ink-soft">資材が登録されていません。</td></tr>}
           {rows.map((r) => (
-            <tr key={r.name} className="hover:bg-canvas"><td className="px-3 py-1.5 font-medium">{r.name}</td><td className="px-3 text-ink-soft">{r.spec}</td><td className="px-3 tabular-nums">{r.plan}</td><td className="px-3 tabular-nums">{r.used}</td><td className="px-3 tabular-nums text-ink-soft">{r.plan - r.used}</td><td className="px-3 text-ink-soft">{r.unit}</td></tr>
+            <tr key={r.id} className="hover:bg-canvas">
+              <td className="px-3 py-1.5 font-medium">{r.name}</td>
+              <td className="px-3 text-ink-soft">{r.model_number ?? '—'}</td>
+              <td className="px-3 tabular-nums">{r.qty_planned ?? '—'}</td>
+              <td className="px-3 tabular-nums">{r.qty_used ?? '—'}</td>
+              <td className="px-3 tabular-nums text-ink-soft">{r.qty_planned != null && r.qty_used != null ? r.qty_planned - r.qty_used : '—'}</td>
+              <td className="px-3 text-ink-soft">{r.unit ?? '—'}</td>
+              <td className="px-3 text-ink-soft">{r.task ?? '—'}</td>
+              <td className="px-3"><Badge tone="muted">{r.status ?? '—'}</Badge></td>
+            </tr>
           ))}
         </tbody>
       </table>
+      <Modal open={open} onClose={() => setOpen(false)} title="資材を追加"
+        footer={<><button className="btn-default" onClick={() => setOpen(false)}>キャンセル</button><button className="btn-primary" disabled={!form.name || createMut.isPending} onClick={submit}>{createMut.isPending ? '保存中…' : '登録'}</button></>}>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2"><label className="label">資材名</label><input className="field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例：光成端箱" /></div>
+          <div><label className="label">仕様/型番</label><input className="field" value={form.model_number} onChange={(e) => setForm({ ...form, model_number: e.target.value })} /></div>
+          <div><label className="label">単位</label><input className="field" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} /></div>
+          <div><label className="label">予定数</label><input type="number" className="field" value={form.qty_planned} onChange={(e) => setForm({ ...form, qty_planned: e.target.value })} /></div>
+          <div><label className="label">使用数</label><input type="number" className="field" value={form.qty_used} onChange={(e) => setForm({ ...form, qty_used: e.target.value })} /></div>
+          <div className="col-span-2"><label className="label">状態</label><select className="field" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{['未入荷', '入荷済', '使用中', '消費済'].map((s) => <option key={s}>{s}</option>)}</select></div>
+        </div>
+      </Modal>
     </Panel>
   )
 }

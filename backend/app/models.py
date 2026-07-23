@@ -540,6 +540,61 @@ class Notification(Base, TimestampMixin):
     important: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+# ===== 資材 =====
+class Material(Base, TimestampMixin):
+    __tablename__ = "materials"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str | None] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(200))
+    model_number: Mapped[str | None] = mapped_column(String(160))  # 型番
+    manufacturer: Mapped[str | None] = mapped_column(String(160))
+    unit: Mapped[str | None] = mapped_column(String(32))  # 台 / 本 / 個 ...
+
+
+class ProjectMaterial(Base, TimestampMixin, SoftDeleteMixin):
+    __tablename__ = "project_materials"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id"))
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id"))  # 使用工程
+    qty_planned: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    qty_used: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    arrival_planned: Mapped[date | None] = mapped_column(Date)
+    arrival_actual: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str | None] = mapped_column(String(32))  # 未入荷 / 入荷済 / 使用中 / 消費済
+
+
+# ===== 試験記録 =====
+class TestRecord(Base, TimestampMixin, SoftDeleteMixin):
+    __tablename__ = "test_records"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    site_id: Mapped[int | None] = mapped_column(ForeignKey("sites.id"))
+    asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id"))
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id"))
+    test_type: Mapped[str] = mapped_column(String(64))  # 光損失測定 / OTDR / 導通確認 ...
+    measured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    tester_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    measured_value: Mapped[str | None] = mapped_column(String(64))
+    unit: Mapped[str | None] = mapped_column(String(32))
+    standard_value: Mapped[str | None] = mapped_column(String(64))
+    judge: Mapped[str] = mapped_column(String(16), default="未判定")  # 合格 / 不合格 / 未判定
+    instrument: Mapped[str | None] = mapped_column(String(120))
+    attachment_path: Mapped[str | None] = mapped_column(String(500))
+    comment: Mapped[str | None] = mapped_column(Text)
+
+
+# ===== 帳票出力履歴 =====
+class ReportExport(Base, TimestampMixin):
+    __tablename__ = "report_exports"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), index=True)
+    report_type: Mapped[str] = mapped_column(String(64))
+    file_format: Mapped[str] = mapped_column(String(8))  # pdf / xlsx
+    file_path: Mapped[str | None] = mapped_column(String(500))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+
 # ===== 監査ログ =====
 class AuditLog(Base):
     __tablename__ = "audit_logs"

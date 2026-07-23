@@ -8,7 +8,10 @@ import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
 import { useApp } from '../context/AppContext'
 import { anomalyFindings, anomalyMeta, detectionPoints } from '../data/quality'
 import { useQualityChecks, useUpdateQualityCheck } from '../api/quality'
-import { usePhotos } from '../api/photos'
+import { usePhotos, DEMO_PROJECT_ID } from '../api/photos'
+import { useTestRecords, useCreateTestRecord } from '../api/testRecords'
+import { useAssets } from '../api/sites'
+import { useTaskOptions } from '../api/tasks'
 import type { QualityItem, QualityStatus } from '../types'
 
 const flow = ['写真登録', 'AI画像認識', '品質確認', 'コメント入力', '修正・再撮影依頼', '再確認', '承認']
@@ -132,6 +135,9 @@ export default function Quality() {
       </Panel>
       )}
 
+      {/* 試験記録（光工事：光損失/OTDR/導通確認） */}
+      <TestRecordsPanel />
+
       {/* 詳細モーダル */}
       <Modal open={!!detail} onClose={() => setDetail(null)} title={detail ? `品質確認：${detail.inspectItem}` : ''} size="lg"
         footer={detail && (
@@ -253,6 +259,70 @@ export default function Quality() {
 
 function KV({ label, value }: { label: string; value: React.ReactNode }) {
   return <div className="flex justify-between gap-3"><span className="shrink-0 text-ink-soft">{label}</span><span className="text-right text-ink">{value}</span></div>
+}
+
+function TestRecordsPanel() {
+  const { toast } = useApp()
+  const { data: records = [], isLoading } = useTestRecords(DEMO_PROJECT_ID)
+  const { data: assets = [] } = useAssets(DEMO_PROJECT_ID, undefined)
+  const { data: tasks = [] } = useTaskOptions(DEMO_PROJECT_ID)
+  const createMut = useCreateTestRecord()
+  const [open, setOpen] = useState(false)
+  const empty = { test_type: '光損失測定', asset_id: '', task_id: '', measured_value: '', unit: 'dB', standard_value: '≤0.5dB', judge: '合格', instrument: '', comment: '' }
+  const [form, setForm] = useState(empty)
+
+  function submit() {
+    createMut.mutate({
+      project_id: DEMO_PROJECT_ID, test_type: form.test_type,
+      asset_id: form.asset_id ? Number(form.asset_id) : null, task_id: form.task_id ? Number(form.task_id) : null,
+      measured_value: form.measured_value || undefined, unit: form.unit || undefined, standard_value: form.standard_value || undefined,
+      judge: form.judge, instrument: form.instrument || undefined, comment: form.comment || undefined,
+    }, {
+      onSuccess: () => { setOpen(false); setForm(empty); toast('試験記録を登録しました', 'ok') },
+      onError: () => toast('登録に失敗しました', 'ng'),
+    })
+  }
+
+  return (
+    <Panel title="試験記録（光損失 / OTDR / 導通確認）" className="mt-3" bodyClassName="p-0"
+      action={<button className="btn-default btn-xs" onClick={() => setOpen(true)}>＋ 試験記録を追加</button>}>
+      <div className="thin-scroll overflow-x-auto">
+        <table className="grid-table text-[13px]">
+          <thead className="bg-canvas text-[12.5px] text-ink-soft"><tr>{['試験種別', '設備', '工程', '測定値', '基準値', '判定', '測定器', '測定者'].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}</tr></thead>
+          <tbody>
+            {isLoading && <tr><td colSpan={8} className="px-3 py-6 text-center text-ink-soft">読み込み中…</td></tr>}
+            {!isLoading && records.length === 0 && <tr><td colSpan={8} className="px-3 py-6 text-center text-ink-soft">試験記録がありません。</td></tr>}
+            {records.map((r) => (
+              <tr key={r.id} className="hover:bg-canvas">
+                <td className="px-3 py-1.5 font-medium">{r.test_type}</td>
+                <td className="px-3 text-ink-soft">{r.asset ?? '—'}</td>
+                <td className="px-3 text-ink-soft">{r.task ?? '—'}</td>
+                <td className="px-3 tabular-nums">{r.measured_value ?? '—'} {r.unit ?? ''}</td>
+                <td className="px-3 text-ink-soft">{r.standard_value ?? '—'}</td>
+                <td className="px-3"><StatusBadge status={r.judge === '合格' ? '合格' : r.judge === '不合格' ? '不合格' : '未判定'} /></td>
+                <td className="px-3 text-ink-soft">{r.instrument ?? '—'}</td>
+                <td className="px-3 text-ink-soft">{r.tester ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <Modal open={open} onClose={() => setOpen(false)} title="試験記録を追加" size="lg"
+        footer={<><button className="btn-default" onClick={() => setOpen(false)}>キャンセル</button><button className="btn-primary" disabled={createMut.isPending} onClick={submit}>{createMut.isPending ? '保存中…' : '登録'}</button></>}>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className="label">試験種別</label><select className="field" value={form.test_type} onChange={(e) => setForm({ ...form, test_type: e.target.value })}>{['光損失測定', 'OTDR', '導通確認'].map((t) => <option key={t}>{t}</option>)}</select></div>
+          <div><label className="label">判定</label><select className="field" value={form.judge} onChange={(e) => setForm({ ...form, judge: e.target.value })}>{['合格', '不合格', '未判定'].map((t) => <option key={t}>{t}</option>)}</select></div>
+          <div><label className="label">設備（Asset）</label><select className="field" value={form.asset_id} onChange={(e) => setForm({ ...form, asset_id: e.target.value })}><option value="">未選択</option>{assets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div>
+          <div><label className="label">工程（Task）</label><select className="field" value={form.task_id} onChange={(e) => setForm({ ...form, task_id: e.target.value })}><option value="">未選択</option>{tasks.map((t) => <option key={t.id} value={t.id}>{t.wbs} {t.name}</option>)}</select></div>
+          <div><label className="label">測定値</label><input className="field" value={form.measured_value} onChange={(e) => setForm({ ...form, measured_value: e.target.value })} placeholder="例：0.28" /></div>
+          <div><label className="label">単位</label><input className="field" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} /></div>
+          <div><label className="label">基準値</label><input className="field" value={form.standard_value} onChange={(e) => setForm({ ...form, standard_value: e.target.value })} /></div>
+          <div><label className="label">測定器</label><input className="field" value={form.instrument} onChange={(e) => setForm({ ...form, instrument: e.target.value })} placeholder="例：OTDR AQ7280" /></div>
+          <div className="col-span-2"><label className="label">コメント</label><input className="field" value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} /></div>
+        </div>
+      </Modal>
+    </Panel>
+  )
 }
 
 function Meta({ label, value, span }: { label: string; value: React.ReactNode; span?: number }) {

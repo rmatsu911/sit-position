@@ -443,6 +443,8 @@ class DocumentVersionOut(BaseModel):
     note: str | None = None
     updated_by: str | None = None
     updated_at: datetime | None = None
+    file_url: str | None = None
+    mime_type: str | None = None
 
 
 class DocumentOut(BaseModel):
@@ -491,3 +493,90 @@ class DashboardSummaryOut(BaseModel):
     qualityWaiting: int = 0
     reportPending: int = 0
     peopleToday: int = 0
+
+
+# ===== 要員配置（Ver.0.1.3）=====
+class WorkerAssignmentCreate(BaseModel):
+    project_id: int
+    task_id: int | None = None
+    assigned_from: date | None = None
+    assigned_to: date | None = None
+    role: str | None = None
+
+
+class AssignmentCheckRow(BaseModel):
+    task_id: int
+    task_name: str
+    planned_workers: int
+    assigned_count: int
+    ok: bool
+
+
+# ===== 資材（Ver.0.1.3）=====
+class ProjectMaterialOut(BaseModel):
+    id: int
+    project_id: int
+    material_id: int
+    name: str
+    code: str | None = None
+    model_number: str | None = None
+    manufacturer: str | None = None
+    unit: str | None = None
+    task_id: int | None = None
+    task: str | None = None
+    qty_planned: float | None = None
+    qty_used: float | None = None
+    arrival_planned: date | None = None
+    arrival_actual: date | None = None
+    status: str | None = None
+
+
+class ProjectMaterialCreate(BaseModel):
+    project_id: int
+    name: str
+    code: str | None = None
+    model_number: str | None = None
+    manufacturer: str | None = None
+    unit: str | None = None
+    task_id: int | None = None
+    qty_planned: float | None = None
+    qty_used: float | None = None
+    arrival_planned: date | None = None
+    arrival_actual: date | None = None
+    status: str | None = None
+
+
+# ===== 試験記録（Ver.0.1.3）=====
+class TestRecordOut(BaseModel):
+    id: int
+    project_id: int
+    site_id: int | None = None
+    asset_id: int | None = None
+    asset: str | None = None
+    task_id: int | None = None
+    task: str | None = None
+    test_type: str
+    measured_at: datetime | None = None
+    tester: str | None = None
+    measured_value: str | None = None
+    unit: str | None = None
+    standard_value: str | None = None
+    judge: str
+    instrument: str | None = None
+    attachment_url: str | None = None
+    comment: str | None = None
+
+
+class TestRecordCreate(BaseModel):
+    project_id: int
+    site_id: int | None = None
+    asset_id: int | None = None
+    task_id: int | None = None
+    test_type: str
+    measured_at: datetime | None = None
+    measured_value: str | None = None
+    unit: str | None = None
+    standard_value: str | None = None
+    judge: str = "未判定"
+    instrument: str | None = None
+    comment: str | None = None

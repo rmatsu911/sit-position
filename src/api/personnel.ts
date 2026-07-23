@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/apiClient'
 import type { Worker } from '../types'
 
@@ -54,5 +54,26 @@ export function useWorker(id: string | number | undefined) {
     queryKey: ['worker', id],
     enabled: id !== undefined,
     queryFn: () => api<ApiWorkerDetail>(`/workers/${id}`),
+  })
+}
+
+// 要員を案件/工程へ配置（DB永続化）
+export function useAssignWorker() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { worker_id: string | number; project_id: number; task_id?: number; assigned_from?: string; assigned_to?: string; role?: string }) => {
+      const { worker_id, ...body } = input
+      return api<ApiWorkerDetail>(`/workers/${worker_id}/assign`, { method: 'POST', body })
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workers'] }),
+  })
+}
+
+export function useUnassignWorker() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { worker_id: string | number; assignment_id: number }) =>
+      api<ApiWorkerDetail>(`/workers/${input.worker_id}/assign/${input.assignment_id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workers'] }),
   })
 }

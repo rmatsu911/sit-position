@@ -7,7 +7,7 @@ import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
 import { StatusBadge } from '../components/ui/Badge'
 import { useApp } from '../context/AppContext'
-import { useDocuments } from '../api/documents'
+import { useDocuments, useDocument } from '../api/documents'
 
 const pins = [
   { x: 30, y: 32, label: 'クロージャ位置確認' },
@@ -25,6 +25,13 @@ export default function Drawings() {
   const [showPins, setShowPins] = useState(true)
   const [showLayers, setShowLayers] = useState(true)
   const dwg = drawings.find((d) => d.id === current) ?? drawings[0]
+  const { data: docDetail } = useDocument(dwg?.id)
+  // 最新版の実ファイル（PDF/画像）
+  const latest = docDetail?.versions?.[0]
+  const fileUrl = latest?.file_url ?? null
+  const mime = latest?.mime_type ?? ''
+  const isPdf = mime === 'application/pdf'
+  const isImage = mime.startsWith('image/')
 
   const tools = [
     { icon: ZoomIn, label: '拡大', onClick: () => setZoom((z) => Math.min(2.5, z + 0.2)) },
@@ -90,17 +97,35 @@ export default function Drawings() {
                 <button onClick={() => setPage((p) => Math.min(3, p + 1))} className="rounded p-1 hover:bg-line/60"><ChevronRight size={16} /></button>
               </div>
             </div>
-            <div className="thin-scroll flex items-center justify-center overflow-auto bg-slate-200 p-8" style={{ height: 'calc(100vh - 300px)' }}>
-              <div className="relative bg-white shadow-pop" style={{ transform: `scale(${zoom}) rotate(${rotate}deg)`, transition: 'transform 0.15s' }}>
-                <DrawingSvg showLayers={showLayers} />
-                {showPins && pins.map((p, i) => (
-                  <div key={i} className="group absolute -translate-x-1/2 -translate-y-full" style={{ left: `${p.x}%`, top: `${p.y}%` }}>
-                    <MapPin size={20} className="fill-ng/20 text-ng" />
-                    <div className="absolute left-1/2 top-0 hidden -translate-x-1/2 -translate-y-full whitespace-nowrap rounded bg-ink px-2 py-0.5 text-[11px] text-white group-hover:block">{p.label}</div>
-                  </div>
-                ))}
+            {isPdf ? (
+              /* 実PDFをブラウザ表示 */
+              <iframe title={dwg.name} src={fileUrl!} className="w-full border-0 bg-slate-200" style={{ height: 'calc(100vh - 300px)' }} />
+            ) : isImage ? (
+              /* 実画像（PNG/JPEG）を表示 */
+              <div className="thin-scroll flex items-center justify-center overflow-auto bg-slate-200 p-8" style={{ height: 'calc(100vh - 300px)' }}>
+                <img src={fileUrl!} alt={dwg.name} className="max-h-full max-w-full bg-white shadow-pop"
+                  style={{ transform: `scale(${zoom}) rotate(${rotate}deg)`, transition: 'transform 0.15s' }} />
               </div>
-            </div>
+            ) : fileUrl ? (
+              /* 対応外形式：ファイル情報＋ダウンロード */
+              <div className="flex flex-col items-center justify-center gap-3 bg-slate-100 p-8 text-center" style={{ height: 'calc(100vh - 300px)' }}>
+                <p className="text-[13px] text-ink-soft">この形式（{latest?.original_filename ?? 'ファイル'}）はブラウザプレビューに対応していません。</p>
+                <a href={fileUrl} download className="btn-primary"><Download size={15} />ファイルをダウンロード</a>
+              </div>
+            ) : (
+              /* 実ファイル未登録：従来のSVGプレースホルダ */
+              <div className="thin-scroll flex items-center justify-center overflow-auto bg-slate-200 p-8" style={{ height: 'calc(100vh - 300px)' }}>
+                <div className="relative bg-white shadow-pop" style={{ transform: `scale(${zoom}) rotate(${rotate}deg)`, transition: 'transform 0.15s' }}>
+                  <DrawingSvg showLayers={showLayers} />
+                  {showPins && pins.map((p, i) => (
+                    <div key={i} className="group absolute -translate-x-1/2 -translate-y-full" style={{ left: `${p.x}%`, top: `${p.y}%` }}>
+                      <MapPin size={20} className="fill-ng/20 text-ng" />
+                      <div className="absolute left-1/2 top-0 hidden -translate-x-1/2 -translate-y-full whitespace-nowrap rounded bg-ink px-2 py-0.5 text-[11px] text-white group-hover:block">{p.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </Panel>
           )}
         </div>

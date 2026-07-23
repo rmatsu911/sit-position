@@ -91,6 +91,20 @@
 | PATCH | `/notifications/{id}/read?read=` , `POST /notifications/read-all` | 既読／全既読 |
 | GET | `/dashboard/summary` | 集計（全案件/進行中/遅延/本日作業/今日完了/写真未確認/品質確認待ち/未提出日報/本日要員、案件スコープ） |
 
+## 実用基盤（Ver.0.1.3）
+
+| メソッド | パス | 権限 |
+| --- | --- | --- |
+| POST | `/workers/{id}/assign`（project_id, task_id?, assigned_from?, assigned_to?, role?） | 要員を案件/工程へ配置（稼働化・監査）。PM |
+| DELETE | `/workers/{id}/assign/{assignment_id}` | 配置解除（他配置無しなら待機化）。PM |
+| GET | `/workers/assignment-check/{project_id}` | 工程ごとの予定人数 vs 配置人数 |
+| GET | `/materials?project_id=&task_id=` , `POST /materials` , `PUT /materials/{id}` | 資材一覧/登録/更新（マスタ自動作成＋案件/工程紐付け）。登録はPM/FIELD_WORKER |
+| GET | `/test-records?project_id=&asset_id=&task_id=&test_type=` , `GET /{id}` | 試験記録一覧/詳細（Asset/Task紐付け・添付URL） |
+| POST | `/test-records` | 試験記録登録（測定者=ログインユーザ）。PM/FIELD_WORKER/QUALITY_MANAGER |
+| GET | `/documents/{id}` の各版に `file_url`/`mime_type` | 実ファイル閲覧（PDF/PNG/JPEG）。版管理維持 |
+| GET | `/reports/types` | 対応帳票・形式の列挙 |
+| GET | `/reports/{report_type}?project_id=&format=pdf\|xlsx` | 帳票を生成しダウンロード（施工管理表＝tasksから生成、PDF/Excel、監査） |
+
 ## 監査ログ
 
 写真登録/編集/削除・品質状態変更/承認/差戻し・日報作成/提出/差戻し/承認・工程実績反映・台帳更新・図面登録/更新/削除を、`audit_logs`（user/action/entity_type/entity_id/before/after）へ記録。
