@@ -1,29 +1,63 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Save, Send, RotateCcw, CheckCircle2, Copy, FileText, Printer, Paperclip, Plus } from 'lucide-react'
 import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
 import { StatusBadge } from '../components/ui/Badge'
 import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
 import { useApp } from '../context/AppContext'
-import { dailyReports as seed } from '../data/dailyReports'
 import { projectById } from '../data/projects'
+import {
+  useDailyReports, useSaveDailyReport, useChangeDailyReportStatus, useCopyDailyReport, useCreateDailyReport, toUpsertBody,
+} from '../api/dailyReports'
 import type { DailyReport, ReportStatus } from '../types'
 
 export default function DailyReportPage() {
   const { toast, confirm } = useApp()
-  const [reports, setReports] = useState<DailyReport[]>(() => seed.map((r) => ({ ...r })))
-  const [currentId, setCurrentId] = useState('dr1')
+  const { data: reports = [], isLoading, isError, refetch } = useDailyReports()
+  const saveMut = useSaveDailyReport()
+  const statusMut = useChangeDailyReportStatus()
+  const copyMut = useCopyDailyReport()
+  const createMut = useCreateDailyReport()
+  const [currentId, setCurrentId] = useState('')
+  const [draft, setDraft] = useState<DailyReport | null>(null)
   const [attached, setAttached] = useState(0)
 
-  const current = useMemo(() => reports.find((r) => r.id === currentId)!, [reports, currentId])
+  // 選択中の日報を編集用 draft へ複製
+  useEffect(() => {
+    if (!reports.length) return
+    const id = reports.some((r) => r.id === currentId) ? currentId : reports[0].id
+    if (id !== currentId) setCurrentId(id)
+    setDraft({ ...reports.find((r) => r.id === id)! })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reports, currentId])
+
+  const current = draft
 
   function update<K extends keyof DailyReport>(key: K, value: DailyReport[K]) {
-    setReports((prev) => prev.map((r) => (r.id === currentId ? { ...r, [key]: value } : r)))
+    setDraft((prev) => (prev ? { ...prev, [key]: value } : prev))
   }
   function setStatus(status: ReportStatus, msg: string) {
-    update('status', status)
-    toast(msg, 'ok')
+    if (!draft) return
+    // まず本文を保存してからステータス遷移
+    saveMut.mutate(draft, {
+      onSuccess: () => statusMut.mutate({ id: draft.id, status }, {
+        onSuccess: () => toast(msg, 'ok'),
+        onError: () => toast('ステータス変更に失敗しました', 'ng'),
+      }),
+      onError: () => toast('保存に失敗しました', 'ng'),
+    })
   }
+  function saveDraft(msg: string) {
+    if (!draft) return
+    saveMut.mutate(draft, {
+      onSuccess: () => toast(msg, 'ok'),
+      onError: () => toast('保存に失敗しました', 'ng'),
+    })
+  }
+
+  if (isLoading) return <div className="rounded border border-line bg-white px-4 py-16 text-center text-[13px] text-ink-soft">日報を読み込んでいます…</div>
+  if (isError) return <div className="rounded border border-red-200 bg-red-50 px-4 py-10 text-center text-[13px] text-ng">日報の取得に失敗しました。<button className="ml-2 underline" onClick={() => refetch()}>再試行</button></div>
+  if (!current) return <div className="rounded border border-line bg-white px-4 py-16 text-center text-[13px] text-ink-soft">日報がまだ登録されていません。「新規日報」から作成してください。</div>
 
   return (
     <div>
@@ -33,7 +67,14 @@ export default function DailyReportPage() {
         description="日々の作業実績・安全・品質の記録"
         actions={
           <>
-            <button className="btn-default" onClick={() => { const src = reports.find((r) => r.id === 'dr2')!; update('work', src.work); update('process', src.process); toast('前日の日報をコピーしました', 'ok') }}><Copy size={15} />前日をコピー</button>
+            <button className="btn-default" onClick={() => {
+              const prev = reports.filter((r) => r.date < current.date).sort((a, b) => b.date.localeCompare(a.date))[0]
+              if (!prev) { toast('前日の日報がありません', 'warn'); return }
+              copyMut.mutate(prev.id, {
+                onSuccess: (created) => { setCurrentId(String(created.id)); toast('前日の日報をコピーしました', 'ok') },
+                onError: () => toast('コピーに失敗しました', 'ng'),
+              })
+            }}><Copy size={15} />前日をコピー</button>
             <button className="btn-default" onClick={() => toast('PDFを表示します（デモ）')}><FileText size={15} />PDF表示</button>
             <button className="btn-default" onClick={() => toast('印刷ダイアログを開きます（デモ）')}><Printer size={15} />印刷</button>
           </>
@@ -62,7 +103,13 @@ export default function DailyReportPage() {
               })}
             </ul>
             <div className="border-t border-line p-2">
-              <button className="btn-default w-full justify-center" onClick={() => toast('新規日報を作成します（デモ）')}><Plus size={15} />新規日報</button>
+              <button className="btn-default w-full justify-center" onClick={() => {
+                const today = new Date().toISOString().slice(0, 10)
+                createMut.mutate(toUpsertBody({ ...blankReport(), date: today }), {
+                  onSuccess: (created) => { setCurrentId(String(created.id)); toast('新規日報を作成しました', 'ok') },
+                  onError: () => toast('作成に失敗しました', 'ng'),
+                })
+              }}><Plus size={15} />新規日報</button>
             </div>
           </Panel>
         </div>
@@ -148,7 +195,7 @@ export default function DailyReportPage() {
           <div className="sticky bottom-0 mt-3 flex items-center justify-between rounded border border-line bg-white px-4 py-2.5 shadow-panel">
             <span className="text-xs text-ink-soft">現在のステータス：<StatusBadge status={current.status} /></span>
             <div className="flex items-center gap-2">
-              <button className="btn-default" onClick={() => setStatus('下書き', '一時保存しました')}><Save size={15} />一時保存</button>
+              <button className="btn-default" disabled={saveMut.isPending} onClick={() => saveDraft('一時保存しました')}><Save size={15} />{saveMut.isPending ? '保存中…' : '一時保存'}</button>
               <button className="btn-default" onClick={async () => { const ok = await confirm({ title: '差し戻し', message: 'この日報を差し戻しますか？' }); if (ok) setStatus('差し戻し', '差し戻しました') }}><RotateCcw size={15} />差し戻し</button>
               <button className="btn-default" onClick={() => setStatus('承認済み', '承認しました')}><CheckCircle2 size={15} />承認</button>
               <button className="btn-primary" onClick={() => setStatus('提出済み', '日報を提出しました')}><Send size={15} />提出</button>
@@ -173,4 +220,13 @@ function Grid({ children, cols = 3 }: { children: React.ReactNode; cols?: number
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <div><label className="label">{label}</label>{children}</div>
+}
+
+function blankReport(): DailyReport {
+  return {
+    id: '', projectId: 'p1', date: '', weather: '', temperature: '', place: '', crew: '', manager: '',
+    startTime: '', endTime: '', planPeople: 0, actualPeople: 0, work: '', process: '', materials: '',
+    tools: '', vehicles: '', kyContent: '', hazard: '', safetyCheck: '', qualityCheck: '', problem: '',
+    tomorrow: '', note: '', author: '', checker: '', approver: '', status: '下書き',
+  }
 }

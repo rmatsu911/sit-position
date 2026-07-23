@@ -6,37 +6,51 @@ import { StatusBadge, Badge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
 import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
 import { useApp } from '../context/AppContext'
-import { qualityItems as seed, qualitySummary, anomalyFindings, anomalyMeta, detectionPoints } from '../data/quality'
-import { photos } from '../data/photos'
-import type { QualityItem } from '../types'
+import { anomalyFindings, anomalyMeta, detectionPoints } from '../data/quality'
+import { useQualityChecks, useUpdateQualityCheck } from '../api/quality'
+import { usePhotos } from '../api/photos'
+import type { QualityItem, QualityStatus } from '../types'
 
 const flow = ['写真登録', 'AI画像認識', '品質確認', 'コメント入力', '修正・再撮影依頼', '再確認', '承認']
 
 export default function Quality() {
   const { toast } = useApp()
-  const [items, setItems] = useState<QualityItem[]>(() => seed.map((q) => ({ ...q })))
+  const { data: items = [], isLoading, isError, refetch } = useQualityChecks()
+  const { data: photos = [] } = usePhotos()
+  const updateMut = useUpdateQualityCheck()
   const [detail, setDetail] = useState<QualityItem | null>(null)
   const [anomalyOpen, setAnomalyOpen] = useState(false)
   const [comment, setComment] = useState('')
   const [anomalyStatus, setAnomalyStatus] = useState('確認待ち')
 
-  const photoById = useMemo(() => new Map(photos.map((p) => [p.id, p])), [])
+  const photoById = useMemo(() => new Map(photos.map((p) => [p.id, p])), [photos])
 
-  function act(id: string, status: QualityItem['status'], msg: string) {
-    setItems((prev) => prev.map((q) => (q.id === id ? { ...q, status, checker: '品質 管理者', updatedAt: '2026/07/21 15:30' } : q)))
-    toast(msg, 'ok')
-    setDetail(null)
-    setComment('')
+  function act(id: string, status: QualityStatus, msg: string) {
+    updateMut.mutate(
+      { id, status, comment: comment || undefined },
+      {
+        onSuccess: () => { toast(msg, 'ok'); setDetail(null); setComment('') },
+        onError: () => toast('保存に失敗しました', 'ng'),
+      },
+    )
   }
 
+  const summary = useMemo(() => {
+    const count = (s: string) => items.filter((q) => q.status === s).length
+    return {
+      確認待ち: count('確認待ち'), 不足: count('情報不足'), 未提出: count('未提出'), 警告: count('警告'),
+      確認済み: count('確認済み'), 再撮影依頼: count('再撮影依頼'), 承認済み: count('承認済み'),
+    }
+  }, [items])
+
   const summaryTiles: { label: string; value: number; tone: 'warn' | 'ng' | 'ok' | 'info' }[] = [
-    { label: '確認待ち', value: qualitySummary.確認待ち, tone: 'warn' },
-    { label: '不足', value: qualitySummary.不足, tone: 'warn' },
-    { label: '未提出', value: qualitySummary.未提出, tone: 'ng' },
-    { label: '警告', value: qualitySummary.警告, tone: 'warn' },
-    { label: '確認済み', value: qualitySummary.確認済み, tone: 'ok' },
-    { label: '再撮影依頼', value: qualitySummary.再撮影依頼, tone: 'ng' },
-    { label: '承認済み', value: qualitySummary.承認済み, tone: 'ok' },
+    { label: '確認待ち', value: summary.確認待ち, tone: 'warn' },
+    { label: '不足', value: summary.不足, tone: 'warn' },
+    { label: '未提出', value: summary.未提出, tone: 'ng' },
+    { label: '警告', value: summary.警告, tone: 'warn' },
+    { label: '確認済み', value: summary.確認済み, tone: 'ok' },
+    { label: '再撮影依頼', value: summary.再撮影依頼, tone: 'ng' },
+    { label: '承認済み', value: summary.承認済み, tone: 'ok' },
   ]
 
   return (
@@ -70,7 +84,19 @@ export default function Quality() {
         </div>
       </Panel>
 
+      {/* 読込・エラー・空 状態 */}
+      {isLoading && <div className="rounded border border-line bg-white px-4 py-10 text-center text-[13px] text-ink-soft">品質チェックを読み込んでいます…</div>}
+      {isError && (
+        <div className="rounded border border-red-200 bg-red-50 px-4 py-6 text-center text-[13px] text-ng">
+          品質チェックの取得に失敗しました。<button className="ml-2 underline" onClick={() => refetch()}>再試行</button>
+        </div>
+      )}
+      {!isLoading && !isError && items.length === 0 && (
+        <div className="rounded border border-line bg-white px-4 py-10 text-center text-[13px] text-ink-soft">品質チェックはまだ登録されていません。</div>
+      )}
+
       {/* 一覧 */}
+      {!isLoading && !isError && items.length > 0 && (
       <Panel bodyClassName="p-0" className="overflow-hidden">
         <div className="thin-scroll overflow-x-auto">
           <table className="grid-table text-[13px]">
@@ -104,6 +130,7 @@ export default function Quality() {
           </table>
         </div>
       </Panel>
+      )}
 
       {/* 詳細モーダル */}
       <Modal open={!!detail} onClose={() => setDetail(null)} title={detail ? `品質確認：${detail.inspectItem}` : ''} size="lg"

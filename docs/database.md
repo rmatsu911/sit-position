@@ -16,11 +16,13 @@ PostgreSQL 16 / SQLAlchemy 2.0 / Alembic。全業務テーブルは論理削除�
 | マスタ（ID/名分離） | `work_types` `process_types` `asset_types` `photo_types` `quality_rule_types` `construction_types` |
 | 中核 | `projects` `sites` `assets` |
 | 工程 | `tasks` `task_dependencies` `task_change_history` |
-| 施工写真 | `photos`（原本不変・`sha256`・派生サムネ） |
+| 施工写真 | `photos`（原本不変・`sha256`・派生サムネ／Ver.0.1.1 で `photo_no` `place` `tags`(JSON) `favorite` 追加） |
 | AI（構造のみ） | `ai_models` `ai_analysis_jobs` `ai_predictions` `ai_feedback` `ai_threshold_settings` |
-| 品質 | `quality_rules` `quality_checks` |
-| 日報 | `daily_reports` `daily_report_tasks` |
+| 品質 | `quality_rules` `quality_checks`（Ver.0.1.1 で `inspect_item` `process` `judge` `due_date` `worker_id` 追加） |
+| 日報 | `daily_reports`（Ver.0.1.1 で `place` `crew` `plan_workers` `actual_workers` `process` `materials` `tools` `vehicles` `hazard` `safety_check` `quality_check` `note` `checker_id` `approver_id` 追加） `daily_report_tasks` `daily_report_photos`(Ver.0.1.1新設) |
 | 監査 | `audit_logs` |
+
+Ver.0.1.1 migration: `93d342db7f58_ver0_1_1_photos_quality_daily_fields`（既存データ有りのため NOT NULL 列は server_default を付与して追加）。
 
 ## 重要な設計判断
 

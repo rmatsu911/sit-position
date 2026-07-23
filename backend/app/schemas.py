@@ -203,59 +203,141 @@ class TaskUpdate(BaseModel):
 
 # ===== 日報 =====
 class DailyReportOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
     id: int
-    project_id: int
-    report_date: date
-    weather: str | None = None
-    temperature: str | None = None
-    worker_count: int | None = None
-    work_description: str | None = None
-    status: str
-
-
-class DailyReportCreate(BaseModel):
     project_id: int
     site_id: int | None = None
     report_date: date
     weather: str | None = None
     temperature: str | None = None
-    worker_count: int | None = None
+    place: str | None = None
+    crew: str | None = None
+    manager: str | None = None
+    start_time: str | None = None
+    finish_time: str | None = None
+    plan_workers: int | None = None
+    actual_workers: int | None = None
     work_description: str | None = None
+    process: str | None = None
+    materials: str | None = None
+    tools: str | None = None
+    vehicles: str | None = None
     ky_description: str | None = None
+    hazard: str | None = None
+    safety_check: str | None = None
+    quality_check: str | None = None
     problem: str | None = None
     next_day_plan: str | None = None
+    note: str | None = None
+    author: str | None = None
+    checker: str | None = None
+    approver: str | None = None
+    status: str
+    task_ids: list[int] = []
+    photo_ids: list[int] = []
+
+
+class DailyReportUpsert(BaseModel):
+    project_id: int
+    site_id: int | None = None
+    report_date: date
+    weather: str | None = None
+    temperature: str | None = None
+    place: str | None = None
+    crew: str | None = None
+    start_time: str | None = None
+    finish_time: str | None = None
+    plan_workers: int | None = None
+    actual_workers: int | None = None
+    work_description: str | None = None
+    process: str | None = None
+    materials: str | None = None
+    tools: str | None = None
+    vehicles: str | None = None
+    ky_description: str | None = None
+    hazard: str | None = None
+    safety_check: str | None = None
+    quality_check: str | None = None
+    problem: str | None = None
+    next_day_plan: str | None = None
+    note: str | None = None
 
 
 class DailyReportStatusUpdate(BaseModel):
     status: str  # DRAFT / SUBMITTED / REVIEWING / RETURNED / APPROVED
 
 
+class DailyReportLinks(BaseModel):
+    task_ids: list[int] | None = None
+    photo_ids: list[int] | None = None
+
+
 # ===== 品質 =====
 class QualityCheckOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
     id: int
     project_id: int
+    site_id: int | None = None
+    asset_id: int | None = None
+    task_id: int | None = None
     photo_id: int | None = None
     rule_id: int | None = None
+    inspect_item: str | None = None
+    process: str | None = None
+    judge: str
+    worker: str | None = None
+    checker: str | None = None
+    due_date: date | None = None
     ai_result: str | None = None
     human_result: str | None = None
     status: str
+    comment: str | None = None
+    updated_at: datetime | None = None
+    photo_thumbnail_url: str | None = None
+
+
+class QualityActionUpdate(BaseModel):
+    status: str | None = None
+    judge: str | None = None
     comment: str | None = None
 
 
 # ===== 写真 =====
 class PhotoOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
     id: int
     project_id: int
+    site_id: int | None = None
+    asset_id: int | None = None
     task_id: int | None = None
+    photo_type_id: int | None = None
+    no: str | None = None
+    taken_at: datetime | None = None
+    photographer: str | None = None
+    place: str | None = None
+    gps: str | None = None
+    work_type: str | None = None
+    process: str | None = None
+    equipment: str | None = None
+    tags: list[str] = []
+    comment: str | None = None
+    confirm: str
+    favorite: bool = False
+    ai_candidate: str | None = None
     original_url: str | None = None
     thumbnail_url: str | None = None
-    original_filename: str | None = None
-    taken_at: datetime | None = None
-    confirmation_status: str
+    uploaded: bool = True
+
+
+class PhotoUpdate(BaseModel):
+    tags: list[str] | None = None
     comment: str | None = None
+    favorite: bool | None = None
+    photo_type_id: int | None = None
+    confirmed_work_type_id: int | None = None
+    confirmed_process_type_id: int | None = None
+    confirmed_asset_type_id: int | None = None
+
+
+class PhotoConfirmUpdate(BaseModel):
+    confirmation_status: str  # 未確認 / 確認済み / 再撮影依頼
 
 
 # ===== AI =====
@@ -266,3 +348,16 @@ class AiJobOut(BaseModel):
     job_type: str
     status: str
     queued_at: datetime | None = None
+
+
+class DetectionOut(BaseModel):
+    label: str
+    confidence: float
+    kind: str
+    bbox: list[float] | None = None
+
+
+class PhotoAiOut(BaseModel):
+    detections: list[DetectionOut] = []
+    recognition: dict = {}
+    source: str  # "ai_predictions" | "none"

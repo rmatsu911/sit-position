@@ -262,6 +262,12 @@ class Photo(Base, TimestampMixin, SoftDeleteMixin):
     confirmed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # 表示用（Ver.0.1.1）
+    photo_no: Mapped[str | None] = mapped_column(String(32))
+    place: Mapped[str | None] = mapped_column(String(200))
+    tags: Mapped[str | None] = mapped_column(Text)  # JSON配列文字列
+    favorite: Mapped[bool] = mapped_column(Boolean, default=False)
+
 
 # ===== AI（構造のみ。推論は未実装）=====
 class AiModel(Base, TimestampMixin):
@@ -352,6 +358,11 @@ class QualityCheck(Base, TimestampMixin, SoftDeleteMixin):
     task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id"))
     photo_id: Mapped[int | None] = mapped_column(ForeignKey("photos.id"))
     rule_id: Mapped[int | None] = mapped_column(ForeignKey("quality_rules.id"))
+    inspect_item: Mapped[str | None] = mapped_column(String(200))
+    process: Mapped[str | None] = mapped_column(String(120))
+    judge: Mapped[str] = mapped_column(String(16), default="未判定")
+    due_date: Mapped[date | None] = mapped_column(Date)
+    worker_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     ai_result: Mapped[str | None] = mapped_column(Text)
     human_result: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="確認待ち")
@@ -383,6 +394,29 @@ class DailyReport(Base, TimestampMixin, SoftDeleteMixin):
     status: Mapped[str] = mapped_column(String(16), default="DRAFT")
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # 表示・入力用（Ver.0.1.1）
+    place: Mapped[str | None] = mapped_column(String(200))
+    crew: Mapped[str | None] = mapped_column(String(64))
+    plan_workers: Mapped[int | None] = mapped_column(Integer)
+    actual_workers: Mapped[int | None] = mapped_column(Integer)
+    process: Mapped[str | None] = mapped_column(String(200))
+    materials: Mapped[str | None] = mapped_column(Text)
+    tools: Mapped[str | None] = mapped_column(Text)
+    vehicles: Mapped[str | None] = mapped_column(Text)
+    hazard: Mapped[str | None] = mapped_column(Text)
+    safety_check: Mapped[str | None] = mapped_column(String(64))
+    quality_check: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
+    checker_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    approver_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+
+class DailyReportPhoto(Base, TimestampMixin):
+    __tablename__ = "daily_report_photos"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    report_id: Mapped[int] = mapped_column(ForeignKey("daily_reports.id"), index=True)
+    photo_id: Mapped[int] = mapped_column(ForeignKey("photos.id"))
 
 
 class DailyReportTask(Base, TimestampMixin):

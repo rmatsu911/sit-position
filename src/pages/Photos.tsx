@@ -10,17 +10,24 @@ import { Modal } from '../components/ui/Modal'
 import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
 import { RecognitionOverlay, RecognitionLegend } from '../components/ui/RecognitionOverlay'
 import { useApp } from '../context/AppContext'
-import { photos as seedPhotos, photoTags } from '../data/photos'
 import {
   recognitionFor, recogBoxesFor, detectionsFor, qualityJudgeFor, boxColor,
 } from '../data/aiPreview'
+import {
+  usePhotos, usePhotoAi, useUploadPhoto, useUpdatePhoto, useConfirmPhoto, useDeletePhoto,
+} from '../api/photos'
 import type { Photo } from '../types'
 
 type ViewMode = 'thumb' | 'list' | 'process' | 'date' | 'equip'
 
 export default function Photos() {
   const { toast, confirm } = useApp()
-  const [photos, setPhotos] = useState<Photo[]>(() => seedPhotos.map((p) => ({ ...p })))
+  const { data: photoData, isLoading, isError, refetch } = usePhotos()
+  const uploadMut = useUploadPhoto()
+  const updateMut = useUpdatePhoto()
+  const confirmMut = useConfirmPhoto()
+  const deleteMut = useDeletePhoto()
+  const [photos, setPhotos] = useState<Photo[]>([])
   const [view, setView] = useState<ViewMode>('thumb')
   const [tagFilter, setTagFilter] = useState<string>('all')
   const [confirmFilter, setConfirmFilter] = useState<string>('all')
@@ -28,9 +35,23 @@ export default function Photos() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [lightbox, setLightbox] = useState<number | null>(null)
   const [uploadOpen, setUploadOpen] = useState(false)
-  const [uploadPct, setUploadPct] = useState(0)
-  const [classTargetId, setClassTargetId] = useState<string>(seedPhotos[0].id)
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploadPlace, setUploadPlace] = useState('')
+  const [classTargetId, setClassTargetId] = useState<string>('')
   const [reflected, setReflected] = useState<Set<string>>(new Set())
+
+  // API から取得した写真をローカル状態へ反映（即時操作のためローカルに保持）
+  useEffect(() => {
+    if (photoData) {
+      setPhotos(photoData)
+      if (photoData.length && !photoData.some((p) => p.id === classTargetId)) {
+        setClassTargetId(photoData[0].id)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photoData])
+
+  const photoTags = useMemo(() => Array.from(new Set(photos.flatMap((p) => p.tags))).sort(), [photos])
 
   const filtered = useMemo(() => {
     return photos.filter((p) => {
@@ -42,11 +63,16 @@ export default function Photos() {
   }, [photos, tagFilter, confirmFilter, onlyFav])
 
   function toggleFav(id: string) {
-    setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, favorite: !p.favorite } : p)))
+    const next = !photos.find((p) => p.id === id)?.favorite
+    setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, favorite: next } : p)))
+    updateMut.mutate({ id, favorite: next }, { onError: () => { toast('お気に入りの保存に失敗しました', 'ng'); refetch() } })
   }
   function setConfirm(id: string, val: Photo['confirm']) {
     setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, confirm: val } : p)))
-    toast(`写真を「${val}」に変更しました`, 'ok')
+    confirmMut.mutate({ id, confirmation_status: val }, {
+      onSuccess: () => toast(`写真を「${val}」に変更しました`, 'ok'),
+      onError: () => { toast('確認状況の保存に失敗しました', 'ng'); refetch() },
+    })
   }
   function toggleSelect(id: string) {
     setSelected((prev) => {
@@ -57,45 +83,34 @@ export default function Photos() {
     })
   }
 
-  // アップロードデモ
+  // アップロード（API連携）
   function startUpload() {
+    setUploadFile(null)
+    setUploadPlace('')
     setUploadOpen(true)
-    setUploadPct(0)
   }
-  useEffect(() => {
-    if (!uploadOpen) return
-    if (uploadPct >= 100) return
-    const t = window.setTimeout(() => setUploadPct((p) => Math.min(100, p + 8 + Math.random() * 12)), 180)
-    return () => window.clearTimeout(t)
-  }, [uploadOpen, uploadPct])
-  useEffect(() => {
-    if (uploadOpen && uploadPct >= 100) {
-      const t = window.setTimeout(() => {
-        const n = photos.length + 1
-        const newPhoto: Photo = {
-          id: `ph-new-${n}`, no: `P-${n.toString().padStart(3, '0')}`, projectId: 'p1',
-          takenAt: '2026/07/21 15:20', photographer: '山田 太郎', place: '局舎1F MDF室',
-          gps: '32.7900, 130.7400', workType: '接続', process: '接続損失測定', equipment: '融着',
-          tags: ['融着', '接続試験'], comment: '', confirm: '未確認', uploaded: true,
-          aiCandidate: '融着', favorite: false, colorKey: '融着',
-        }
-        setPhotos((prev) => [newPhoto, ...prev])
-        setUploadOpen(false)
-        toast('写真をアップロードしました（デモ）', 'ok')
-      }, 500)
-      return () => window.clearTimeout(t)
-    }
-  }, [uploadOpen, uploadPct, photos.length, toast])
+  function runUpload() {
+    if (!uploadFile) return
+    uploadMut.mutate(
+      { file: uploadFile, place: uploadPlace || undefined },
+      {
+        onSuccess: () => { setUploadOpen(false); toast('写真をアップロードしました', 'ok') },
+        onError: () => toast('アップロードに失敗しました', 'ng'),
+      },
+    )
+  }
 
-  // AI認識結果を写真情報へ反映
+  // AI認識結果を写真情報へ反映（タグはAPIへ保存、工種/工程はUI表示へ反映）
   function reflectClassification(id: string) {
     const target = photos.find((p) => p.id === id)
     if (!target) return
     const c = recognitionFor(target)
+    const nextTags = Array.from(new Set([...target.tags, c.認識結果, c.設備判定]))
     setPhotos((prev) => prev.map((p) => (p.id === id
-      ? { ...p, tags: Array.from(new Set([...p.tags, c.認識結果, c.設備判定])), workType: c.工種判定, process: c.工程判定 }
+      ? { ...p, tags: nextTags, workType: c.工種判定, process: c.工程判定 }
       : p)))
     setReflected((prev) => new Set(prev).add(id))
+    updateMut.mutate({ id, tags: nextTags }, { onError: () => toast('反映結果の保存に失敗しました', 'ng') })
     toast('AI認識結果を写真情報へ反映しました。', 'ok')
   }
 
@@ -147,22 +162,37 @@ export default function Photos() {
         <span className="ml-auto text-xs text-ink-soft">{filtered.length} 枚表示</span>
       </div>
 
-      {/* AI施工写真分類 */}
-      <ClassificationSupport
-        photos={filtered.length ? filtered : photos}
-        targetId={classTargetId}
-        onTarget={setClassTargetId}
-        reflected={reflected}
-        onReflect={reflectClassification}
-      />
+      {/* 読込・エラー・空 状態 */}
+      {isLoading && <div className="rounded border border-line bg-white px-4 py-10 text-center text-[13px] text-ink-soft">写真を読み込んでいます…</div>}
+      {isError && (
+        <div className="rounded border border-red-200 bg-red-50 px-4 py-6 text-center text-[13px] text-ng">
+          写真の取得に失敗しました。<button className="ml-2 underline" onClick={() => refetch()}>再試行</button>
+        </div>
+      )}
+      {!isLoading && !isError && photos.length === 0 && (
+        <div className="rounded border border-line bg-white px-4 py-10 text-center text-[13px] text-ink-soft">写真がまだ登録されていません。「写真追加」から登録してください。</div>
+      )}
 
-      {/* 表示本体 */}
-      {view === 'list' ? (
-        <PhotoTable photos={filtered} onOpen={(p) => setLightbox(filtered.indexOf(p))} onFav={toggleFav} selected={selected} onSelect={toggleSelect} />
-      ) : view === 'thumb' ? (
-        <PhotoGrid photos={filtered} onOpen={(i) => setLightbox(i)} onFav={toggleFav} selected={selected} onSelect={toggleSelect} />
-      ) : (
-        <GroupedGrid photos={filtered} groupBy={view} onOpen={(p) => setLightbox(filtered.indexOf(p))} onFav={toggleFav} />
+      {!isLoading && !isError && photos.length > 0 && (
+        <>
+          {/* AI施工写真分類 */}
+          <ClassificationSupport
+            photos={filtered.length ? filtered : photos}
+            targetId={classTargetId}
+            onTarget={setClassTargetId}
+            reflected={reflected}
+            onReflect={reflectClassification}
+          />
+
+          {/* 表示本体 */}
+          {view === 'list' ? (
+            <PhotoTable photos={filtered} onOpen={(p) => setLightbox(filtered.indexOf(p))} onFav={toggleFav} selected={selected} onSelect={toggleSelect} />
+          ) : view === 'thumb' ? (
+            <PhotoGrid photos={filtered} onOpen={(i) => setLightbox(i)} onFav={toggleFav} selected={selected} onSelect={toggleSelect} />
+          ) : (
+            <GroupedGrid photos={filtered} groupBy={view} onOpen={(p) => setLightbox(filtered.indexOf(p))} onFav={toggleFav} />
+          )}
+        </>
       )}
 
       {/* ライトボックス */}
@@ -178,26 +208,48 @@ export default function Photos() {
           onReflect={() => reflectClassification(filtered[lightbox].id)}
           onFav={() => toggleFav(filtered[lightbox].id)}
           onConfirm={(v) => setConfirm(filtered[lightbox].id, v)}
-          onComment={() => toast('コメントを保存しました（デモ）', 'ok')}
+          onComment={(text) => updateMut.mutate(
+            { id: filtered[lightbox].id, comment: text },
+            { onSuccess: () => toast('コメントを保存しました', 'ok'), onError: () => toast('コメントの保存に失敗しました', 'ng') },
+          )}
           onDelete={async () => {
             const ok = await confirm({ title: '写真の削除', message: 'この写真を削除しますか？', confirmLabel: '削除', danger: true })
-            if (ok) { setPhotos((prev) => prev.filter((p) => p.id !== filtered[lightbox].id)); setLightbox(null); toast('写真を削除しました', 'ok') }
+            if (ok) {
+              const id = filtered[lightbox].id
+              deleteMut.mutate({ id }, {
+                onSuccess: () => { setPhotos((prev) => prev.filter((p) => p.id !== id)); setLightbox(null); toast('写真を削除しました', 'ok') },
+                onError: () => toast('削除に失敗しました', 'ng'),
+              })
+            }
           }}
         />
       )}
 
-      {/* アップロードモーダル */}
-      <Modal open={uploadOpen} onClose={() => uploadPct >= 100 && setUploadOpen(false)} title="写真アップロード（デモ）"
-        footer={<button className="btn-default" disabled={uploadPct < 100} onClick={() => setUploadOpen(false)}>閉じる</button>}>
+      {/* アップロードモーダル（API連携） */}
+      <Modal open={uploadOpen} onClose={() => !uploadMut.isPending && setUploadOpen(false)} title="写真アップロード"
+        footer={
+          <>
+            <button className="btn-default" disabled={uploadMut.isPending} onClick={() => setUploadOpen(false)}>キャンセル</button>
+            <button className="btn-primary" disabled={!uploadFile || uploadMut.isPending} onClick={runUpload}>
+              <Upload size={15} />{uploadMut.isPending ? 'アップロード中…' : 'アップロード'}
+            </button>
+          </>
+        }>
         <div className="space-y-3">
-          <div className="flex flex-col items-center justify-center gap-2 rounded border-2 border-dashed border-line bg-canvas py-8 text-ink-soft">
+          <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded border-2 border-dashed border-line bg-canvas py-8 text-ink-soft hover:bg-slate-50">
             <Upload size={28} />
-            <p className="text-[13px]">IMG_20260721_1520.jpg をアップロード中...</p>
-          </div>
+            <p className="text-[13px]">{uploadFile ? uploadFile.name : '写真ファイルを選択してください'}</p>
+            <input type="file" accept="image/*" className="hidden" disabled={uploadMut.isPending}
+              onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} />
+          </label>
           <div>
-            <div className="mb-1 flex justify-between text-xs text-ink-soft"><span>アップロード進捗</span><span>{Math.round(uploadPct)}%</span></div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100"><div className="h-full bg-sysken-500 transition-all" style={{ width: `${uploadPct}%` }} /></div>
+            <label className="label">撮影場所（任意）</label>
+            <input className="field" value={uploadPlace} disabled={uploadMut.isPending}
+              onChange={(e) => setUploadPlace(e.target.value)} placeholder="例：局舎1F MDF室" />
           </div>
+          {uploadMut.isPending && (
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100"><div className="h-full w-2/3 animate-pulse bg-sysken-500" /></div>
+          )}
         </div>
       </Modal>
 
@@ -215,9 +267,13 @@ function ClassificationSupport({
   onReflect: (id: string) => void
 }) {
   const target = photos.find((p) => p.id === targetId) ?? photos[0]
+  const { data: ai } = usePhotoAi(target?.id)
   if (!target) return null
-  const c = recognitionFor(target)
-  const detections = detectionsFor(target)
+  // AI推論結果はAPI(ai_predictions)を優先。無ければローカル導出でフォールバック。
+  const useApi = ai && ai.source !== 'none'
+  const c = { ...recognitionFor(target), ...(useApi ? ai!.recognition : {}) }
+  const detections = useApi && ai!.detections.length ? ai!.detections : detectionsFor(target)
+  const boxes = useApi && ai!.boxes.length ? ai!.boxes : recogBoxesFor(target)
   const isReflected = reflected.has(target.id)
   const indoor = target.place.includes('局舎') || target.place.includes('MDF')
 
@@ -229,7 +285,7 @@ function ClassificationSupport({
         <div className="w-72 shrink-0">
           <div className="relative overflow-hidden rounded border border-line">
             <PhotoPlaceholder type={target.colorKey} no={target.no} className="aspect-[4/3] w-full" indoor={indoor} board={{ process: target.process, date: target.takenAt }} />
-            <RecognitionOverlay boxes={recogBoxesFor(target)} />
+            <RecognitionOverlay boxes={boxes} />
           </div>
           <div className="mt-2">
             <label className="label">対象写真</label>
@@ -402,15 +458,18 @@ function PhotoTable({ photos, onOpen, onFav, selected, onSelect }: { photos: Pho
 function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNext, onClose, onFav, onConfirm, onComment, onDelete }: {
   photo: Photo; hasPrev: boolean; hasNext: boolean; reflected: boolean; onReflect: () => void
   onPrev: () => void; onNext: () => void; onClose: () => void
-  onFav: () => void; onConfirm: (v: Photo['confirm']) => void; onComment: () => void; onDelete: () => void
+  onFav: () => void; onConfirm: (v: Photo['confirm']) => void; onComment: (text: string) => void; onDelete: () => void
 }) {
   const [comment, setComment] = useState(photo.comment)
   const [showBoxes, setShowBoxes] = useState(true)
+  const { data: ai } = usePhotoAi(photo.id)
   useEffect(() => setComment(photo.comment), [photo])
   const indoor = photo.place.includes('局舎') || photo.place.includes('MDF')
-  const cls = recognitionFor(photo)
-  const detections = detectionsFor(photo)
-  const boxes = recogBoxesFor(photo)
+  // AI推論結果はAPI(ai_predictions)を優先。無ければローカル導出でフォールバック。
+  const useApi = ai && ai.source !== 'none'
+  const cls = { ...recognitionFor(photo), ...(useApi ? ai!.recognition : {}) }
+  const detections = useApi && ai!.detections.length ? ai!.detections : detectionsFor(photo)
+  const boxes = useApi && ai!.boxes.length ? ai!.boxes : recogBoxesFor(photo)
   const judge = qualityJudgeFor(photo)
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -478,7 +537,7 @@ function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNex
             </button>
             <label className="label mt-3">担当者コメント</label>
             <textarea className="field h-16 resize-none" value={comment} onChange={(e) => setComment(e.target.value)} placeholder="コメントを入力..." />
-            <button className="btn-default btn-xs mt-1.5 w-full justify-center" onClick={onComment}>コメントを保存</button>
+            <button className="btn-default btn-xs mt-1.5 w-full justify-center" onClick={() => onComment(comment)}>コメントを保存</button>
           </div>
 
           <div className="mt-auto space-y-1.5 border-t border-line px-4 py-3">

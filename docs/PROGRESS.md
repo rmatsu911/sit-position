@@ -19,7 +19,8 @@
 
 ## 現在のバージョン
 
-Ver.0.1（実用システム基盤）完了。ブランチ `claude/session-rkd93u`。
+Ver.0.1.1（現場業務実データ化）完了。ブランチ `claude/session-rkd93u`。
+施工写真・品質管理・現場日報を固定JS→PostgreSQL Seed→FastAPI→React へ移行（UI維持）。
 
 ## 完了済み（要点のみ）
 
@@ -32,20 +33,35 @@ Ver.0.1（実用システム基盤）完了。ブランチ `claude/session-rkd93
 - インフラ/docs：docker-compose、Dockerfile、docs一式、README、.env.example
 - テスト：pytest 10件通過、フロント build 成功、ブラウザE2E確認済み
 
+## Ver.0.1.1 で追加（施工写真・品質・日報の実データ化）
+
+- **モデル拡張**（`backend/app/models.py`）：Photo に `photo_no/place/tags(JSON)/favorite`、QualityCheck に `inspect_item/process/judge/due_date/worker_id`、DailyReport に `place/crew/plan_workers/actual_workers/process/materials/tools/vehicles/hazard/safety_check/quality_check/note/checker_id/approver_id`、新テーブル `daily_report_photos`
+- **migration**：`93d342db7f58_ver0_1_1_photos_quality_daily_fields.py`（既存データ有りのため NOT NULL 列は server_default 付与）→ 30テーブル
+- **写真API**（`/photos`）：一覧（project_id必須＋site/asset/task/photo_type/confirm/favorite/tag フィルタ）・詳細・アップロード(multipart, Pillowサムネ, sha256, photo_no自動採番)・編集(tags/comment/favorite/photo_type/confirmed_*)・確認状態変更・論理削除・**`GET /photos/{id}/ai`（ai_predictions→検出枠+認識/工種/工程/設備判定。将来YOLOが書けば同UIに反映）**
+- **品質API**（`/quality-checks`）：一覧（task/asset/photo/status フィルタ）・詳細・状態変更/判定/コメント（`PATCH`、QUALITY_MANAGER/PROJECT_MANAGER のみ）
+- **日報API**（`/daily-reports`）：一覧・詳細・作成(DRAFT)・編集・前日コピー・写真/工程紐付け(`PUT /links`)・ステータス遷移(`PATCH /status` DRAFT/SUBMITTED/REVIEWING/RETURNED/APPROVED)・**`POST /reflect-progress`（工程実績へ明示反映、task_change_history/audit_logs記録）**
+- **監査ログ**：写真登録/編集/削除・品質状態変更/承認/差戻し・日報作成/提出/差戻し/承認・工程実績反映を who/when/what/before/after で記録
+- **Seed**（`backend/app/seed/seed.py`）：写真27（equipment/place/gps/tags/favorite/confirmed_*、各写真に AiAnalysisJob(COMPLETED)＋検出3件＋分類1件の ai_predictions）、品質7、日報3
+- **フロントAPI接続**（UI維持）：`src/api/photos.ts` `quality.ts` `dailyReports.ts`（adapter+TanStack Query hooks）、`Photos.tsx` `Quality.tsx` `DailyReport.tsx` を接続。AI表示はAPI(ai_predictions)優先・無ければローカル導出でフォールバック。ローディング/保存中/アップロード中/エラー/空データ状態を追加
+- **テスト**：`backend/tests/test_features.py`（写真CRUD＋AI/品質/日報/権限403/監査ログ、8件）追加 → pytest 18件通過。フロント `npm run build` 成功。ブラウザE2E（写真/品質/日報描画＋日報 提出→承認→DB反映＋監査ログ）確認済み
+
 ## 残課題（未実装・設計は MASTER_SPEC 参照）
 
 - テーブル未実装：要員(workers/teams/qualifications/…)、資材、試験記録、図面版管理(documents/document_versions)、通知、weather_records
-- フロント未API化：施工写真・品質・日報・要員・工事台帳・報告書・図面・通知・ダッシュボード集計
+- フロント未API化：要員・工事台帳・報告書・図面・通知・ダッシュボード集計
+- 施工写真：アップロードUIの Site→Asset→Task 連動プルダウンは未実装（API側は各FK指定に対応済み。現状は project 固定＋任意の撮影場所入力）
+- 日報：写真/工程紐付けUI・「工程実績へ反映」ボタンは未露出（API `PUT /links`・`POST /reflect-progress` は実装済み・Seedで紐付け済み）
 - AI実推論（YOLO/ViT/OCR/RAG/LLM/工期予測）と AI Worker（`ai_analysis_jobs`購読→`ai_predictions`書込）
 - 帳票のPDF/Excel実出力
 
 ## 次回作業（1〜3項目）
 
-1. 施工写真画面のAPI化（`/photos` GET/POST接続、既存UI維持）
-2. AI Worker雛形（ジョブ購読→ダミー`ai_predictions`書込→写真/品質画面へ接続）
-3. 品質・日報画面のAPI化
+1. AI Worker雛形（`ai_analysis_jobs`購読→ダミー`ai_predictions`書込→写真/品質画面が既存経路で表示）
+2. 施工写真アップロードUIの Site→Asset→Task 連動絞り込み＋日報の写真/工程紐付け・工程実績反映ボタンをUIへ露出
+3. 要員・工事台帳・図面・通知のAPI化
 
 ## 変更ログ（差分のみ追記）
 
 - 2026-07-23 Ver.0.1 完了（backend基盤・認証・案件/工程API・Seed・docs・テスト）
 - 2026-07-23 開発ルールを追記、MASTER_SPEC.md / PROGRESS.md を新設
+- 2026-07-23 Ver.0.1.1 完了（施工写真・品質・日報を DB/API 化、ai_predictions経由のAI表示、監査ログ、権限、Seed、pytest18/build/E2E）

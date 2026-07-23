@@ -37,22 +37,47 @@
 | POST | `/projects/{id}/tasks` | 追加 |
 | PUT | `/tasks/{id}` | 更新（差分を `task_change_history` に記録） |
 
-## 施工写真
+## 施工写真（Ver.0.1.1）
 
-| GET | `/photos?project_id=` | 一覧 |
-| POST | `/photos`（multipart: `file`, `project_id`, `task_id?`, `comment?`） | 原本保存＋サムネ派生＋メタ登録 |
+| メソッド | パス | 権限 |
+| --- | --- | --- |
+| GET | `/photos?project_id=&site_id=&asset_id=&task_id=&photo_type_id=&confirm=&favorite=&tag=` | 認証＋案件スコープ・一覧 |
+| GET | `/photos/{id}` | 詳細 |
+| POST | `/photos`（multipart: `file`, `project_id`, `site_id?`, `asset_id?`, `task_id?`, `photo_type_id?`, `place?`, `comment?`） | 原本不変保存＋Pillowサムネ派生＋sha256＋`photo_no`自動採番 |
+| PATCH | `/photos/{id}`（`tags?`, `comment?`, `favorite?`, `photo_type_id?`, `confirmed_*_type_id?`） | 情報/タグ/コメント編集 |
+| PATCH | `/photos/{id}/confirm`（`confirmation_status`） | 確認状態変更（未確認/確認済み/再撮影依頼） |
+| DELETE | `/photos/{id}?reason=` | 論理削除 |
+| GET | `/photos/{id}/ai` | **ai_predictions 由来の検出枠（bbox）＋認識/工種/工程/設備判定。`source`=`ai_predictions`\|`none`。将来 YOLO が ai_predictions に書けば同じ経路で表示** |
 
 ## AI（構造のみ・推論未実装）
 
 | POST | `/ai/photos/{photo_id}/analyze?job_type=detection` | ジョブを QUEUED 登録 |
 | GET | `/ai/jobs?photo_id=` , `/ai/predictions?photo_id=` | 参照 |
 
-## 日報 / 品質
+## 品質管理（Ver.0.1.1）
 
-| GET/POST | `/daily-reports?project_id=` |
-| PATCH | `/daily-reports/{id}/status` |（DRAFT/SUBMITTED/REVIEWING/RETURNED/APPROVED）
-| GET | `/quality-checks?project_id=` |
-| PATCH | `/quality-checks/{id}` |（ステータス変更、承認は QUALITY_MANAGER/PM）
+| メソッド | パス | 権限 |
+| --- | --- | --- |
+| GET | `/quality-checks?project_id=&task_id=&asset_id=&photo_id=&status_filter=` | 認証＋案件スコープ・一覧（Project/Site/Asset/Task/Photo/Rule 関連保持、写真サムネURL付） |
+| GET | `/quality-checks/{id}` | 詳細 |
+| PATCH | `/quality-checks/{id}`（`status?`, `judge?`, `comment?`） | 状態変更/判定/コメント/承認/差戻し/再撮影/保留。**QUALITY_MANAGER / PROJECT_MANAGER のみ** |
+
+## 現場日報（Ver.0.1.1）
+
+| メソッド | パス | 権限 |
+| --- | --- | --- |
+| GET | `/daily-reports?project_id=` | 一覧（`task_ids`/`photo_ids` 紐付け含む） |
+| GET | `/daily-reports/{id}` | 詳細 |
+| POST | `/daily-reports` | 新規作成（DRAFT）。PROJECT_MANAGER / FIELD_WORKER |
+| PUT | `/daily-reports/{id}` | 編集。PROJECT_MANAGER / FIELD_WORKER |
+| POST | `/daily-reports/{id}/copy` | 前日コピー（DRAFTで複製） |
+| PUT | `/daily-reports/{id}/links`（`task_ids?`, `photo_ids?`） | 工程/写真紐付け |
+| PATCH | `/daily-reports/{id}/status`（DRAFT/SUBMITTED/REVIEWING/RETURNED/APPROVED） | 提出/確認/差戻し/再提出/承認。REVIEWING/RETURNED/APPROVED は ADMIN/PM/QUALITY_MANAGER |
+| POST | `/daily-reports/{id}/reflect-progress` | **工程実績へ明示反映（自動反映しない）。紐付け工程の実績を更新し `task_change_history` / `audit_logs` へ記録。PROJECT_MANAGER** |
+
+## 監査ログ
+
+写真登録/編集/削除・品質状態変更/承認/差戻し・日報作成/提出/差戻し/承認・工程実績反映を、`audit_logs`（user/action/entity_type/entity_id/before/after）へ記録。
 
 ## エラー
 

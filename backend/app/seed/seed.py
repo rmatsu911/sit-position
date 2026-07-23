@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import json
 import sys
 from datetime import date, datetime
 
@@ -16,13 +17,17 @@ from app.core.config import settings
 from app.core.db import SessionLocal, engine
 from app.core.security import hash_password
 from app.models import (
+    AiAnalysisJob,
     AiModel,
+    AiPrediction,
     AiThresholdSetting,
     AssetType,
     Branch,
     Company,
     ConstructionType,
     DailyReport,
+    DailyReportPhoto,
+    DailyReportTask,
     Department,
     PhotoType,
     Photo,
@@ -30,6 +35,7 @@ from app.models import (
     Project,
     ProjectMember,
     QualityCheck,
+    QualityRule,
     QualityRuleType,
     Site,
     Task,
@@ -179,8 +185,8 @@ def run(reset_first: bool = False) -> None:
         ctypes = seed_master(ConstructionType, CONSTRUCTION_TYPES)
         wtypes = seed_master(WorkType, WORK_TYPES)
         ptypes = seed_master(ProcessType, PROCESS_TYPES)
-        seed_master(AssetType, ASSET_TYPES)
-        seed_master(PhotoType, PHOTO_TYPES)
+        atypes = seed_master(AssetType, ASSET_TYPES)
+        photypes = seed_master(PhotoType, PHOTO_TYPES)
         seed_master(QualityRuleType, QUALITY_RULE_TYPES)
 
         # 案件
@@ -219,43 +225,117 @@ def run(reset_first: bool = False) -> None:
             )
             s.add(t); s.flush(); wbs_map[wbs] = t
 
-        # 施工写真（p1・27枚）
-        confirms = ["未確認", "確認済み", "再撮影依頼"]
-        for i in range(27):
-            conf = "未確認" if i % 5 == 0 else ("再撮影依頼" if i % 7 == 0 else "確認済み")
-            s.add(Photo(
-                project_id=p1.id, site_id=site.id, task_id=wbs_map["2.3"].id,
-                original_file_path=f"photos/seed/P-{i+1:03d}.jpg",
-                original_filename=f"P-{i+1:03d}.jpg", mime_type="image/jpeg",
-                taken_at=datetime(2026, 7, (i % 20) + 1, 9, 0),
-                photographer_id=users["田中 一郎"].id, confirmation_status=conf,
-                comment="固定金具の取付状態を確認。良好。" if i % 4 == 0 else None,
-            ))
-
-        # 品質チェック（p1・確認待ち等）
-        for st in ["確認待ち", "承認済み", "確認済み", "再撮影依頼", "情報不足", "未提出", "警告"]:
-            s.add(QualityCheck(project_id=p1.id, site_id=site.id, task_id=wbs_map["2.4"].id, status=st,
-                               human_result=None, ai_result=None, comment=None))
-
-        # 日報（p1）
-        for rd, wx, wc, st in [(date(2026, 7, 21), "晴れ時々曇り", 4, "DRAFT"),
-                               (date(2026, 7, 20), "曇り", 6, "SUBMITTED")]:
-            s.add(DailyReport(project_id=p1.id, site_id=site.id, report_date=rd, weather=wx, worker_count=wc,
-                              manager_id=users["高橋 誠"].id, status=st,
-                              work_description="接続損失測定の継続。"))
-        s.add(DailyReport(project_id=projects["KM-2026-003"].id, report_date=date(2026, 7, 21), weather="晴れ",
-                          worker_count=8, manager_id=users["田中 一郎"].id, status="APPROVED",
-                          work_description="通信管路敷設、ハンドホール据付。"))
-
-        # AI（構造のみ）
-        s.add(AiModel(name="設備検出モデル", model_type="YOLO", version="v0.1", status="ACTIVE"))
-        s.add(AiModel(name="工種分類モデル", model_type="ViT", version="v0.1", status="ACTIVE"))
+        # AIモデル（構造のみ）
+        yolo = AiModel(name="設備検出モデル", model_type="YOLO", version="v0.1", status="ACTIVE")
+        vit = AiModel(name="工種分類モデル", model_type="ViT", version="v0.1", status="ACTIVE")
+        s.add_all([yolo, vit])
         s.add(AiThresholdSetting(job_type="detection", auto_accept_threshold=0.90, review_threshold=0.70))
         s.add(AiThresholdSetting(job_type="classification", auto_accept_threshold=0.85, review_threshold=0.65))
+        s.flush()
+
+        # 施工写真（p1・27枚）＋ AIジョブ/予測（ai_predictions相当）
+        secondary = {"光ケーブル": "クロージャ", "クロージャ": "固定金具", "電柱": "架空ケーブル", "ONU": "光コード",
+                     "光成端箱": "パッチ配線", "スプライス": "融着点", "融着": "融着点", "ハンドホール": "管路口",
+                     "高所作業車": "電柱", "接続試験": "測定端子", "配線": "ラック", "完成状態": "クロージャ"}
+        recog = {
+            "光ケーブル": ("光設備工事", "光ケーブル敷設", "架空光ケーブル"), "クロージャ": ("光設備工事", "クロージャ設置", "光接続クロージャ"),
+            "電柱": ("架空設備工事", "架空ケーブル敷設", "電柱・架空ケーブル"), "ONU": ("宅内工事", "ONU設置", "回線終端装置(ONU)"),
+            "光成端箱": ("光設備工事", "光成端", "光成端箱"), "スプライス": ("光設備工事", "光ファイバ融着", "融着接続部"),
+            "融着": ("光設備工事", "光ファイバ融着", "融着接続機"), "ハンドホール": ("地中設備工事", "地中管路敷設", "ハンドホール"),
+            "高所作業車": ("安全・仮設", "高所作業車配置", "高所作業車"), "接続試験": ("試験・測定", "接続損失測定", "OTDR/光パワーメータ"),
+            "配線": ("局内工事", "局内配線", "通信ラック配線"), "完成状態": ("完成検査", "完成確認", "完成状態"),
+        }
+        procs = ["光ケーブル敷設", "クロージャ設置", "光ファイバ融着", "接続損失測定", "ONU設置", "既設設備確認"]
+        works = ["敷設", "接続", "試験", "宅内", "調査"]
+        positions = [[12, 24, 36, 26], [55, 20, 28, 24], [38, 52, 28, 18]]
+        pcts = [0.92, 0.84, 0.61]
+        for i in range(27):
+            equip = ASSET_TYPES[i % len(ASSET_TYPES)]
+            proc = procs[i % len(procs)]
+            work = works[i % len(works)]
+            conf = "未確認" if i % 5 == 0 else ("再撮影依頼" if i % 7 == 0 else "確認済み")
+            ph = Photo(
+                project_id=p1.id, site_id=site.id, task_id=wbs_map["2.3"].id,
+                original_file_path=f"photos/seed/P-{i+1:03d}.jpg", thumbnail_path=f"photos/seed/P-{i+1:03d}.jpg",
+                original_filename=f"P-{i+1:03d}.jpg", mime_type="image/jpeg",
+                taken_at=datetime(2026, 7, (i % 20) + 1, 8 + (i % 9), (i * 7) % 60),
+                photographer_id=users["田中 一郎"].id, confirmation_status=conf,
+                place=["局舎1F MDF室", "局前 電柱No.12", "幹線 ハンドホールH-3", "宅内 A棟", "屋上 ケーブルラック"][i % 5],
+                latitude=32.79 + (i % 9) * 0.001, longitude=130.74 + (i % 7) * 0.001,
+                confirmed_work_type_id=wtypes.get(work).id if work in wtypes else None,
+                confirmed_process_type_id=ptypes.get(proc).id if proc in ptypes else None,
+                confirmed_asset_type_id=atypes[equip].id, photo_type_id=photypes["施工中"].id,
+                photo_no=f"P-{i+1:03d}", tags=json.dumps([equip], ensure_ascii=False),
+                favorite=(i % 6 == 0), comment="固定金具の取付状態を確認。良好。" if i % 4 == 0 else None,
+            )
+            s.add(ph); s.flush()
+            job = AiAnalysisJob(photo_id=ph.id, model_id=yolo.id, job_type="detection", status="COMPLETED",
+                                completed_at=datetime(2026, 7, 21, 9, 0))
+            s.add(job); s.flush()
+            labels = [equip, secondary.get(equip, "関連設備"), "電柱"]
+            for k in range(3):
+                s.add(AiPrediction(job_id=job.id, photo_id=ph.id, model_id=yolo.id, prediction_type="detection",
+                                   predicted_class_id=atypes[equip].id if k == 0 else None, predicted_label=labels[k],
+                                   confidence=pcts[k], bounding_box=json.dumps(positions[k])))
+            wj, pj, aj = recog.get(equip, ("光設備工事", proc, equip))
+            s.add(AiPrediction(job_id=job.id, photo_id=ph.id, model_id=vit.id, prediction_type="classification",
+                               predicted_label=equip, confidence=0.9,
+                               raw_result=json.dumps({"認識結果": equip, "工種判定": wj, "工程判定": pj,
+                                                      "設備判定": aj, "現場判定": p1.name}, ensure_ascii=False)))
+            if i < 8:  # 一部の写真を品質チェック対象に
+                pass
+
+        # 品質ルール＋品質チェック（p1）
+        rule = QualityRule(work_type_id=wtypes["敷設"].id, process_type_id=ptypes["クロージャ設置"].id,
+                           asset_type_id=atypes["クロージャ"].id, check_name="ケーブル余長・固定間隔・タグ装着",
+                           severity="中", active=True)
+        s.add(rule); s.flush()
+        photo_rows = s.execute(select(Photo).where(Photo.project_id == p1.id).order_by(Photo.id)).scalars().all()
+        q_defs = [
+            ("光ケーブル敷設", "ケーブル余長・固定間隔", "注意", "確認待ち", "2026-07-23"),
+            ("クロージャ設置", "防水処理・固定状態", "合格", "承認済み", "2026-07-22"),
+            ("光ファイバ融着", "接続損失値", "合格", "確認済み", "2026-07-21"),
+            ("ONU設置", "ラベル表示・タグ装着", "不合格", "再撮影依頼", "2026-07-22"),
+            ("既設設備確認", "撤去前状態記録", "未判定", "情報不足", "2026-07-24"),
+            ("接続損失測定", "測定結果記録", "未判定", "未提出", "2026-07-23"),
+            ("クロージャ更新", "完成状態", "注意", "警告", "2026-07-24"),
+        ]
+        for idx, (proc, inspect, judge, st, due) in enumerate(q_defs):
+            s.add(QualityCheck(project_id=p1.id, site_id=site.id, task_id=wbs_map["2.4"].id,
+                               photo_id=photo_rows[idx].id if idx < len(photo_rows) else None, rule_id=rule.id,
+                               inspect_item=inspect, process=proc, judge=judge, status=st,
+                               due_date=_d(due), worker_id=users["田中 一郎"].id, checked_by=users["品質 管理者"].id))
+
+        # 日報（p1）＋ 工程/写真 紐付け
+        dr1 = DailyReport(project_id=p1.id, site_id=site.id, report_date=date(2026, 7, 21), weather="晴れ時々曇り",
+                          temperature="34℃", place="熊本中央局舎 1F MDF室 ／ 局前 電柱区間", crew="第二班",
+                          manager_id=users["高橋 誠"].id, start_time="08:00", finish_time="17:00",
+                          plan_workers=6, actual_workers=4, worker_count=4,
+                          work_description="接続損失測定の継続。局前区間の融着点確認および測定データ記録。ONU設置準備。",
+                          process="接続損失測定 / ONU設置", materials="光成端箱 2、パッチコード 12、融着スリーブ 20",
+                          tools="OTDR、融着接続機、光パワーメータ", vehicles="高所作業車 1台、資材運搬車 1台",
+                          ky_description="高所作業時の墜落防止。フルハーネス着用徹底。交通誘導配置。",
+                          hazard="局前道路の通行車両。猛暑による熱中症。", safety_check="実施（朝礼・KY・工具点検）",
+                          quality_check="測定値を基準値と照合。1区間で再測定予定。",
+                          problem="要員2名が別現場対応のため不足。測定に遅れ。", next_day_plan="ONU設置本格着手。光成端の準備。",
+                          note="接続損失測定が予定より遅延。工期予測を要確認。", status="DRAFT")
+        dr2 = DailyReport(project_id=p1.id, site_id=site.id, report_date=date(2026, 7, 20), weather="曇り",
+                          temperature="31℃", place="熊本中央局舎 局前区間", crew="第二班", manager_id=users["高橋 誠"].id,
+                          start_time="08:00", finish_time="16:30", plan_workers=6, actual_workers=6, worker_count=6,
+                          work_description="光ファイバ融着完了。接続損失測定開始。", process="光ファイバ融着 / 接続損失測定",
+                          checker_id=users["山田 太郎"].id, status="SUBMITTED", submitted_at=datetime(2026, 7, 20, 17, 0))
+        s.add_all([dr1, dr2]); s.flush()
+        s.add(DailyReportTask(report_id=dr1.id, task_id=wbs_map["3.2"].id))
+        s.add(DailyReportTask(report_id=dr1.id, task_id=wbs_map["3.3"].id))
+        s.add(DailyReportPhoto(report_id=dr1.id, photo_id=photo_rows[0].id))
+        s.add(DailyReport(project_id=projects["KM-2026-003"].id, report_date=date(2026, 7, 21), weather="晴れ",
+                          worker_count=8, plan_workers=8, actual_workers=8, manager_id=users["田中 一郎"].id,
+                          approver_id=users["田中 一郎"].id, status="APPROVED",
+                          work_description="通信管路敷設、ハンドホール据付。"))
 
         s.commit()
         print("Seed 完了:")
-        print(f"  ユーザー {len(users)}名 / 案件 {len(projects)}件 / 工程 {len(TASKS)}件 / 写真 27枚")
+        print(f"  ユーザー {len(users)}名 / 案件 {len(projects)}件 / 工程 {len(TASKS)}件 / 写真 27枚 / 品質 7 / 日報 3")
         print(f"  管理者ログイン: {settings.seed_admin_email} / {settings.seed_admin_password}")
         print(f"  デモユーザー: yamada@example.co.jp ほか / {DEMO_PASSWORD}")
 
