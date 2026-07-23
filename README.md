@@ -4,6 +4,8 @@
 
 現在は **Ver.0.1（実用システム基盤）**。発表用デモの画面・デザインを維持したまま、固定ダミーデータ → PostgreSQL（Seed）→ API へ段階的に移行している。
 
+> **開発者向け**：仕様の正は [`docs/MASTER_SPEC.md`](docs/MASTER_SPEC.md)、現在状態・開発ルール・次回作業は [`docs/PROGRESS.md`](docs/PROGRESS.md)。次回セッションは過去チャットではなく docs を参照して続きから作業する。
+
 - 詳細設計: [`docs/architecture.md`](docs/architecture.md) / [`docs/database.md`](docs/database.md) / [`docs/api.md`](docs/api.md) / [`docs/permissions.md`](docs/permissions.md) / [`docs/ai-design.md`](docs/ai-design.md) / [`docs/deployment.md`](docs/deployment.md)
 
 ## 技術構成
