@@ -29,11 +29,11 @@
 
 ## 現場・設備
 
-| GET/POST | `/sites?project_id=` , `/assets?project_id=` |
+| GET/POST | `/sites?project_id=` , `/assets?project_id=&site_id=` |（`site_id` で現場配下の設備に絞り込み＝Site→Asset 連動）
 
 ## 工程
 
-| GET | `/projects/{id}/tasks` | 一覧（read） |
+| GET | `/projects/{id}/tasks?site_id=` | 一覧（read。`site_id` で現場配下の工程に絞り込み＝Site→Task 連動） |
 | POST | `/projects/{id}/tasks` | 追加 |
 | PUT | `/tasks/{id}` | 更新（差分を `task_change_history` に記録） |
 
@@ -73,7 +73,7 @@
 | POST | `/daily-reports/{id}/copy` | 前日コピー（DRAFTで複製） |
 | PUT | `/daily-reports/{id}/links`（`task_ids?`, `photo_ids?`） | 工程/写真紐付け |
 | PATCH | `/daily-reports/{id}/status`（DRAFT/SUBMITTED/REVIEWING/RETURNED/APPROVED） | 提出/確認/差戻し/再提出/承認。REVIEWING/RETURNED/APPROVED は ADMIN/PM/QUALITY_MANAGER |
-| POST | `/daily-reports/{id}/reflect-progress` | **工程実績へ明示反映（自動反映しない）。紐付け工程の実績を更新し `task_change_history` / `audit_logs` へ記録。PROJECT_MANAGER** |
+| POST | `/daily-reports/{id}/reflect-progress?dry_run=` | **工程実績へ明示反映（自動反映しない）。`dry_run=true` は確認用プレビュー（対象工程・現在/反映後進捗・変更内容を返し、変更・履歴・監査は行わない）。確定時のみ紐付け工程の実績を更新し `task_change_history` / `audit_logs(REFLECT)` へ記録。PROJECT_MANAGER** |
 
 ## 監査ログ
 

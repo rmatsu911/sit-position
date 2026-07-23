@@ -41,15 +41,16 @@ def build_out(db: Session, t: Task) -> TaskOut:
 
 @router.get("/projects/{project_id}/tasks", response_model=list[TaskOut])
 def list_tasks(
-    project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    project_id: int,
+    site_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> list[TaskOut]:
     ensure_project_access(db, user, project_id)
-    stmt = (
-        select(Task)
-        .where(Task.project_id == project_id, Task.deleted_at.is_(None))
-        .order_by(Task.wbs_code)
-    )
-    return [build_out(db, t) for t in db.execute(stmt).scalars().all()]
+    stmt = select(Task).where(Task.project_id == project_id, Task.deleted_at.is_(None))
+    if site_id is not None:
+        stmt = stmt.where(Task.site_id == site_id)
+    return [build_out(db, t) for t in db.execute(stmt.order_by(Task.wbs_code)).scalars().all()]
 
 
 @router.post("/projects/{project_id}/tasks", response_model=TaskOut, status_code=status.HTTP_201_CREATED)

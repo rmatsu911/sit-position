@@ -79,6 +79,8 @@ export function toDailyReport(r: ApiDailyReport): DailyReport {
     checker: r.checker ?? '',
     approver: r.approver ?? '',
     status: TO_JP[r.status] ?? '下書き',
+    taskIds: r.task_ids ?? [],
+    photoIds: r.photo_ids ?? [],
   }
 }
 
@@ -147,5 +149,50 @@ export function useChangeDailyReportStatus() {
     mutationFn: (input: { id: string | number; status: ReportStatus }) =>
       api<ApiDailyReport>(`/daily-reports/${input.id}/status`, { method: 'PATCH', body: { status: reportStatusToEn(input.status) } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['daily-reports'] }),
+  })
+}
+
+// 写真/工程 紐付け
+export function useSetDailyReportLinks() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { id: string | number; task_ids?: number[]; photo_ids?: number[] }) => {
+      const { id, ...body } = input
+      return api<ApiDailyReport>(`/daily-reports/${id}/links`, { method: 'PUT', body })
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['daily-reports'] }),
+  })
+}
+
+// 工程実績反映のプレビュー/確定（POST /reflect-progress）
+export interface ReflectTarget {
+  task_id: number
+  wbs_code: string | null
+  task_name: string
+  current_progress: number
+  progress_after: number
+  planned_progress: number
+  changes: { field: string; label: string; from: number | string | null; to: number | string | null }[]
+}
+export interface ReflectResult {
+  report_id: number
+  dry_run: boolean
+  reflected_tasks: number
+  total_changes: number
+  targets: ReflectTarget[]
+}
+
+export function reflectProgress(id: string | number, dryRun: boolean): Promise<ReflectResult> {
+  return api<ReflectResult>(`/daily-reports/${id}/reflect-progress?dry_run=${dryRun}`, { method: 'POST' })
+}
+
+export function useReflectProgress() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string | number) => reflectProgress(id, false),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      qc.invalidateQueries({ queryKey: ['task-options'] })
+    },
   })
 }

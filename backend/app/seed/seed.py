@@ -21,6 +21,7 @@ from app.models import (
     AiModel,
     AiPrediction,
     AiThresholdSetting,
+    Asset,
     AssetType,
     Branch,
     Company,
@@ -206,6 +207,16 @@ def run(reset_first: bool = False) -> None:
         site = Site(project_id=p1.id, name="熊本中央局舎", address=p1.location)
         s.add(site); s.flush()
 
+        # 設備（Site配下）— アップロード時の Site→Asset→Task 連動絞り込み用
+        assets_map: dict[str, Asset] = {}
+        for code, aname, atype in [
+            ("MDF-01", "MDF主配線盤", "光成端箱"), ("CL-12", "クロージャ 局前No.12", "クロージャ"),
+            ("ONU-A", "ONU A棟", "ONU"), ("HH-3", "ハンドホールH-3", "ハンドホール"),
+        ]:
+            a = Asset(project_id=p1.id, site_id=site.id, asset_type_id=atypes[atype].id if atype in atypes else None,
+                      asset_code=code, name=aname, status="稼働")
+            s.add(a); s.flush(); assets_map[code] = a
+
         # 協力会社ユーザーを p1 に割当（スコープ確認）
         s.add(ProjectMember(project_id=p1.id, user_id=users["協力 太郎"].id, role="FIELD_WORKER"))
 
@@ -255,7 +266,7 @@ def run(reset_first: bool = False) -> None:
             work = works[i % len(works)]
             conf = "未確認" if i % 5 == 0 else ("再撮影依頼" if i % 7 == 0 else "確認済み")
             ph = Photo(
-                project_id=p1.id, site_id=site.id, task_id=wbs_map["2.3"].id,
+                project_id=p1.id, site_id=site.id, asset_id=list(assets_map.values())[i % len(assets_map)].id, task_id=wbs_map["2.3"].id,
                 original_file_path=f"photos/seed/P-{i+1:03d}.jpg", thumbnail_path=f"photos/seed/P-{i+1:03d}.jpg",
                 original_filename=f"P-{i+1:03d}.jpg", mime_type="image/jpeg",
                 taken_at=datetime(2026, 7, (i % 20) + 1, 8 + (i % 9), (i * 7) % 60),

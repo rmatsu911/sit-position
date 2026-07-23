@@ -13,11 +13,16 @@ router = APIRouter()
 
 @router.get("", response_model=list[AssetOut])
 def list_assets(
-    project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    project_id: int,
+    site_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> list[Asset]:
     ensure_project_access(db, user, project_id)
-    stmt = select(Asset).where(Asset.project_id == project_id, Asset.deleted_at.is_(None)).order_by(Asset.id)
-    return list(db.execute(stmt).scalars().all())
+    stmt = select(Asset).where(Asset.project_id == project_id, Asset.deleted_at.is_(None))
+    if site_id is not None:
+        stmt = stmt.where(Asset.site_id == site_id)
+    return list(db.execute(stmt.order_by(Asset.id)).scalars().all())
 
 
 @router.post("", response_model=AssetOut, status_code=status.HTTP_201_CREATED)

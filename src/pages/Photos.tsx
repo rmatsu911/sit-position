@@ -14,8 +14,11 @@ import {
   recognitionFor, recogBoxesFor, detectionsFor, qualityJudgeFor, boxColor,
 } from '../data/aiPreview'
 import {
-  usePhotos, usePhotoAi, useUploadPhoto, useUpdatePhoto, useConfirmPhoto, useDeletePhoto,
+  usePhotos, usePhotoAi, useUploadPhoto, useUpdatePhoto, useConfirmPhoto, useDeletePhoto, DEMO_PROJECT_ID,
 } from '../api/photos'
+import { useProjects } from '../api/projects'
+import { useSites, useAssets } from '../api/sites'
+import { useTaskOptions } from '../api/tasks'
 import type { Photo } from '../types'
 
 type ViewMode = 'thumb' | 'list' | 'process' | 'date' | 'equip'
@@ -37,6 +40,15 @@ export default function Photos() {
   const [uploadOpen, setUploadOpen] = useState(false)
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [uploadPlace, setUploadPlace] = useState('')
+  // アップロード時の Project→Site→Asset→Task 連動選択
+  const [upProject, setUpProject] = useState<number>(DEMO_PROJECT_ID)
+  const [upSite, setUpSite] = useState<number | ''>('')
+  const [upAsset, setUpAsset] = useState<number | ''>('')
+  const [upTask, setUpTask] = useState<number | ''>('')
+  const { data: projectOpts = [] } = useProjects()
+  const { data: siteOpts = [] } = useSites(upProject)
+  const { data: assetOpts = [] } = useAssets(upProject, upSite || undefined)
+  const { data: taskOpts = [] } = useTaskOptions(upProject, upSite || undefined)
   const [classTargetId, setClassTargetId] = useState<string>('')
   const [reflected, setReflected] = useState<Set<string>>(new Set())
 
@@ -87,12 +99,17 @@ export default function Photos() {
   function startUpload() {
     setUploadFile(null)
     setUploadPlace('')
+    setUpProject(DEMO_PROJECT_ID)
+    setUpSite(''); setUpAsset(''); setUpTask('')
     setUploadOpen(true)
   }
   function runUpload() {
     if (!uploadFile) return
     uploadMut.mutate(
-      { file: uploadFile, place: uploadPlace || undefined },
+      {
+        file: uploadFile, place: uploadPlace || undefined, project_id: upProject,
+        site_id: upSite || undefined, asset_id: upAsset || undefined, task_id: upTask || undefined,
+      },
       {
         onSuccess: () => { setUploadOpen(false); toast('写真をアップロードしました', 'ok') },
         onError: () => toast('アップロードに失敗しました', 'ng'),
@@ -242,6 +259,40 @@ export default function Photos() {
             <input type="file" accept="image/*" className="hidden" disabled={uploadMut.isPending}
               onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} />
           </label>
+          {/* Project → Site → Asset → Task 連動選択 */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">案件（Project）</label>
+              <select className="field" value={upProject} disabled={uploadMut.isPending}
+                onChange={(e) => { setUpProject(Number(e.target.value)); setUpSite(''); setUpAsset(''); setUpTask('') }}>
+                {projectOpts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">現場（Site）</label>
+              <select className="field" value={upSite} disabled={uploadMut.isPending}
+                onChange={(e) => { setUpSite(e.target.value ? Number(e.target.value) : ''); setUpAsset(''); setUpTask('') }}>
+                <option value="">選択してください</option>
+                {siteOpts.map((s2) => <option key={s2.id} value={s2.id}>{s2.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">設備（Asset）</label>
+              <select className="field" value={upAsset} disabled={uploadMut.isPending || !upSite}
+                onChange={(e) => setUpAsset(e.target.value ? Number(e.target.value) : '')}>
+                <option value="">{upSite ? '選択してください' : '先に現場を選択'}</option>
+                {assetOpts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">工程（Task）</label>
+              <select className="field" value={upTask} disabled={uploadMut.isPending || !upSite}
+                onChange={(e) => setUpTask(e.target.value ? Number(e.target.value) : '')}>
+                <option value="">{upSite ? '選択してください' : '先に現場を選択'}</option>
+                {taskOpts.map((t) => <option key={t.id} value={t.id}>{t.wbs} {t.name}</option>)}
+              </select>
+            </div>
+          </div>
           <div>
             <label className="label">撮影場所（任意）</label>
             <input className="field" value={uploadPlace} disabled={uploadMut.isPending}

@@ -115,9 +115,9 @@ export function usePhotoAi(photoId: string | number | undefined) {
 export function useUploadPhoto(projectId: number = DEMO_PROJECT_ID) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: { file: File; site_id?: number; asset_id?: number; task_id?: number; photo_type_id?: number; place?: string; comment?: string }) => {
+    mutationFn: (input: { file: File; project_id?: number; site_id?: number; asset_id?: number; task_id?: number; photo_type_id?: number; place?: string; comment?: string }) => {
       const form = new FormData()
-      form.set('project_id', String(projectId))
+      form.set('project_id', String(input.project_id ?? projectId))
       form.set('file', input.file)
       if (input.site_id != null) form.set('site_id', String(input.site_id))
       if (input.asset_id != null) form.set('asset_id', String(input.asset_id))

@@ -45,23 +45,30 @@ Ver.0.1.1（現場業務実データ化）完了。ブランチ `claude/session-
 - **フロントAPI接続**（UI維持）：`src/api/photos.ts` `quality.ts` `dailyReports.ts`（adapter+TanStack Query hooks）、`Photos.tsx` `Quality.tsx` `DailyReport.tsx` を接続。AI表示はAPI(ai_predictions)優先・無ければローカル導出でフォールバック。ローディング/保存中/アップロード中/エラー/空データ状態を追加
 - **テスト**：`backend/tests/test_features.py`（写真CRUD＋AI/品質/日報/権限403/監査ログ、8件）追加 → pytest 18件通過。フロント `npm run build` 成功。ブラウザE2E（写真/品質/日報描画＋日報 提出→承認→DB反映＋監査ログ）確認済み
 
+## Ver.0.1.1 残課題対応で追加（2026-07-23）
+
+- **施工写真アップロード Project→Site→Asset→Task 連動UI**：アップロードモーダルに案件/現場/設備/工程の連動プルダウン。案件変更→下位リセット、現場選択で設備・工程が有効化。`GET /assets?project_id=&site_id=`・`GET /projects/{id}/tasks?site_id=` に site_id フィルタ追加（Task に asset_id FK が無いため Asset/Task は Site で連動）。`useUploadPhoto` を project_id 可変に。Seed に Asset 4件追加＋写真へ asset_id 付与
+- **日報の写真/工程紐付けUI**：「実施工程の紐付け」（工程チェックリスト）＋「写真の紐付け」（サムネ選択）を既存フォームに追加。一時保存時に本文(PUT)＋`PUT /links` を保存。`DailyReport` 型に `taskIds/photoIds` 追加、adapter で `task_ids/photo_ids` を反映
+- **工程実績へ反映（明示操作・確認画面付き）**：`POST /reflect-progress?dry_run=true` で対象工程・現在進捗・反映後進捗・変更内容(実績人数/実績開始)をプレビュー表示 → 「この内容で反映」確定時のみ本反映。確定時のみ `task_change_history`／`audit_logs(REFLECT)` へ記録（自動反映なし）
+- **テスト**：assets/tasks の site_id フィルタ、reflect dry-run→確定（履歴・監査記録）、FIELD_WORKER の reflect 403 を追加 → pytest 22件通過。`npm run build` 成功。ブラウザE2E：写真アップロード(Project→Site→Asset→Task)→reload保持(28→29)、日報 工程/写真紐付け→保存→reload保持→提出→承認→工程実績へ反映(確認→確定)→task_change_history 記録 を確認
+
 ## 残課題（未実装・設計は MASTER_SPEC 参照）
 
 - テーブル未実装：要員(workers/teams/qualifications/…)、資材、試験記録、図面版管理(documents/document_versions)、通知、weather_records
 - フロント未API化：要員・工事台帳・報告書・図面・通知・ダッシュボード集計
-- 施工写真：アップロードUIの Site→Asset→Task 連動プルダウンは未実装（API側は各FK指定に対応済み。現状は project 固定＋任意の撮影場所入力）
-- 日報：写真/工程紐付けUI・「工程実績へ反映」ボタンは未露出（API `PUT /links`・`POST /reflect-progress` は実装済み・Seedで紐付け済み）
+- Task に asset_id FK が無く Asset→Task は Site 単位の連動（厳密な設備単位の工程紐付けは将来スキーマ拡張時に対応）
 - AI実推論（YOLO/ViT/OCR/RAG/LLM/工期予測）と AI Worker（`ai_analysis_jobs`購読→`ai_predictions`書込）
 - 帳票のPDF/Excel実出力
 
 ## 次回作業（1〜3項目）
 
 1. AI Worker雛形（`ai_analysis_jobs`購読→ダミー`ai_predictions`書込→写真/品質画面が既存経路で表示）
-2. 施工写真アップロードUIの Site→Asset→Task 連動絞り込み＋日報の写真/工程紐付け・工程実績反映ボタンをUIへ露出
-3. 要員・工事台帳・図面・通知のAPI化
+2. 要員・工事台帳・図面・通知のAPI化
+3. ダッシュボード集計のAPI化
 
 ## 変更ログ（差分のみ追記）
 
 - 2026-07-23 Ver.0.1 完了（backend基盤・認証・案件/工程API・Seed・docs・テスト）
 - 2026-07-23 開発ルールを追記、MASTER_SPEC.md / PROGRESS.md を新設
 - 2026-07-23 Ver.0.1.1 完了（施工写真・品質・日報を DB/API 化、ai_predictions経由のAI表示、監査ログ、権限、Seed、pytest18/build/E2E）
+- 2026-07-23 Ver.0.1.1 残課題対応（写真アップロード連動UI・日報の写真/工程紐付け・工程実績へ反映[確認画面付き]、assets/tasks の site_id フィルタ、reflect dry-run、pytest22/build/E2E）

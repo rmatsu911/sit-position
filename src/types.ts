@@ -143,6 +143,8 @@ export interface DailyReport {
   checker: string
   approver: string
   status: ReportStatus
+  taskIds?: number[] // 紐付け工程
+  photoIds?: number[] // 紐付け写真
 }
 
 // ============ 要員 ============

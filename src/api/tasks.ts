@@ -86,3 +86,30 @@ export function useProjectTasks(projectId: number | undefined) {
     enabled: !!projectId,
   })
 }
+
+export interface TaskOption {
+  id: number
+  wbs: string
+  name: string
+  actual_progress: number
+  planned_progress: number
+  status: string
+}
+
+// 工程選択用（Site→Task 連動、日報の実施工程紐付けにも利用）
+export function useTaskOptions(projectId: number | undefined, siteId?: number) {
+  return useQuery({
+    queryKey: ['task-options', projectId, siteId ?? null],
+    enabled: !!projectId,
+    queryFn: async () => {
+      const qs = siteId ? `?site_id=${siteId}` : ''
+      const rows = await api<ApiTask[]>(`/projects/${projectId}/tasks${qs}`)
+      return rows
+        .filter((t) => (t.wbs_code ?? '').includes('.')) // 子工程のみ（実作業単位）
+        .map<TaskOption>((t) => ({
+          id: t.id, wbs: t.wbs_code ?? String(t.id), name: t.name,
+          actual_progress: t.actual_progress, planned_progress: t.planned_progress, status: t.status,
+        }))
+    },
+  })
+}

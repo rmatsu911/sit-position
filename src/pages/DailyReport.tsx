@@ -1,26 +1,36 @@
 import { useEffect, useState } from 'react'
-import { Save, Send, RotateCcw, CheckCircle2, Copy, FileText, Printer, Paperclip, Plus } from 'lucide-react'
+import { Save, Send, RotateCcw, CheckCircle2, Copy, FileText, Printer, Plus, GitBranch } from 'lucide-react'
 import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
 import { StatusBadge } from '../components/ui/Badge'
+import { Modal } from '../components/ui/Modal'
 import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
 import { useApp } from '../context/AppContext'
 import { projectById } from '../data/projects'
 import {
-  useDailyReports, useSaveDailyReport, useChangeDailyReportStatus, useCopyDailyReport, useCreateDailyReport, toUpsertBody,
+  useDailyReports, useSaveDailyReport, useChangeDailyReportStatus, useCopyDailyReport, useCreateDailyReport,
+  useSetDailyReportLinks, useReflectProgress, reflectProgress, toUpsertBody,
 } from '../api/dailyReports'
+import type { ReflectResult } from '../api/dailyReports'
+import { useTaskOptions } from '../api/tasks'
+import { usePhotos, DEMO_PROJECT_ID } from '../api/photos'
 import type { DailyReport, ReportStatus } from '../types'
 
 export default function DailyReportPage() {
   const { toast, confirm } = useApp()
   const { data: reports = [], isLoading, isError, refetch } = useDailyReports()
+  const { data: taskOpts = [] } = useTaskOptions(DEMO_PROJECT_ID)
+  const { data: photoOpts = [] } = usePhotos()
   const saveMut = useSaveDailyReport()
   const statusMut = useChangeDailyReportStatus()
   const copyMut = useCopyDailyReport()
   const createMut = useCreateDailyReport()
+  const linksMut = useSetDailyReportLinks()
+  const reflectMut = useReflectProgress()
   const [currentId, setCurrentId] = useState('')
   const [draft, setDraft] = useState<DailyReport | null>(null)
-  const [attached, setAttached] = useState(0)
+  const [reflectPreview, setReflectPreview] = useState<ReflectResult | null>(null)
+  const [reflecting, setReflecting] = useState(false)
 
   // 選択中の日報を編集用 draft へ複製
   useEffect(() => {
@@ -50,8 +60,47 @@ export default function DailyReportPage() {
   function saveDraft(msg: string) {
     if (!draft) return
     saveMut.mutate(draft, {
-      onSuccess: () => toast(msg, 'ok'),
+      onSuccess: () => {
+        // 本文と合わせて 写真/工程 紐付けも保存
+        linksMut.mutate(
+          { id: draft.id, task_ids: draft.taskIds ?? [], photo_ids: draft.photoIds ?? [] },
+          { onSuccess: () => toast(msg, 'ok'), onError: () => toast('紐付けの保存に失敗しました', 'ng') },
+        )
+      },
       onError: () => toast('保存に失敗しました', 'ng'),
+    })
+  }
+  function toggleTask(id: number) {
+    setDraft((prev) => {
+      if (!prev) return prev
+      const cur = prev.taskIds ?? []
+      return { ...prev, taskIds: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] }
+    })
+  }
+  function togglePhoto(id: number) {
+    setDraft((prev) => {
+      if (!prev) return prev
+      const cur = prev.photoIds ?? []
+      return { ...prev, photoIds: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] }
+    })
+  }
+  // 工程実績へ反映：まず dry-run で確認画面を表示、確定時のみ反映
+  async function openReflect() {
+    if (!draft) return
+    if (!(draft.taskIds ?? []).length) { toast('紐付けた工程がありません。実施工程を選択してください', 'warn'); return }
+    try {
+      const preview = await reflectProgress(draft.id, true)
+      setReflectPreview(preview)
+    } catch {
+      toast('反映内容の取得に失敗しました', 'ng')
+    }
+  }
+  function confirmReflect() {
+    if (!draft) return
+    setReflecting(true)
+    reflectMut.mutate(draft.id, {
+      onSuccess: (res) => { setReflecting(false); setReflectPreview(null); toast(`工程実績へ反映しました（${res.total_changes}件の変更）`, 'ok') },
+      onError: () => { setReflecting(false); toast('反映に失敗しました', 'ng') },
     })
   }
 
@@ -170,15 +219,37 @@ export default function DailyReportPage() {
               </Grid>
             </Section>
 
-            <Section title="写真添付">
-              <div className="flex items-center gap-2">
-                <button className="btn-default" onClick={() => { setAttached((v) => v + 1); toast('写真を添付しました（デモ）', 'ok') }}><Paperclip size={15} />写真を添付</button>
-                <div className="flex gap-2">
-                  {Array.from({ length: attached }).map((_, i) => (
-                    <div key={i} className="h-12 w-16 overflow-hidden rounded border border-line"><PhotoPlaceholder type={['融着', 'クロージャ', 'ONU'][i % 3]} className="h-full w-full" /></div>
-                  ))}
-                  {attached === 0 && <span className="text-xs text-ink-soft">添付写真はありません</span>}
-                </div>
+            <Section title="実施工程の紐付け">
+              <p className="mb-1.5 text-[12px] text-ink-soft">この日報で実施した工程を選択（「工程実績へ反映」の対象になります）</p>
+              <div className="thin-scroll max-h-40 space-y-1 overflow-y-auto rounded border border-line p-2">
+                {taskOpts.length === 0 && <span className="text-xs text-ink-soft">工程がありません</span>}
+                {taskOpts.map((t) => (
+                  <label key={t.id} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[13px] hover:bg-canvas">
+                    <input type="checkbox" className="h-4 w-4 accent-sysken-500"
+                      checked={(current.taskIds ?? []).includes(t.id)} onChange={() => toggleTask(t.id)} />
+                    <span className="tabular-nums text-ink-soft">{t.wbs}</span>
+                    <span className="text-ink">{t.name}</span>
+                    <span className="ml-auto text-[11px] text-ink-soft">進捗 {t.actual_progress}%</span>
+                  </label>
+                ))}
+              </div>
+            </Section>
+
+            <Section title="写真の紐付け">
+              <p className="mb-1.5 text-[12px] text-ink-soft">選択中 {(current.photoIds ?? []).length} 枚</p>
+              <div className="thin-scroll grid max-h-44 grid-cols-6 gap-2 overflow-y-auto rounded border border-line p-2">
+                {photoOpts.length === 0 && <span className="text-xs text-ink-soft">写真がありません</span>}
+                {photoOpts.map((p) => {
+                  const on = (current.photoIds ?? []).includes(Number(p.id))
+                  return (
+                    <button key={p.id} type="button" onClick={() => togglePhoto(Number(p.id))}
+                      className={`relative overflow-hidden rounded border ${on ? 'border-sysken-500 ring-1 ring-sysken-300' : 'border-line'}`}>
+                      <PhotoPlaceholder type={p.colorKey} className="aspect-[4/3] w-full" />
+                      {on && <span className="absolute right-0.5 top-0.5 rounded-full bg-sysken-500 p-0.5"><CheckCircle2 size={12} className="text-white" /></span>}
+                      <span className="block truncate px-1 py-0.5 text-[10px] tabular-nums text-ink-soft">{p.no}</span>
+                    </button>
+                  )
+                })}
               </div>
             </Section>
 
@@ -196,6 +267,7 @@ export default function DailyReportPage() {
             <span className="text-xs text-ink-soft">現在のステータス：<StatusBadge status={current.status} /></span>
             <div className="flex items-center gap-2">
               <button className="btn-default" disabled={saveMut.isPending} onClick={() => saveDraft('一時保存しました')}><Save size={15} />{saveMut.isPending ? '保存中…' : '一時保存'}</button>
+              <button className="btn-default" onClick={openReflect}><GitBranch size={15} />工程実績へ反映</button>
               <button className="btn-default" onClick={async () => { const ok = await confirm({ title: '差し戻し', message: 'この日報を差し戻しますか？' }); if (ok) setStatus('差し戻し', '差し戻しました') }}><RotateCcw size={15} />差し戻し</button>
               <button className="btn-default" onClick={() => setStatus('承認済み', '承認しました')}><CheckCircle2 size={15} />承認</button>
               <button className="btn-primary" onClick={() => setStatus('提出済み', '日報を提出しました')}><Send size={15} />提出</button>
@@ -203,6 +275,55 @@ export default function DailyReportPage() {
           </div>
         </div>
       </div>
+
+      {/* 工程実績へ反映：確認画面（dry-run 結果を表示、確定時のみ反映） */}
+      <Modal open={!!reflectPreview} onClose={() => !reflecting && setReflectPreview(null)} title="工程実績へ反映（確認）" size="lg"
+        footer={
+          <>
+            <button className="btn-default" disabled={reflecting} onClick={() => setReflectPreview(null)}>キャンセル</button>
+            <button className="btn-primary" disabled={reflecting || (reflectPreview?.total_changes ?? 0) === 0} onClick={confirmReflect}>
+              <CheckCircle2 size={15} />{reflecting ? '反映中…' : 'この内容で反映'}
+            </button>
+          </>
+        }>
+        {reflectPreview && (
+          <div className="space-y-3">
+            <p className="text-[13px] text-ink-soft">
+              対象工程 {reflectPreview.reflected_tasks} 件／変更 {reflectPreview.total_changes} 件。確定すると工程実績が更新され、変更履歴（task_change_history）と監査ログに記録されます。
+            </p>
+            {reflectPreview.total_changes === 0 && (
+              <div className="rounded border border-line bg-canvas px-3 py-2 text-[13px] text-ink-soft">反映する変更はありません（既に実績が反映済みです）。</div>
+            )}
+            <div className="thin-scroll overflow-x-auto">
+              <table className="grid-table text-[13px]">
+                <thead className="bg-canvas text-[12px] text-ink-soft">
+                  <tr>{['工程', '現在進捗', '反映後進捗', '変更内容'].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {reflectPreview.targets.map((t) => (
+                    <tr key={t.task_id} className="align-top">
+                      <td className="px-3 py-2"><span className="tabular-nums text-ink-soft">{t.wbs_code}</span> {t.task_name}</td>
+                      <td className="px-3 py-2 tabular-nums">{t.current_progress}%</td>
+                      <td className="px-3 py-2 tabular-nums">{t.progress_after}%</td>
+                      <td className="px-3 py-2">
+                        {t.changes.length === 0 ? <span className="text-ink-soft">変更なし</span> : (
+                          <ul className="space-y-0.5">
+                            {t.changes.map((c) => (
+                              <li key={c.field} className="text-[12.5px]">
+                                {c.label}：<span className="text-ink-soft">{c.from ?? '—'}</span> → <span className="font-medium text-sysken-700">{c.to ?? '—'}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

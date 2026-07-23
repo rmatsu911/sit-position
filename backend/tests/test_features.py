@@ -4,7 +4,18 @@ import json
 
 from PIL import Image
 
-from app.models import AiAnalysisJob, AiPrediction, AuditLog, Photo, QualityCheck
+from app.models import (
+    AiAnalysisJob,
+    AiPrediction,
+    Asset,
+    AuditLog,
+    DailyReportTask,
+    Photo,
+    QualityCheck,
+    Site,
+    Task,
+    TaskChangeHistory,
+)
 from tests.conftest import TestingSessionLocal, token
 
 H = lambda t: {"Authorization": f"Bearer {t}"}  # noqa: E731
@@ -153,3 +164,74 @@ def test_audit_log_written_on_mutation(client):
     with TestingSessionLocal() as s:
         logs = s.query(AuditLog).filter(AuditLog.entity_type == "daily_report", AuditLog.entity_id == str(rid)).all()
         assert any(log.action == "CREATE" for log in logs)
+
+
+# ---------- Site→Asset→Task 連動フィルタ ----------
+def _make_site_asset_task():
+    with TestingSessionLocal() as s:
+        site = Site(project_id=1, name="テスト現場")
+        s.add(site); s.flush()
+        other = Site(project_id=1, name="別現場")
+        s.add(other); s.flush()
+        a1 = Asset(project_id=1, site_id=site.id, name="設備A")
+        a2 = Asset(project_id=1, site_id=other.id, name="設備B")
+        s.add_all([a1, a2]); s.flush()
+        t1 = Task(project_id=1, site_id=site.id, wbs_code="9.1", name="現場工程", planned_workers=3, actual_workers=0)
+        t2 = Task(project_id=1, site_id=other.id, wbs_code="9.2", name="別工程")
+        s.add_all([t1, t2]); s.commit()
+        return site.id, other.id, a1.id, t1.id
+
+
+def test_assets_filtered_by_site(client):
+    site_id, other_id, _, _ = _make_site_asset_task()
+    t = token(client, "admin@test.jp")
+    r = client.get(f"/api/assets?project_id=1&site_id={site_id}", headers=H(t))
+    assert r.status_code == 200
+    names = [a["name"] for a in r.json()]
+    assert "設備A" in names and "設備B" not in names
+
+
+def test_tasks_filtered_by_site(client):
+    site_id, other_id, _, _ = _make_site_asset_task()
+    t = token(client, "admin@test.jp")
+    r = client.get(f"/api/projects/1/tasks?site_id={site_id}", headers=H(t))
+    wbs = [x["wbs_code"] for x in r.json()]
+    assert "9.1" in wbs and "9.2" not in wbs
+
+
+# ---------- 工程実績へ反映（dry-run → 確定） ----------
+def test_reflect_progress_dry_run_then_apply(client):
+    site_id, _, _, task_id = _make_site_asset_task()
+    pm = token(client, "pm@test.jp")
+    # 実績人数付きの日報を作成し、工程を紐付け
+    r = client.post("/api/daily-reports", headers=H(pm), json={"project_id": 1, "report_date": "2026-08-01", "actual_workers": 7})
+    rid = r.json()["id"]
+    assert client.put(f"/api/daily-reports/{rid}/links", headers=H(pm), json={"task_ids": [task_id]}).status_code == 200
+
+    # dry-run：変更内容を返すが、実際には反映しない
+    r = client.post(f"/api/daily-reports/{rid}/reflect-progress?dry_run=true", headers=H(pm))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["dry_run"] is True and body["reflected_tasks"] == 1 and body["total_changes"] >= 1
+    fields = [c["field"] for c in body["targets"][0]["changes"]]
+    assert "actual_workers" in fields
+    with TestingSessionLocal() as s:
+        assert s.get(Task, task_id).actual_workers == 0  # まだ未反映
+        assert s.query(TaskChangeHistory).filter_by(task_id=task_id).count() == 0
+
+    # 確定：実際に反映され、履歴・監査が記録される
+    r = client.post(f"/api/daily-reports/{rid}/reflect-progress", headers=H(pm))
+    assert r.status_code == 200 and r.json()["dry_run"] is False
+    with TestingSessionLocal() as s:
+        assert s.get(Task, task_id).actual_workers == 7
+        assert s.query(TaskChangeHistory).filter_by(task_id=task_id, field="actual_workers").count() == 1
+        assert s.query(AuditLog).filter(AuditLog.action == "REFLECT", AuditLog.entity_id == str(rid)).count() >= 1
+
+
+def test_reflect_progress_forbidden_for_field_worker(client):
+    _, _, _, task_id = _make_site_asset_task()
+    pm = token(client, "pm@test.jp")
+    r = client.post("/api/daily-reports", headers=H(pm), json={"project_id": 1, "report_date": "2026-08-02"})
+    rid = r.json()["id"]
+    fw = token(client, "partner@test.jp")
+    assert client.post(f"/api/daily-reports/{rid}/reflect-progress", headers=H(fw)).status_code == 403

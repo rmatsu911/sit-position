@@ -178,32 +178,64 @@ def change_status(
     return to_out(db, r)
 
 
+def _plan_reflection(db: Session, r: DailyReport, task_ids: list[int]) -> list[dict]:
+    """日報→工程 の反映内容を算出（実際の変更は行わない）。確認画面と実反映で共用。"""
+    new_start = datetime.combine(r.report_date, datetime.min.time())
+    targets: list[dict] = []
+    for tid in task_ids:
+        t = db.get(Task, tid)
+        if not t or t.deleted_at is not None:
+            continue
+        fields: list[dict] = []
+        if r.actual_workers is not None and t.actual_workers != r.actual_workers:
+            fields.append({"field": "actual_workers", "label": "実績人数", "from": t.actual_workers, "to": r.actual_workers})
+        if t.actual_start_at is None:
+            fields.append({"field": "actual_start_at", "label": "実績開始", "from": None, "to": str(new_start.date())})
+        targets.append({
+            "task_id": t.id,
+            "wbs_code": t.wbs_code,
+            "task_name": t.name,
+            "current_progress": t.actual_progress,
+            "progress_after": t.actual_progress,  # 進捗は自動変更しない（人数・実績開始のみ反映）
+            "planned_progress": t.planned_progress,
+            "changes": fields,
+        })
+    return targets
+
+
 @router.post("/{report_id}/reflect-progress")
 def reflect_progress(
-    report_id: int, db: Session = Depends(get_db),
+    report_id: int,
+    dry_run: bool = False,
+    db: Session = Depends(get_db),
     user: User = Depends(require_roles("PROJECT_MANAGER")),
 ) -> dict:
-    """日報の実績を、紐付けた工程の実績へ明示的に反映（task_change_history / audit_logs へ記録）。"""
+    """日報の実績を、紐付けた工程の実績へ明示的に反映。
+    dry_run=True は確認用プレビュー（変更・履歴・監査を行わない）。
+    確定時のみ task_change_history / audit_logs へ記録する。"""
     r = db.get(DailyReport, report_id)
     if not r or r.deleted_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "日報が見つかりません")
     ensure_project_access(db, user, r.project_id)
     task_ids, _ = _links(db, report_id)
-    changes = []
-    for tid in task_ids:
-        t = db.get(Task, tid)
-        if not t:
-            continue
-        # 実績人数・実績開始日を反映
-        if r.actual_workers is not None and t.actual_workers != r.actual_workers:
-            db.add(TaskChangeHistory(task_id=t.id, field="actual_workers", old_value=str(t.actual_workers), new_value=str(r.actual_workers), changed_by=user.id, change_reason=f"日報#{report_id}から反映"))
-            changes.append({"task_id": t.id, "field": "actual_workers", "from": t.actual_workers, "to": r.actual_workers})
-            t.actual_workers = r.actual_workers
-        if t.actual_start_at is None:
-            new_start = datetime.combine(r.report_date, datetime.min.time())
-            db.add(TaskChangeHistory(task_id=t.id, field="actual_start_at", old_value=None, new_value=str(new_start), changed_by=user.id, change_reason=f"日報#{report_id}から反映"))
-            changes.append({"task_id": t.id, "field": "actual_start_at", "from": None, "to": str(new_start.date())})
-            t.actual_start_at = new_start
-    write_audit(db, user, "REFLECT", "daily_report", r.id, project_id=r.project_id, after={"changes": changes})
+    targets = _plan_reflection(db, r, task_ids)
+    total = sum(len(t["changes"]) for t in targets)
+
+    if dry_run:
+        return {"report_id": report_id, "dry_run": True, "reflected_tasks": len(targets), "total_changes": total, "targets": targets}
+
+    new_start = datetime.combine(r.report_date, datetime.min.time())
+    for tgt in targets:
+        t = db.get(Task, tgt["task_id"])
+        for ch in tgt["changes"]:
+            db.add(TaskChangeHistory(
+                task_id=t.id, field=ch["field"], old_value=None if ch["from"] is None else str(ch["from"]),
+                new_value=str(ch["to"]), changed_by=user.id, change_reason=f"日報#{report_id}から反映",
+            ))
+            if ch["field"] == "actual_workers":
+                t.actual_workers = r.actual_workers
+            elif ch["field"] == "actual_start_at":
+                t.actual_start_at = new_start
+    write_audit(db, user, "REFLECT", "daily_report", r.id, project_id=r.project_id, after={"targets": targets})
     db.commit()
-    return {"report_id": report_id, "reflected_tasks": len(task_ids), "changes": changes}
+    return {"report_id": report_id, "dry_run": False, "reflected_tasks": len(targets), "total_changes": total, "targets": targets}
