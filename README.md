@@ -1,68 +1,78 @@
-# 株式会社SYSKEN AI施工管理システム（デモ）
+# 株式会社SYSKEN AI施工管理システム
 
-通信工事の施工管理業務を想定した、Windows PC 向けデスクトップ業務システムの**デモアプリ**です。展示会「NATURE TECH！」で得た「**データを収集 → 整理 → 見える化 → 人が判断する**」という考え方を、SYSKENの通信工事における施工管理へ応用しています。
+通信工事の施工管理を工事単位で一元管理し、蓄積データを将来AI（画像認識・分類・品質判定・工期予測）へ接続する施工管理システム。**React/TypeScript/Vite のフロントエンド**と **FastAPI/PostgreSQL のバックエンド**で構成する。
 
-> **重要**：本画面は**AI機能実装後の完成イメージ**です。実際のAI処理・画像認識・推論・外部API・バックエンド・データベースは一切実装しておらず、AI認識結果・物体検出結果・判定結果はすべて**固定のサンプルデータ**による表示です（この注記は設定＞データ・システム情報にも一度だけ掲載）。
+現在は **Ver.0.1（実用システム基盤）**。発表用デモの画面・デザインを維持したまま、固定ダミーデータ → PostgreSQL（Seed）→ API へ段階的に移行している。
 
-## コンセプト
-
-「**データを収集 → 整理 → 見える化 → AIが認識・判定 → 人が判断する**」という流れを、SYSKENの通信工事の施工管理に適用した完成イメージです。AI施工写真分類（物体検出・分類・判定）、AI品質チェック（検出・判定）、AI工期予測、AI要員予測、AI施工判断などをUI上で表現しています。
+- 詳細設計: [`docs/architecture.md`](docs/architecture.md) / [`docs/database.md`](docs/database.md) / [`docs/api.md`](docs/api.md) / [`docs/permissions.md`](docs/permissions.md) / [`docs/ai-design.md`](docs/ai-design.md) / [`docs/deployment.md`](docs/deployment.md)
 
 ## 技術構成
 
-React 18 / TypeScript / Vite 6 / Tailwind CSS 3 / React Router 7 / Lucide React / Recharts / date-fns
+| 層 | 技術 |
+| --- | --- |
+| Frontend | React 18 / TypeScript / Vite 6 / Tailwind CSS / React Router 7 / TanStack Query 5 |
+| Backend | Python 3.11 / FastAPI / SQLAlchemy 2.0 / Alembic / Pydantic v2 |
+| DB | PostgreSQL 16 |
+| Storage | ローカルFS（開発） / S3・MinIO（本番） |
+| Auth | JWT（Bearer）/ ロール5種＋案件スコープ |
 
-## セットアップ・起動
+## クイックスタート（Docker Compose）
 
 ```bash
+cp .env.example .env
+cp backend/.env.example backend/.env
+docker compose up -d --build
+docker compose exec backend alembic upgrade head     # DBマイグレーション
+docker compose exec backend python -m app.seed.seed  # 初期データ（既存ダミー相当）
+```
+
+- フロント: http://localhost:5173 　バックエンドAPI: http://localhost:8000/docs
+- ログイン: `admin@example.co.jp` / `Passw0rd!`（他 `yamada@` PM、`partner@` 協力会社。パスワード共通）
+
+## クイックスタート（Dockerなし）
+
+### 1) PostgreSQL
+16系にDB `sysken`・ロール `sysken`（パスワード `sysken`）を作成。
+
+### 2) Backend
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate            # Windows: .venv\Scripts\activate
+pip install "fastapi[all]" "sqlalchemy>=2" alembic psycopg2-binary "pydantic[email]" \
+            pydantic-settings "python-jose[cryptography]" bcrypt python-multipart pillow boto3
+cp .env.example .env                 # DATABASE_URL を環境に合わせる
+alembic upgrade head                 # マイグレーション
+python -m app.seed.seed              # 初期データ投入（--reset で再投入）
+uvicorn app.main:app --reload        # http://localhost:8000
+```
+
+### 3) Frontend（別ターミナル・リポジトリのルート）
+```bash
+cp .env.example .env                 # VITE_API_BASE_URL=http://localhost:8000/api
 npm install
-npm run dev      # 開発サーバー（既定 http://localhost:5173/）
-npm run build    # 本番ビルド（tsc型チェック + Viteビルド）
-npm run preview  # ビルド結果のプレビュー
+npm run dev                          # http://localhost:5173
 ```
 
-- 想定解像度：**1920×1080（フルHD）** の Windows PC。ダークモードは不使用。
-- UI・ダミーデータはすべて日本語／通信工事（FTTH・光ケーブル・クロージャ・ONU 等）を想定。
+ブラウザで http://localhost:5173 → ログイン画面 → 上記アカウントでログイン。
 
-## 画面構成
+## Ver.0.1 でAPI連携済みの画面
 
-| メニュー | 主な機能 |
-| --- | --- |
-| ダッシュボード | KPI（8指標）／工程進捗（予定vs実績）／今週の簡易ガント（AM・PM）／案件一覧／通知・環境情報 |
-| 案件一覧 | 検索・絞り込み／新規案件登録モーダル／CSV出力／一括操作／ページネーション |
-| 案件詳細 | 基本情報＋11タブ（概要・作業内容・工程・施工写真・図面・現場日報・品質・要員・資材・報告書・操作履歴） |
-| **工程管理** | WBS階層工程表＋ガントチャート（AM/PM・予定/実績/基準バー・依存線・現在線・休日/祝日・マイルストン・クリティカル）／ドラッグで日程変更／右クリックメニュー／日週月表示／工期予測 |
-| **施工写真** | 5種の表示切替／タグ・確認状況フィルタ／拡大（ライトボックス）／コメント・確認・再撮影／アップロードデモ／**AI施工写真分類**（物体検出率・認識結果・判定、認識結果を写真情報へ反映） |
-| 図面 | 図面一覧＋ビューア（拡大/縮小/回転/ピン/コメント/版比較） |
-| **品質管理** | 集計／一覧／詳細モーダル（承認・再撮影・保留）／**AI品質チェック**（確認対象 vs 完成基準、AI検出結果・AI判定結果） |
-| **現場日報** | 全項目入力フォーム／ステータス遷移（下書き→提出→確認中→差し戻し→承認済み）／前日コピー／写真添付 |
-| 要員管理 | 週別勤務表／案件配置（ドラッグ&ドロップ）／資格・空き要員検索／過剰配置・資格不足警告 |
-| 工事台帳 | Excel風グリッド（セル選択・列固定・並び替え・合計行）／CSV/Excel出力デモ |
-| 報告書 | 8種の帳票／セル編集・行追加削除／プレビュー／PDF/Excel/CSV出力デモ（処理ステップ表示） |
-| 通知 | Teams風タイムライン／種別・案件フィルタ／既読管理／対象画面へ遷移 |
-| AI施工判断 | AIチャットによる施工判断（過去事例・施工基準の照合演出＋回答） |
-| 設定 | プロフィール・通知・表示・組織・セキュリティ・データ |
+- **ログイン / ログアウト**（JWT、ロール表示、案件スコープ）
+- **案件一覧**（検索・絞り込み・新規登録・ページング／DBから取得）
+- **案件詳細**（基本情報タブをAPIから表示）
+- **工程管理**（ガントの工程データをAPIから読み込み）
 
-### 共通UI・操作性
+その他の画面（施工写真・品質・日報・要員・帳票 等）は既存のダミー表示を維持し、同じフックパターンで順次API化する。
 
-ヘッダー（ロゴ・全体検索・通知・ヘルプ・最終同期・ユーザーメニュー）／折りたたみ式サイドメニュー／画面連動の**AIサポートパネル**（右・開閉可）／ステータスバー／パンくずリスト。テーブル・タブ・モーダル・トースト・ドロップダウン・右クリックメニュー・確認ダイアログ・ローディング・ページネーション等を全画面で統一。
+## AIについて
 
-## ディレクトリ構成
+`ai_models` / `ai_analysis_jobs` / `ai_predictions` / `ai_feedback` のDB・API・接続準備までを実装。**この段階では実推論（YOLO/ViT/OCR/LLM）は未実装**で、`analyze` はジョブを QUEUED 登録するのみ。設計は [`docs/ai-design.md`](docs/ai-design.md)。
 
+## テスト
+
+```bash
+cd backend
+pip install pytest httpx
+pytest            # 認証・案件・権限スコープのAPIテスト
 ```
-src/
-├── main.tsx / App.tsx        エントリ・ルーティング（SPA）
-├── nav.ts                    サイドメニュー定義
-├── context/AppContext.tsx    トースト・確認ダイアログ・レイアウト状態
-├── components/layout/        ヘッダー・サイドバー・AIパネル・ステータスバー・パンくず
-├── components/ui/            Badge/Modal/Toast/ContextMenu/StepRunner/PhotoPlaceholder 等
-├── data/                     通信工事向けダミーデータ（全画面で整合）
-├── lib/format.ts             金額・日付フォーマット
-└── pages/                    各画面（工程管理は pages/schedule/ にガント補助）
-```
-
-## 注意事項
-
-- 画像は外部素材を使わず、通信設備の雰囲気を伝える**SVGプレースホルダ**（設備種別ごとに色・形状を変化）で表現しています。
-- AI認識結果・物体検出結果・判定結果はすべて固定のサンプルデータによる表示です。実際のAI処理は未実装で、その旨は設定＞データ・システム情報に一度だけ掲載しています。
-- 実在の顧客・個人情報は使用していません。

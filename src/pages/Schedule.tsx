@@ -12,7 +12,11 @@ import { Modal } from '../components/ui/Modal'
 import { ContextMenu, type MenuItem } from '../components/ui/ContextMenu'
 import { useApp } from '../context/AppContext'
 import { wbsTasks, forecast, forecastSeries } from '../data/schedule'
+import { useProjectTasks } from '../api/tasks'
 import type { WbsTask } from '../types'
+
+// 熊本中央局 光設備更改工事（Seedの案件ID=1）の工程を読み込む
+const SCHEDULE_PROJECT_ID = 1
 import {
   days, dayWidthByMode, ROW_H, dayIndex, isHoliday, isWeekend, weekdayLabel,
   weatherFor, addDaysIso, todayDate, type ViewMode,
@@ -49,7 +53,14 @@ const LEFT_COLS = [
 
 export default function Schedule() {
   const { toast, confirm } = useApp()
-  const [tasks, setTasks] = useState<WbsTask[]>(() => wbsTasks.map((t) => ({ ...t })))
+  const { data: apiTasks, isLoading: tasksLoading, isError: tasksError } = useProjectTasks(SCHEDULE_PROJECT_ID)
+  const [tasks, setTasks] = useState<WbsTask[]>([])
+
+  // API取得（read）→ ローカルstateへ。取得失敗時はダミーへフォールバック。
+  useEffect(() => {
+    if (apiTasks && apiTasks.length) setTasks(apiTasks.map((t) => ({ ...t })))
+    else if (tasksError) setTasks(wbsTasks.map((t) => ({ ...t })))
+  }, [apiTasks, tasksError])
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [view, setView] = useState<ViewMode>('day')
   const [filterStatus, setFilterStatus] = useState<string>('all')
@@ -243,11 +254,11 @@ export default function Schedule() {
       <PageHeader
         breadcrumb={[
           { label: '案件一覧', to: '/projects' },
-          { label: '熊本中央局 光設備更改工事', to: '/projects/p1' },
+          { label: '熊本中央局 光設備更改工事', to: `/projects/${SCHEDULE_PROJECT_ID}` },
           { label: '工程管理' },
         ]}
         title="工程管理"
-        description="熊本中央局 光設備更改工事 ／ WBS・ガントチャート（ドラッグで日程変更・右クリックで操作）"
+        description={`熊本中央局 光設備更改工事 ／ WBS・ガントチャート ${tasksLoading ? '（工程データを読み込み中...）' : tasksError ? '（オフライン: サンプル表示）' : '（API連携）'}`}
         actions={
           <div className="flex items-center gap-1 rounded border border-line bg-white p-0.5">
             {(['day', 'week', 'month'] as ViewMode[]).map((v) => (

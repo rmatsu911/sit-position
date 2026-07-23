@@ -13,6 +13,17 @@ dist-ssr
 *.local
 *.tsbuildinfo
 
+# 環境変数（秘密情報はコミットしない）
+.env
+!.env.example
+
+# Backend (Python)
+backend/.venv/
+backend/**/__pycache__/
+backend/storage/
+storage/
+*.pyc
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

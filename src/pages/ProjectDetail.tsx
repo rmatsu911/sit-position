@@ -1,14 +1,16 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ExternalLink, Truck, Wrench, HardHat, AlertTriangle, Clock } from 'lucide-react'
+import { ExternalLink, Truck, Wrench, HardHat, AlertTriangle, Clock, Loader2 } from 'lucide-react'
 import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel, EmptyState } from '../components/ui/common'
 import { StatusBadge, Badge } from '../components/ui/Badge'
 import { Progress } from '../components/ui/Progress'
 import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
-import { projectById, todayEnv } from '../data/projects'
+import { todayEnv } from '../data/projects'
 import { photos } from '../data/photos'
 import { manYen } from '../lib/format'
+import { useProject } from '../api/projects'
+import { ApiError } from '../lib/apiClient'
 import NotFound from './NotFound'
 
 const TABS = ['概要', '作業内容', '工程', '施工写真', '図面', '現場日報', '品質', '要員', '資材', '報告書', '操作履歴'] as const
@@ -21,38 +23,56 @@ const routeByTab: Partial<Record<Tab, string>> = {
 export default function ProjectDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const p = projectById(id ?? '')
+  const pid = Number(id)
+  const { data: p, isLoading, isError, error } = useProject(Number.isNaN(pid) ? undefined : pid)
   const [tab, setTab] = useState<Tab>('概要')
 
-  if (!p) return <NotFound />
+  if (isLoading) {
+    return <div className="flex items-center justify-center gap-2 py-24 text-ink-soft"><Loader2 size={24} className="animate-spin text-sysken-500" />案件を読み込んでいます...</div>
+  }
+  if (isError && error instanceof ApiError && error.status === 404) return <NotFound />
+  if (isError || !p) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-20 text-ng">
+        <AlertTriangle size={26} />
+        <p className="text-[13px]">{error instanceof ApiError ? error.message : '案件の取得に失敗しました'}</p>
+        <button className="btn-default mt-2" onClick={() => navigate('/projects')}>案件一覧へ戻る</button>
+      </div>
+    )
+  }
+
+  const code = p.construction_number
+  const client = p.customer ?? '—'
+  const location = p.location ?? p.area ?? '—'
+  const dash = (v: string | null | undefined) => v ?? '—'
 
   return (
     <div>
       <PageHeader
         breadcrumb={[{ label: '案件一覧', to: '/projects' }, { label: p.name }]}
         title={p.name}
-        description={`${p.code} ／ ${p.client} ／ ${p.location}`}
+        description={`${code} ／ ${client} ／ ${location}`}
         actions={<><StatusBadge status={p.status} /><button className="btn-primary" onClick={() => navigate('/schedule')}>工程管理を開く</button></>}
       />
 
-      {/* 基本情報 */}
+      {/* 基本情報（API連携） */}
       <Panel className="mb-3">
         <div className="grid grid-cols-6 gap-x-6 gap-y-3 text-[13px]">
           <KV label="工事名" value={p.name} />
-          <KV label="案件番号" value={p.code} />
-          <KV label="顧客" value={p.client} />
-          <KV label="工事場所" value={p.location} />
-          <KV label="工事区分" value={p.category} />
-          <KV label="担当部署" value={p.department} />
-          <KV label="開始日" value={p.startDate} />
-          <KV label="終了予定日" value={p.dueDate} />
-          <KV label="現場責任者" value={p.manager} />
-          <KV label="予定予算" value={manYen(p.budgetPlan)} />
-          <KV label="使用予算" value={manYen(p.budgetUsed)} />
-          <KV label="更新日時" value={p.updatedAt} />
+          <KV label="案件番号" value={code} />
+          <KV label="顧客" value={client} />
+          <KV label="工事場所" value={location} />
+          <KV label="工事区分" value={dash(p.construction_type)} />
+          <KV label="担当部署" value={dash(p.department)} />
+          <KV label="開始日" value={dash(p.start_planned_at)} />
+          <KV label="終了予定日" value={dash(p.finish_planned_at)} />
+          <KV label="現場責任者" value={dash(p.manager)} />
+          <KV label="予定予算" value={p.budget_planned != null ? manYen(p.budget_planned) : '—'} />
+          <KV label="使用予算" value={p.budget_used != null ? manYen(p.budget_used) : '—'} />
+          <KV label="更新日時" value={p.updated_at ? p.updated_at.slice(0, 16).replace('T', ' ') : '—'} />
           <div className="col-span-3">
             <p className="mb-1 text-[11px] text-ink-soft">全体進捗率</p>
-            <Progress value={p.progressActual} plan={p.progressPlan} height={12} />
+            <Progress value={p.actual_progress} plan={p.planned_progress} height={12} />
           </div>
         </div>
       </Panel>
@@ -64,12 +84,12 @@ export default function ProjectDetail() {
         ))}
       </div>
 
-      {tab === '概要' && <Overview manager={p.manager} />}
+      {tab === '概要' && <Overview manager={dash(p.manager)} />}
       {tab === '作業内容' && <WorkContent />}
       {tab === '資材' && <Materials />}
       {tab === '操作履歴' && <History />}
       {(['工程', '施工写真', '図面', '現場日報', '品質', '要員', '報告書'] as Tab[]).includes(tab) && (
-        <LinkTab tab={tab} to={routeByTab[tab]!} onGo={() => navigate(routeByTab[tab]!)} projectId={p.id} />
+        <LinkTab tab={tab} to={routeByTab[tab]!} onGo={() => navigate(routeByTab[tab]!)} projectId={String(p.id)} />
       )}
     </div>
   )

@@ -16,13 +16,25 @@ import {
 import { useApp } from '../../context/AppContext'
 import { notifications } from '../../data/notifications'
 import { DemoGuide } from './DemoGuide'
+import { useAuth } from '../../auth/AuthContext'
+
+const ROLE_LABELS: Record<string, string> = {
+  ADMIN: '管理者',
+  PROJECT_MANAGER: '案件管理者',
+  FIELD_WORKER: '現場担当者',
+  QUALITY_MANAGER: '品質管理者',
+  VIEWER: '閲覧者',
+}
 
 export function AppHeader() {
   const { toggleSidebar, aiPanelOpen, toggleAiPanel, toast } = useApp()
+  const { user, logout } = useAuth()
   const navigate = useNavigate()
   const [openNotif, setOpenNotif] = useState(false)
   const [openUser, setOpenUser] = useState(false)
   const unread = notifications.filter((n) => !n.read).length
+  const displayName = user?.name ?? 'ゲスト'
+  const roleLabel = user ? (ROLE_LABELS[user.role] ?? user.role) : ''
 
   return (
     <header className="relative z-30 flex h-14 shrink-0 items-center gap-4 border-b border-line bg-white px-4">
@@ -149,21 +161,21 @@ export function AppHeader() {
             className="ml-1 flex items-center gap-2 rounded border border-line py-1 pl-1.5 pr-2 hover:bg-canvas"
           >
             <div className="flex h-7 w-7 items-center justify-center rounded-full bg-sysken-500 text-xs font-bold text-white">
-              山
+              {displayName.charAt(0)}
             </div>
             <div className="hidden leading-tight lg:block">
-              <p className="text-[13px] font-semibold text-ink">山田 太郎</p>
-              <p className="text-[11px] text-ink-soft">施工管理部</p>
+              <p className="text-[13px] font-semibold text-ink">{displayName}</p>
+              <p className="text-[11px] text-ink-soft">{roleLabel}</p>
             </div>
             <ChevronDown size={15} className="text-ink-soft" />
           </button>
           {openUser && (
             <>
               <div className="fixed inset-0 z-30" onClick={() => setOpenUser(false)} />
-              <div className="absolute right-0 top-11 z-40 w-52 rounded border border-line bg-white py-1 shadow-pop">
+              <div className="absolute right-0 top-11 z-40 w-56 rounded border border-line bg-white py-1 shadow-pop">
                 <div className="border-b border-line px-3 py-2">
-                  <p className="text-[13px] font-semibold text-ink">山田 太郎</p>
-                  <p className="text-xs text-ink-soft">施工管理部 第一課 / 工事長</p>
+                  <p className="text-[13px] font-semibold text-ink">{displayName}</p>
+                  <p className="text-xs text-ink-soft">{roleLabel}{user?.email ? ` / ${user.email}` : ''}</p>
                 </div>
                 <button className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-canvas" onClick={() => { setOpenUser(false); toast('プロフィールを表示します（デモ）') }}>
                   <User size={15} /> プロフィール
@@ -172,7 +184,7 @@ export function AppHeader() {
                   <SettingsIcon size={15} /> 設定
                 </button>
                 <div className="my-1 border-t border-line" />
-                <button className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-ink-soft hover:bg-canvas" onClick={() => { setOpenUser(false); toast('デモ環境のためログアウトはできません') }}>
+                <button className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-ng hover:bg-canvas" onClick={() => { setOpenUser(false); logout(); navigate('/login') }}>
                   <LogOut size={15} /> ログアウト
                 </button>
               </div>
