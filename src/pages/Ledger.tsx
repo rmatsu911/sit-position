@@ -5,7 +5,7 @@ import { Panel } from '../components/ui/common'
 import { StatusBadge } from '../components/ui/Badge'
 import { StepRunner } from '../components/ui/StepRunner'
 import { useApp } from '../context/AppContext'
-import { ledgerRows } from '../data/ledger'
+import { useLedger } from '../api/ledger'
 import { yen } from '../lib/format'
 
 const COLS = [
@@ -31,6 +31,7 @@ const COLS = [
 
 export default function Ledger() {
   const { toast } = useApp()
+  const { data: ledgerRows = [], isLoading, isError } = useLedger()
   const [selectedCell, setSelectedCell] = useState<string | null>(null)
   const [selectedRow, setSelectedRow] = useState<string | null>(null)
   const [sortKey, setSortKey] = useState<string>('workNo')
@@ -46,7 +47,7 @@ export default function Ledger() {
       return asc ? c : -c
     })
     return r
-  }, [sortKey, asc])
+  }, [ledgerRows, sortKey, asc])
 
   const total = {
     contract: ledgerRows.reduce((s, r) => s + r.contractAmount, 0),
@@ -84,6 +85,9 @@ export default function Ledger() {
           </>
         }
       />
+
+      {isLoading && <div className="mb-3 rounded border border-line bg-white px-4 py-8 text-center text-[13px] text-ink-soft">工事台帳を読み込んでいます…</div>}
+      {isError && <div className="mb-3 rounded border border-red-200 bg-red-50 px-4 py-6 text-center text-[13px] text-ng">工事台帳の取得に失敗しました。</div>}
 
       <Panel bodyClassName="p-0" className="overflow-hidden">
         <div className="thin-scroll overflow-auto" style={{ maxHeight: 'calc(100vh - 250px)' }}>

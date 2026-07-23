@@ -75,9 +75,25 @@
 | PATCH | `/daily-reports/{id}/status`（DRAFT/SUBMITTED/REVIEWING/RETURNED/APPROVED） | 提出/確認/差戻し/再提出/承認。REVIEWING/RETURNED/APPROVED は ADMIN/PM/QUALITY_MANAGER |
 | POST | `/daily-reports/{id}/reflect-progress?dry_run=` | **工程実績へ明示反映（自動反映しない）。`dry_run=true` は確認用プレビュー（対象工程・現在/反映後進捗・変更内容を返し、変更・履歴・監査は行わない）。確定時のみ紐付け工程の実績を更新し `task_change_history` / `audit_logs(REFLECT)` へ記録。PROJECT_MANAGER** |
 
+## 業務基盤（Ver.0.1.2）
+
+| メソッド | パス | 権限 |
+| --- | --- | --- |
+| GET | `/projects/{id}/tasks?asset_id=` | 設備に紐づく工程に限定（`task_assets`。写真アップロード連動用） |
+| GET | `/workers` , `/workers/{id}` | 要員一覧／詳細（所属会社・班・資格[有効期限]・案件/工程配置・稼働状況） |
+| GET | `/ledger` | 工事台帳一覧（projects基本＋`project_ledgers`。契約番号/原価/利益率/請求・書類状況、案件スコープ） |
+| PUT | `/ledger/{project_id}` | 台帳固有項目の更新。PROJECT_MANAGER（監査記録） |
+| GET | `/documents?project_id=` , `/documents/{id}` | 図面一覧／詳細（版履歴 `document_versions`） |
+| POST | `/documents`（multipart: `file`, `document_id?`, `project_id?`, `doc_no?`, `name?`, `doc_type?`） | 新規図面 or 新しい版の追加（**古い版は残す**）。PM/FIELD_WORKER |
+| PATCH | `/documents/{id}` | 種別/ステータス更新。PM |
+| DELETE | `/documents/{id}?reason=` | 論理削除。PM |
+| GET | `/notifications` | 通知一覧（自分宛＋全体、協力会社は割当案件外を除外） |
+| PATCH | `/notifications/{id}/read?read=` , `POST /notifications/read-all` | 既読／全既読 |
+| GET | `/dashboard/summary` | 集計（全案件/進行中/遅延/本日作業/今日完了/写真未確認/品質確認待ち/未提出日報/本日要員、案件スコープ） |
+
 ## 監査ログ
 
-写真登録/編集/削除・品質状態変更/承認/差戻し・日報作成/提出/差戻し/承認・工程実績反映を、`audit_logs`（user/action/entity_type/entity_id/before/after）へ記録。
+写真登録/編集/削除・品質状態変更/承認/差戻し・日報作成/提出/差戻し/承認・工程実績反映・台帳更新・図面登録/更新/削除を、`audit_logs`（user/action/entity_type/entity_id/before/after）へ記録。
 
 ## エラー
 

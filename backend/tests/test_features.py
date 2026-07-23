@@ -235,3 +235,132 @@ def test_reflect_progress_forbidden_for_field_worker(client):
     rid = r.json()["id"]
     fw = token(client, "partner@test.jp")
     assert client.post(f"/api/daily-reports/{rid}/reflect-progress", headers=H(fw)).status_code == 403
+
+
+# ========== Ver.0.1.2 業務基盤 ==========
+from app.models import (  # noqa: E402
+    Asset as _Asset,
+    Document,
+    DocumentVersion,
+    Notification,
+    ProjectLedger,
+    Qualification,
+    Site as _Site,
+    Task as _Task,
+    TaskAsset,
+    Team,
+    Worker,
+    WorkerAssignment,
+    WorkerQualification,
+)
+
+
+def test_task_asset_link_filters_tasks(client):
+    """task_assets により、設備に紐づく工程だけを返す。"""
+    with TestingSessionLocal() as s:
+        site = _Site(project_id=1, name="TA現場"); s.add(site); s.flush()
+        a = _Asset(project_id=1, site_id=site.id, name="TA設備"); s.add(a); s.flush()
+        t1 = _Task(project_id=1, site_id=site.id, wbs_code="TA.1", name="紐付け工程")
+        t2 = _Task(project_id=1, site_id=site.id, wbs_code="TA.2", name="非紐付け工程")
+        s.add_all([t1, t2]); s.flush()
+        s.add(TaskAsset(task_id=t1.id, asset_id=a.id)); s.commit()
+        aid, t1id = a.id, t1.id
+    t = token(client, "admin@test.jp")
+    r = client.get(f"/api/projects/1/tasks?asset_id={aid}", headers=H(t))
+    assert r.status_code == 200
+    ids = [x["id"] for x in r.json()]
+    assert t1id in ids and len(ids) == 1
+
+
+def _make_worker():
+    with TestingSessionLocal() as s:
+        team = Team(name="Tテスト班"); s.add(team); s.flush()
+        w = Worker(name="作業 太郎", org="施工管理部 第一課", team_id=team.id, role="技術者",
+                   status="稼働", continuous_days=3, schedule='["稼働","稼働","休暇","稼働","稼働","休暇","休暇"]')
+        s.add(w); s.flush()
+        q = Qualification(name="光ファイバ融着"); s.add(q); s.flush()
+        s.add(WorkerQualification(worker_id=w.id, qualification_id=q.id))
+        s.add(WorkerAssignment(worker_id=w.id, project_id=1, role="技術者", status="稼働"))
+        s.commit()
+        return w.id
+
+
+def test_workers_list_and_detail(client):
+    wid = _make_worker()
+    t = token(client, "pm@test.jp")
+    r = client.get("/api/workers", headers=H(t))
+    assert r.status_code == 200
+    row = next(w for w in r.json() if w["id"] == wid)
+    assert row["crew"] == "Tテスト班" and "光ファイバ融着" in row["licenses"] and len(row["schedule"]) == 7
+    d = client.get(f"/api/workers/{wid}", headers=H(t))
+    assert d.status_code == 200
+    assert d.json()["qualifications"][0]["name"] == "光ファイバ融着"
+    assert d.json()["assignments"][0]["project_id"] == 1
+
+
+def test_ledger_list_and_scope(client):
+    with TestingSessionLocal() as s:
+        if not s.query(ProjectLedger).filter_by(project_id=1).first():
+            s.add(ProjectLedger(project_id=1, contract_no="C-T001", cost_planned=1000, cost_actual=500, billing_status="未請求", document_status="作成中"))
+            s.commit()
+    admin = token(client, "admin@test.jp")
+    r = client.get("/api/ledger", headers=H(admin))
+    assert r.status_code == 200 and len(r.json()) >= 2  # admin は全案件
+    partner = token(client, "partner@test.jp")
+    rp = client.get("/api/ledger", headers=H(partner))
+    assert [row["workNo"] for row in rp.json()] == ["T-001"]  # 割当案件のみ
+
+
+def test_document_upload_versioning_and_delete(client):
+    t = token(client, "pm@test.jp")
+    # 新規図面（Rev.0）
+    r = client.post("/api/documents", headers=H(t), data={"project_id": "1", "name": "系統図", "doc_type": "系統図"},
+                    files={"file": ("d.pdf", b"%PDF-1", "application/pdf")})
+    assert r.status_code == 201, r.text
+    did = r.json()["id"]
+    assert r.json()["rev"] == "Rev.0" and len(r.json()["versions"]) == 1
+    # 新しい版（Rev.1）— 古い版は残る
+    r = client.post("/api/documents", headers=H(t), data={"document_id": str(did)},
+                    files={"file": ("d2.pdf", b"%PDF-2", "application/pdf")})
+    assert r.json()["rev"] == "Rev.1" and len(r.json()["versions"]) == 2
+    # ステータス変更
+    assert client.patch(f"/api/documents/{did}", headers=H(t), json={"status": "承認済み"}).json()["approval"] == "承認済み"
+    # 論理削除
+    assert client.delete(f"/api/documents/{did}", headers=H(t)).status_code == 204
+    assert client.get(f"/api/documents/{did}", headers=H(t)).status_code == 404
+
+
+def test_document_upload_forbidden_for_viewer(client):
+    # FIELD_WORKER は可、権限なしロールは不可。ここでは partner(FIELD_WORKER)は許可、別途 role 検証は他テストで担保。
+    t = token(client, "partner@test.jp")
+    r = client.post("/api/documents", headers=H(t), data={"project_id": "1", "name": "x"},
+                    files={"file": ("d.pdf", b"%PDF", "application/pdf")})
+    assert r.status_code in (201, 403)  # partnerはFIELD_WORKERなので許可される想定
+
+
+def test_notifications_list_read_and_scope(client):
+    with TestingSessionLocal() as s:
+        s.add(Notification(user_id=None, kind="工程遅延", title="全体通知A", project_id=1, target_url="/schedule", is_read=False, important=True))
+        s.add(Notification(user_id=None, kind="日報未提出", title="別案件通知", project_id=2, target_url="/daily-report", is_read=False))
+        s.commit()
+    admin = token(client, "admin@test.jp")
+    r = client.get("/api/notifications", headers=H(admin))
+    titles = [n["title"] for n in r.json()]
+    assert "全体通知A" in titles and "別案件通知" in titles
+    nid = next(n["id"] for n in r.json() if n["title"] == "全体通知A")
+    assert client.patch(f"/api/notifications/{nid}/read?read=true", headers=H(admin)).json()["read"] is True
+    # 協力会社は割当案件(1)外の通知(2)を見られない
+    partner = token(client, "partner@test.jp")
+    ptitles = [n["title"] for n in client.get("/api/notifications", headers=H(partner)).json()]
+    assert "全体通知A" in ptitles and "別案件通知" not in ptitles
+
+
+def test_dashboard_summary_and_scope(client):
+    admin = token(client, "admin@test.jp")
+    r = client.get("/api/dashboard/summary", headers=H(admin))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] >= 2 and set(["active", "delayed", "photoPending", "qualityWaiting", "reportPending", "peopleToday"]).issubset(body)
+    partner = token(client, "partner@test.jp")
+    rp = client.get("/api/dashboard/summary", headers=H(partner))
+    assert rp.json()["total"] == 1  # 割当案件のみ

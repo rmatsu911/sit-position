@@ -1,6 +1,22 @@
 from fastapi import APIRouter
 
-from app.api import ai, assets, auth, daily_reports, masters, photos, projects, quality, sites, tasks
+from app.api import (
+    ai,
+    assets,
+    auth,
+    daily_reports,
+    dashboard,
+    documents,
+    ledger,
+    masters,
+    notifications,
+    personnel,
+    photos,
+    projects,
+    quality,
+    sites,
+    tasks,
+)
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -13,3 +29,8 @@ api_router.include_router(daily_reports.router, prefix="/daily-reports", tags=["
 api_router.include_router(quality.router, prefix="/quality-checks", tags=["quality"])
 api_router.include_router(photos.router, prefix="/photos", tags=["photos"])
 api_router.include_router(ai.router, prefix="/ai", tags=["ai"])
+api_router.include_router(personnel.router, prefix="/workers", tags=["personnel"])
+api_router.include_router(ledger.router, prefix="/ledger", tags=["ledger"])
+api_router.include_router(documents.router, prefix="/documents", tags=["documents"])
+api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
+api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])

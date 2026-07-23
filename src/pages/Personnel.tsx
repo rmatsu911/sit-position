@@ -4,9 +4,10 @@ import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
 import { StatusBadge, Badge } from '../components/ui/Badge'
 import { useApp } from '../context/AppContext'
-import { workers, scheduleDates } from '../data/personnel'
-import type { WorkStatus } from '../types'
+import { useWorkers } from '../api/personnel'
+import type { Worker, WorkStatus } from '../types'
 
+const scheduleDates = ['7/21(月)', '7/22(火)', '7/23(水)', '7/24(木)', '7/25(金)', '7/26(土)', '7/27(日)']
 const allLicenses = ['高所作業車', '酸素欠乏危険作業', '職長・安全衛生責任者', '光ファイバ融着', '電気工事士', '玉掛け', '小型移動式クレーン', '低圧電気取扱', 'フルハーネス特別教育', '交通誘導']
 
 const cellColor: Record<WorkStatus, string> = {
@@ -18,6 +19,7 @@ const cellColor: Record<WorkStatus, string> = {
 
 export default function Personnel() {
   const { toast } = useApp()
+  const { data: workers = [], isLoading, isError } = useWorkers()
   const [view, setView] = useState<'week' | 'assign'>('week')
   const [keyword, setKeyword] = useState('')
   const [license, setLicense] = useState('all')
@@ -29,7 +31,7 @@ export default function Personnel() {
     if (license !== 'all' && !w.licenses.includes(license)) return false
     if (onlyIdle && w.status !== '待機') return false
     return true
-  }), [keyword, license, onlyIdle])
+  }), [workers, keyword, license, onlyIdle])
 
   const warnings = workers.filter((w) => w.continuousDays >= 7 || w.note.includes('重複'))
 
@@ -82,6 +84,9 @@ export default function Personnel() {
                 </tr>
               </thead>
               <tbody>
+                {isLoading && <tr><td colSpan={16} className="px-3 py-8 text-center text-ink-soft">要員を読み込んでいます…</td></tr>}
+                {isError && <tr><td colSpan={16} className="px-3 py-8 text-center text-ng">要員の取得に失敗しました。</td></tr>}
+                {!isLoading && !isError && filtered.length === 0 && <tr><td colSpan={16} className="px-3 py-8 text-center text-ink-soft">該当する要員がいません。</td></tr>}
                 {filtered.map((w) => (
                   <tr key={w.id} className="hover:bg-canvas">
                     <td className="px-3 py-1.5 font-medium text-ink">{w.name}</td>
@@ -101,13 +106,13 @@ export default function Personnel() {
           </div>
         </Panel>
       ) : (
-        <AssignBoard dragId={dragId} setDragId={setDragId} onAssign={(name, proj) => toast(`${name}を「${proj}」に配置しました（デモ）`, 'ok')} onWarn={(msg) => toast(msg, 'warn')} />
+        <AssignBoard workers={workers} dragId={dragId} setDragId={setDragId} onAssign={(name, proj) => toast(`${name}を「${proj}」に配置しました（デモ）`, 'ok')} onWarn={(msg) => toast(msg, 'warn')} />
       )}
     </div>
   )
 }
 
-function AssignBoard({ dragId, setDragId, onAssign, onWarn }: { dragId: string | null; setDragId: (v: string | null) => void; onAssign: (name: string, proj: string) => void; onWarn: (m: string) => void }) {
+function AssignBoard({ workers, dragId, setDragId, onAssign, onWarn }: { workers: Worker[]; dragId: string | null; setDragId: (v: string | null) => void; onAssign: (name: string, proj: string) => void; onWarn: (m: string) => void }) {
   const projectsList = ['熊本中央局 光設備更改工事', '菊陽町 通信管路敷設工事', '合志市 基地局設備更新工事']
   const idle = workers.filter((w) => w.status === '待機')
   return (

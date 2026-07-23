@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import write_audit
 from app.core.db import get_db
 from app.core.deps import ensure_project_access, get_current_user, require_roles
-from app.models import ProcessType, Task, TaskChangeHistory, User, WorkType
+from app.models import ProcessType, Task, TaskAsset, TaskChangeHistory, User, WorkType
 from app.schemas import TaskCreate, TaskOut, TaskUpdate
 
 router = APIRouter()
@@ -43,6 +43,7 @@ def build_out(db: Session, t: Task) -> TaskOut:
 def list_tasks(
     project_id: int,
     site_id: int | None = None,
+    asset_id: int | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[TaskOut]:
@@ -50,6 +51,10 @@ def list_tasks(
     stmt = select(Task).where(Task.project_id == project_id, Task.deleted_at.is_(None))
     if site_id is not None:
         stmt = stmt.where(Task.site_id == site_id)
+    if asset_id is not None:
+        # 選択した設備に紐づく工程（task_assets）に限定
+        linked = select(TaskAsset.task_id).where(TaskAsset.asset_id == asset_id)
+        stmt = stmt.where(Task.id.in_(linked))
     return [build_out(db, t) for t in db.execute(stmt.order_by(Task.wbs_code)).scalars().all()]
 
 

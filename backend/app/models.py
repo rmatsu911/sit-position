@@ -426,6 +426,120 @@ class DailyReportTask(Base, TimestampMixin):
     task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id"))
 
 
+# ===== Task ↔ Asset（1工程で複数設備）=====
+class TaskAsset(Base, TimestampMixin):
+    __tablename__ = "task_assets"
+    __table_args__ = (UniqueConstraint("task_id", "asset_id", name="uq_task_asset"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id"), index=True)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id"), index=True)
+
+
+# ===== 要員・資格 =====
+class Team(Base, TimestampMixin):
+    __tablename__ = "teams"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    code: Mapped[str | None] = mapped_column(String(32))
+    department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"))
+
+
+class Worker(Base, TimestampMixin, SoftDeleteMixin):
+    __tablename__ = "workers"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str] = mapped_column(String(120))
+    org: Mapped[str | None] = mapped_column(String(160))  # 表示用の所属（部署/協力会社名）
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"))
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"))
+    role: Mapped[str | None] = mapped_column(String(64))  # 工事長 / 現場責任者 / 技術者 / 作業員
+    status: Mapped[str] = mapped_column(String(16), default="待機")  # 稼働 / 待機 / 休暇 / 移動中
+    continuous_days: Mapped[int] = mapped_column(Integer, default=0)
+    vacation: Mapped[str | None] = mapped_column(String(64))
+    note: Mapped[str | None] = mapped_column(Text)
+    schedule: Mapped[str | None] = mapped_column(Text)  # 7日分の稼働状況（JSON配列）
+
+
+class Qualification(Base, TimestampMixin):
+    __tablename__ = "qualifications"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str | None] = mapped_column(String(32))
+    name: Mapped[str] = mapped_column(String(120))
+
+
+class WorkerQualification(Base, TimestampMixin):
+    __tablename__ = "worker_qualifications"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    worker_id: Mapped[int] = mapped_column(ForeignKey("workers.id"), index=True)
+    qualification_id: Mapped[int] = mapped_column(ForeignKey("qualifications.id"))
+    acquired_at: Mapped[date | None] = mapped_column(Date)
+    expires_at: Mapped[date | None] = mapped_column(Date)
+    certificate_no: Mapped[str | None] = mapped_column(String(64))
+
+
+class WorkerAssignment(Base, TimestampMixin):
+    __tablename__ = "worker_assignments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    worker_id: Mapped[int] = mapped_column(ForeignKey("workers.id"), index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id"))
+    assigned_from: Mapped[date | None] = mapped_column(Date)
+    assigned_to: Mapped[date | None] = mapped_column(Date)
+    role: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str | None] = mapped_column(String(16))
+
+
+# ===== 工事台帳（projectsを基本データとし、台帳固有項目のみ保持）=====
+class ProjectLedger(Base, TimestampMixin):
+    __tablename__ = "project_ledgers"
+    __table_args__ = (UniqueConstraint("project_id", name="uq_project_ledger"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    contract_no: Mapped[str | None] = mapped_column(String(64))
+    cost_planned: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    cost_actual: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    billing_status: Mapped[str | None] = mapped_column(String(32))  # 未請求 / 請求済 / 入金済 / 一部入金
+    document_status: Mapped[str | None] = mapped_column(String(32))  # 未着手 / 作成中 / 確認中 / 完了
+
+
+# ===== 図面・書類（版管理・原版は上書きしない）=====
+class Document(Base, TimestampMixin, SoftDeleteMixin):
+    __tablename__ = "documents"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), index=True)
+    doc_no: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(200))
+    doc_type: Mapped[str | None] = mapped_column(String(64))  # 系統図 / 平面図 / 接続図 ...
+    status: Mapped[str] = mapped_column(String(32), default="未提出")  # 承認済み / 確認中 / 差し戻し / 未提出
+    current_rev: Mapped[str | None] = mapped_column(String(16))
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+
+class DocumentVersion(Base, TimestampMixin):
+    __tablename__ = "document_versions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), index=True)
+    rev: Mapped[str] = mapped_column(String(16))
+    file_path: Mapped[str | None] = mapped_column(String(500))
+    original_filename: Mapped[str | None] = mapped_column(String(255))
+    note: Mapped[str | None] = mapped_column(Text)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+
+# ===== 通知 =====
+class Notification(Base, TimestampMixin):
+    __tablename__ = "notifications"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)  # None=全体通知
+    kind: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str | None] = mapped_column(Text)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"))
+    target_url: Mapped[str | None] = mapped_column(String(200))
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False)
+    important: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 # ===== 監査ログ =====
 class AuditLog(Base):
     __tablename__ = "audit_logs"

@@ -96,14 +96,17 @@ export interface TaskOption {
   status: string
 }
 
-// 工程選択用（Site→Task 連動、日報の実施工程紐付けにも利用）
-export function useTaskOptions(projectId: number | undefined, siteId?: number) {
+// 工程選択用（Site→Task 連動＋Asset連動、日報の実施工程紐付けにも利用）
+export function useTaskOptions(projectId: number | undefined, siteId?: number, assetId?: number) {
   return useQuery({
-    queryKey: ['task-options', projectId, siteId ?? null],
+    queryKey: ['task-options', projectId, siteId ?? null, assetId ?? null],
     enabled: !!projectId,
     queryFn: async () => {
-      const qs = siteId ? `?site_id=${siteId}` : ''
-      const rows = await api<ApiTask[]>(`/projects/${projectId}/tasks${qs}`)
+      const qs = new URLSearchParams()
+      if (siteId) qs.set('site_id', String(siteId))
+      if (assetId) qs.set('asset_id', String(assetId))
+      const suffix = qs.toString() ? `?${qs.toString()}` : ''
+      const rows = await api<ApiTask[]>(`/projects/${projectId}/tasks${suffix}`)
       return rows
         .filter((t) => (t.wbs_code ?? '').includes('.')) // 子工程のみ（実作業単位）
         .map<TaskOption>((t) => ({

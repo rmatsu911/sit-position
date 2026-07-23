@@ -361,3 +361,133 @@ class PhotoAiOut(BaseModel):
     detections: list[DetectionOut] = []
     recognition: dict = {}
     source: str  # "ai_predictions" | "none"
+
+
+# ===== 要員・資格（Ver.0.1.2）=====
+class WorkerOut(BaseModel):
+    id: int
+    name: str
+    org: str | None = None
+    crew: str | None = None
+    role: str | None = None
+    licenses: list[str] = []
+    assignedTo: str | None = None
+    schedule: list[str] = []
+    status: str
+    continuousDays: int = 0
+    vacation: str | None = None
+    note: str | None = None
+
+
+class WorkerQualificationOut(BaseModel):
+    name: str
+    acquired_at: date | None = None
+    expires_at: date | None = None
+    certificate_no: str | None = None
+
+
+class WorkerAssignmentOut(BaseModel):
+    project_id: int
+    project: str | None = None
+    task_id: int | None = None
+    task: str | None = None
+    assigned_from: date | None = None
+    assigned_to: date | None = None
+    role: str | None = None
+    status: str | None = None
+
+
+class WorkerDetailOut(WorkerOut):
+    company: str | None = None
+    team: str | None = None
+    qualifications: list[WorkerQualificationOut] = []
+    assignments: list[WorkerAssignmentOut] = []
+
+
+# ===== 工事台帳（Ver.0.1.2）=====
+class LedgerRowOut(BaseModel):
+    id: int
+    workNo: str
+    contractNo: str | None = None
+    name: str
+    client: str | None = None
+    category: str | None = None
+    area: str | None = None
+    contractAmount: float | None = None
+    costPlan: float | None = None
+    costActual: float | None = None
+    profitRate: float | None = None
+    startDate: date | None = None
+    dueDate: date | None = None
+    finishDate: date | None = None
+    manager: str | None = None
+    progress: int = 0
+    billing: str | None = None
+    documents: str | None = None
+    status: str
+
+
+class LedgerUpdate(BaseModel):
+    contract_no: str | None = None
+    cost_planned: float | None = None
+    cost_actual: float | None = None
+    billing_status: str | None = None
+    document_status: str | None = None
+
+
+# ===== 図面・書類（Ver.0.1.2）=====
+class DocumentVersionOut(BaseModel):
+    id: int
+    rev: str
+    original_filename: str | None = None
+    note: str | None = None
+    updated_by: str | None = None
+    updated_at: datetime | None = None
+
+
+class DocumentOut(BaseModel):
+    id: int
+    project_id: int | None = None
+    no: str
+    name: str
+    type: str | None = None
+    rev: str | None = None
+    updatedAt: datetime | None = None
+    updatedBy: str | None = None
+    approval: str
+
+
+class DocumentDetailOut(DocumentOut):
+    versions: list[DocumentVersionOut] = []
+
+
+class DocumentUpdate(BaseModel):
+    name: str | None = None
+    doc_type: str | None = None
+    status: str | None = None
+
+
+# ===== 通知（Ver.0.1.2）=====
+class NotificationOut(BaseModel):
+    id: int
+    kind: str
+    title: str
+    body: str | None = None
+    project: str | None = None
+    at: datetime | None = None
+    read: bool = False
+    important: bool = False
+    link: str | None = None
+
+
+# ===== ダッシュボード集計（Ver.0.1.2）=====
+class DashboardSummaryOut(BaseModel):
+    total: int = 0
+    active: int = 0
+    delayed: int = 0
+    workingToday: int = 0
+    finishToday: int = 0
+    photoPending: int = 0
+    qualityWaiting: int = 0
+    reportPending: int = 0
+    peopleToday: int = 0

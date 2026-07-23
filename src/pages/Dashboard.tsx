@@ -12,16 +12,19 @@ import { StatusBadge, Badge } from '../components/ui/Badge'
 import { Progress } from '../components/ui/Progress'
 import { projects, dashboardKpi, progressChart, todayEnv } from '../data/projects'
 import { notifications } from '../data/notifications'
+import { useDashboardSummary } from '../api/dashboard'
+import type { DashboardSummary } from '../api/dashboard'
 
-const kpis = [
-  { label: '全案件数', value: dashboardKpi.total, unit: '件', icon: FolderKanban, tone: 'info', to: '/projects' },
-  { label: '進行中', value: dashboardKpi.active, unit: '件', icon: Hammer, tone: 'info', to: '/projects?status=施工中' },
-  { label: '本日作業中', value: dashboardKpi.workingToday, unit: '件', icon: Clock, tone: 'info', to: '/projects' },
-  { label: '今日完了予定', value: dashboardKpi.finishToday, unit: '件', icon: CalendarCheck, tone: 'ok', to: '/projects' },
-  { label: '遅延案件', value: dashboardKpi.delayed, unit: '件', icon: AlertTriangle, tone: 'ng', to: '/projects?status=遅延' },
-  { label: '写真未提出', value: dashboardKpi.photoPending, unit: '枚', icon: Camera, tone: 'warn', to: '/photos' },
-  { label: '品質確認待ち', value: dashboardKpi.qualityWaiting, unit: '件', icon: ShieldCheck, tone: 'warn', to: '/quality' },
-  { label: '本日の要員', value: dashboardKpi.peopleToday, unit: '名', icon: Users, tone: 'info', to: '/personnel' },
+// KPIの表示メタ（値は集計APIから取得。取得前は固定値をフォールバック表示）
+const kpiMeta = [
+  { key: 'total', label: '全案件数', unit: '件', icon: FolderKanban, tone: 'info', to: '/projects' },
+  { key: 'active', label: '進行中', unit: '件', icon: Hammer, tone: 'info', to: '/projects?status=施工中' },
+  { key: 'workingToday', label: '本日作業中', unit: '件', icon: Clock, tone: 'info', to: '/projects' },
+  { key: 'finishToday', label: '今日完了予定', unit: '件', icon: CalendarCheck, tone: 'ok', to: '/projects' },
+  { key: 'delayed', label: '遅延案件', unit: '件', icon: AlertTriangle, tone: 'ng', to: '/projects?status=遅延' },
+  { key: 'photoPending', label: '写真未提出', unit: '枚', icon: Camera, tone: 'warn', to: '/photos' },
+  { key: 'qualityWaiting', label: '品質確認待ち', unit: '件', icon: ShieldCheck, tone: 'warn', to: '/quality' },
+  { key: 'peopleToday', label: '本日の要員', unit: '名', icon: Users, tone: 'info', to: '/personnel' },
 ] as const
 
 const toneText: Record<string, string> = { info: 'text-sysken-600', ok: 'text-ok', warn: 'text-warn', ng: 'text-ng' }
@@ -38,6 +41,9 @@ const alertCases = [
 
 export default function Dashboard() {
   const navigate = useNavigate()
+  const { data: summary } = useDashboardSummary()
+  const src: DashboardSummary = summary ?? (dashboardKpi as unknown as DashboardSummary)
+  const kpis = kpiMeta.map((m) => ({ ...m, value: src[m.key as keyof DashboardSummary] ?? 0 }))
   const recent = [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 5)
 
   return (

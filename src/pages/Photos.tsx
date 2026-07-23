@@ -48,7 +48,8 @@ export default function Photos() {
   const { data: projectOpts = [] } = useProjects()
   const { data: siteOpts = [] } = useSites(upProject)
   const { data: assetOpts = [] } = useAssets(upProject, upSite || undefined)
-  const { data: taskOpts = [] } = useTaskOptions(upProject, upSite || undefined)
+  // 設備を選ぶとその設備に紐づく工程を優先表示（task_assets）
+  const { data: taskOpts = [] } = useTaskOptions(upProject, upSite || undefined, upAsset || undefined)
   const [classTargetId, setClassTargetId] = useState<string>('')
   const [reflected, setReflected] = useState<Set<string>>(new Set())
 
@@ -279,7 +280,7 @@ export default function Photos() {
             <div>
               <label className="label">設備（Asset）</label>
               <select className="field" value={upAsset} disabled={uploadMut.isPending || !upSite}
-                onChange={(e) => setUpAsset(e.target.value ? Number(e.target.value) : '')}>
+                onChange={(e) => { setUpAsset(e.target.value ? Number(e.target.value) : ''); setUpTask('') }}>
                 <option value="">{upSite ? '選択してください' : '先に現場を選択'}</option>
                 {assetOpts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>

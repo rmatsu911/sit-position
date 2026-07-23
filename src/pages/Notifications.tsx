@@ -9,7 +9,7 @@ import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
 import { Badge } from '../components/ui/Badge'
 import { useApp } from '../context/AppContext'
-import { notifications as seed } from '../data/notifications'
+import { useNotifications, useMarkNotificationRead, useMarkAllNotificationsRead } from '../api/notifications'
 import type { NotifyKind } from '../types'
 
 const kindIcon: Record<NotifyKind, LucideIcon> = {
@@ -23,12 +23,14 @@ const kinds = Object.keys(kindIcon) as NotifyKind[]
 export default function Notifications() {
   const { toast } = useApp()
   const navigate = useNavigate()
-  const [items, setItems] = useState(() => seed.map((n) => ({ ...n })))
+  const { data: items = [], isLoading, isError } = useNotifications()
+  const readMut = useMarkNotificationRead()
+  const markAllMut = useMarkAllNotificationsRead()
   const [kindFilter, setKindFilter] = useState<string>('all')
   const [projectFilter, setProjectFilter] = useState<string>('all')
   const [onlyUnread, setOnlyUnread] = useState(false)
 
-  const projectsInNotif = useMemo(() => Array.from(new Set(seed.map((n) => n.project))).filter((p) => p !== '—'), [])
+  const projectsInNotif = useMemo(() => Array.from(new Set(items.map((n) => n.project))).filter((p) => p !== '—'), [items])
 
   const filtered = useMemo(() => items.filter((n) => {
     if (kindFilter !== 'all' && n.kind !== kindFilter) return false
@@ -49,11 +51,10 @@ export default function Notifications() {
   }, [filtered])
 
   function read(id: string) {
-    setItems((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)))
+    readMut.mutate({ id, read: true })
   }
   function markAll() {
-    setItems((prev) => prev.map((n) => ({ ...n, read: true })))
-    toast('すべて既読にしました', 'ok')
+    markAllMut.mutate(undefined, { onSuccess: () => toast('すべて既読にしました', 'ok') })
   }
   const unread = items.filter((n) => !n.read).length
 
@@ -85,6 +86,8 @@ export default function Notifications() {
 
         {/* 右：タイムライン */}
         <div className="min-w-0 flex-1 space-y-4">
+          {isLoading && <Panel><p className="py-8 text-center text-sm text-ink-soft">通知を読み込んでいます…</p></Panel>}
+          {isError && <Panel><p className="py-8 text-center text-sm text-ng">通知の取得に失敗しました。</p></Panel>}
           {groups.map(([date, list]) => (
             <div key={date}>
               <div className="mb-2 flex items-center gap-2">

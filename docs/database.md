@@ -21,8 +21,14 @@ PostgreSQL 16 / SQLAlchemy 2.0 / Alembic。全業務テーブルは論理削除�
 | 品質 | `quality_rules` `quality_checks`（Ver.0.1.1 で `inspect_item` `process` `judge` `due_date` `worker_id` 追加） |
 | 日報 | `daily_reports`（Ver.0.1.1 で `place` `crew` `plan_workers` `actual_workers` `process` `materials` `tools` `vehicles` `hazard` `safety_check` `quality_check` `note` `checker_id` `approver_id` 追加） `daily_report_tasks` `daily_report_photos`(Ver.0.1.1新設) |
 | 監査 | `audit_logs` |
+| 要員（Ver.0.1.2） | `workers` `teams` `qualifications` `worker_qualifications` `worker_assignments` |
+| 工程⇔設備（Ver.0.1.2） | `task_assets`（1工程=複数設備の中間テーブル） |
+| 台帳（Ver.0.1.2） | `project_ledgers`（projectsを基本データとし、契約番号/原価/請求・書類状況のみ保持） |
+| 図面・書類（Ver.0.1.2） | `documents` `document_versions`（版は上書きせず追加） |
+| 通知（Ver.0.1.2） | `notifications`（user_id=None は全体通知、target_url でクリック遷移） |
 
 Ver.0.1.1 migration: `93d342db7f58_ver0_1_1_photos_quality_daily_fields`（既存データ有りのため NOT NULL 列は server_default を付与して追加）。
+Ver.0.1.2 migration: `062aef7de195_ver0_1_2_task_assets_workers_docs_...`（新テーブル10・既存データ非破壊）→ 計40テーブル。
 
 ## 重要な設計判断
 
@@ -35,12 +41,10 @@ Ver.0.1.1 migration: `93d342db7f58_ver0_1_1_photos_quality_daily_fields`（既�
 
 ## Ver.0.2 以降で追加予定（設計はここに定義）
 
-- 要員：`workers` `teams` `qualifications` `worker_qualifications` `worker_assignments`（資格に取得日・有効期限・証明書）
 - 資材：`materials` `project_materials`
 - 試験記録：`test_records`
-- 図面・書類：`documents` `document_versions`（版を上書き消去しない）
-- 通知：`notifications`
 - 工期予測：`weather_records` ほか
+- （実装済み Ver.0.1.2：要員 `workers`/`teams`/`qualifications`/`worker_qualifications`/`worker_assignments`、`task_assets`、`project_ledgers`、`documents`/`document_versions`、`notifications`）
 
 ## マイグレーション
 

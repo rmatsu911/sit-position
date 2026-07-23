@@ -30,17 +30,27 @@ from app.models import (
     DailyReportPhoto,
     DailyReportTask,
     Department,
+    Document,
+    DocumentVersion,
+    Notification,
     PhotoType,
     Photo,
     ProcessType,
     Project,
+    ProjectLedger,
     ProjectMember,
+    Qualification,
     QualityCheck,
     QualityRule,
     QualityRuleType,
     Site,
     Task,
+    TaskAsset,
+    Team,
     User,
+    Worker,
+    WorkerAssignment,
+    WorkerQualification,
     WorkType,
 )
 
@@ -344,9 +354,105 @@ def run(reset_first: bool = False) -> None:
                           approver_id=users["田中 一郎"].id, status="APPROVED",
                           work_description="通信管路敷設、ハンドホール据付。"))
 
+        # ===== Ver.0.1.2 業務基盤 =====
+        by_name = {p.name: p for p in projects.values()}
+
+        # Task↔Asset（1工程で複数設備・写真アップロード連動用）
+        child_wbs = [w for w in wbs_map if "." in w]
+        for i, a in enumerate(assets_map.values()):
+            for w in child_wbs[i * 2: i * 2 + 3]:
+                s.add(TaskAsset(task_id=wbs_map[w].id, asset_id=a.id))
+
+        # 会社・班・資格
+        comp_self = Company(name="株式会社SYSKEN 施工管理部", is_partner=False)
+        comp_kt = Company(name="協力会社 九州テクノ", is_partner=True)
+        comp_hg = Company(name="協力会社 肥後設備", is_partner=True)
+        s.add_all([comp_self, comp_kt, comp_hg]); s.flush()
+        comp_map = {"施工管理部": comp_self, "九州テクノ": comp_kt, "肥後設備": comp_hg}
+        teams = {n: Team(name=n) for n in ["第一班", "第二班", "第三班", "応援"]}
+        s.add_all(list(teams.values())); s.flush()
+
+        WORKERS = [
+            ("山田 太郎", "施工管理部 第一課", "第一班", "工事長", ["職長・安全衛生責任者", "光ファイバ融着", "普通自動車免許"], "熊本中央局 光設備更改工事", ["稼働", "稼働", "稼働", "稼働", "稼働", "休暇", "休暇"], "稼働", 5, "—", "現場責任者"),
+            ("田中 一郎", "施工管理部 第一課", "第一班", "現場責任者", ["高所作業車", "玉掛け", "小型移動式クレーン", "普通自動車免許"], "菊陽町 通信管路敷設工事", ["稼働", "稼働", "稼働", "稼働", "稼働", "稼働", "休暇"], "稼働", 6, "—", "連続勤務注意"),
+            ("高橋 誠", "施工管理部 第二課", "第二班", "技術者", ["光ファイバ融着", "低圧電気取扱", "フルハーネス特別教育"], "熊本中央局 光設備更改工事", ["稼働", "稼働", "稼働", "稼働", "稼働", "待機", "休暇"], "稼働", 5, "—", "融着・測定担当"),
+            ("鈴木 健", "施工管理部 第三課", "第三班", "技術者", ["電気工事士", "フルハーネス特別教育", "普通自動車免許"], "合志市 基地局設備更新工事", ["稼働", "稼働", "移動中", "稼働", "稼働", "休暇", "休暇"], "移動中", 3, "—", "2現場を兼務"),
+            ("佐藤 花子", "施工管理部 第二課", "第二班", "現場責任者", ["職長・安全衛生責任者", "光ファイバ融着", "普通自動車免許"], "八代エリア FTTH増設工事", ["稼働", "稼働", "稼働", "稼働", "稼働", "休暇", "休暇"], "稼働", 5, "—", ""),
+            ("伊藤 直樹", "施工管理部 第一課", "第一班", "技術者", ["高所作業車", "玉掛け", "低圧電気取扱"], "熊本市東区 光ケーブル切替工事", ["稼働", "稼働", "稼働", "稼働", "稼働", "待機", "休暇"], "稼働", 4, "—", "切替作業担当"),
+            ("渡辺 修", "施工管理部 第三課", "第三班", "現場責任者", ["職長・安全衛生責任者", "酸素欠乏危険作業", "普通自動車免許"], "天草地区 通信設備復旧工事", ["稼働", "稼働", "稼働", "稼働", "稼働", "稼働", "待機"], "稼働", 7, "要調整", "連続7日 過剰勤務警告"),
+            ("中村 亮", "施工管理部 第二課", "第二班", "技術者", ["高所作業車", "フルハーネス特別教育", "普通自動車免許"], "待機", ["待機", "待機", "稼働", "稼働", "稼働", "休暇", "休暇"], "待機", 0, "—", "配置可能"),
+            ("小林 大輔", "協力会社 九州テクノ", "応援", "作業員", ["光ファイバ融着", "玉掛け"], "待機", ["待機", "稼働", "稼働", "稼働", "稼働", "休暇", "休暇"], "待機", 0, "—", "融着応援可"),
+            ("加藤 隆", "協力会社 肥後設備", "応援", "作業員", ["高所作業車", "交通誘導"], "菊陽町 通信管路敷設工事", ["稼働", "稼働", "稼働", "待機", "稼働", "休暇", "休暇"], "稼働", 3, "—", ""),
+            ("吉田 昇", "施工管理部 第一課", "第一班", "作業員", ["玉掛け", "普通自動車免許"], "熊本中央局 光設備更改工事", ["稼働", "稼働", "稼働", "稼働", "稼働", "休暇", "休暇"], "稼働", 5, "—", ""),
+            ("松本 康", "施工管理部 第三課", "第三班", "作業員", ["酸素欠乏危険作業", "普通自動車免許"], "休暇", ["休暇", "休暇", "稼働", "稼働", "稼働", "稼働", "休暇"], "休暇", 0, "7/21-7/22", "有給休暇"),
+        ]
+        qual_cache: dict[str, Qualification] = {}
+        for nm, org, crew, role, lics, assigned, sched, st, cont, vac, note in WORKERS:
+            comp = comp_kt if "九州テクノ" in org else comp_hg if "肥後設備" in org else comp_self
+            w = Worker(user_id=(users[nm].id if nm in users else None), name=nm, org=org, company_id=comp.id,
+                       team_id=teams[crew].id, role=role, status=st, continuous_days=cont, vacation=vac, note=note,
+                       schedule=json.dumps(sched, ensure_ascii=False))
+            s.add(w); s.flush()
+            for lic in lics:
+                if lic not in qual_cache:
+                    q = Qualification(name=lic); s.add(q); s.flush(); qual_cache[lic] = q
+                exp = date(2026, 8, 20) if lic == "高所作業車" else None
+                s.add(WorkerQualification(worker_id=w.id, qualification_id=qual_cache[lic].id,
+                                          acquired_at=date(2024, 4, 1), expires_at=exp))
+            if assigned in by_name:
+                s.add(WorkerAssignment(worker_id=w.id, project_id=by_name[assigned].id,
+                                       assigned_from=date(2026, 7, 1), role=role, status=st))
+
+        # 工事台帳（projects基本＋台帳固有項目）
+        billing = ["未請求", "請求済", "入金済", "一部入金", "未請求", "請求済", "未請求", "未請求"]
+        docs_status = ["作成中", "完了", "完了", "未着手", "確認中", "作成中", "未着手", "未着手"]
+        for i, pr in enumerate(PROJECTS):
+            p = projects[pr["code"]]
+            s.add(ProjectLedger(project_id=p.id, contract_no=f"C-{pr['code'][3:]}",
+                                cost_planned=pr["bp"], cost_actual=pr["bu"],
+                                billing_status=billing[i % len(billing)], document_status=docs_status[i % len(docs_status)]))
+
+        # 図面・書類（版管理）
+        DRAWINGS = [
+            ("DWG-001", "熊本中央局 局内配線系統図", "系統図", "Rev.3", "山田 太郎", "承認済み"),
+            ("DWG-002", "局前 光ケーブル敷設平面図", "平面図", "Rev.2", "田中 一郎", "承認済み"),
+            ("DWG-003", "クロージャ接続図", "接続図", "Rev.1", "高橋 誠", "確認中"),
+            ("DWG-004", "MDF室 ラック実装図", "実装図", "Rev.2", "鈴木 健", "承認済み"),
+            ("DWG-005", "切替手順図", "手順図", "Rev.1", "伊藤 直樹", "差し戻し"),
+            ("DWG-006", "完成図（全体）", "完成図", "Rev.0", "山田 太郎", "未提出"),
+        ]
+        for no, name, dtype, rev, editor, appr in DRAWINGS:
+            eid = users[editor].id if editor in users else None
+            d = Document(project_id=p1.id, doc_no=no, name=name, doc_type=dtype, status=appr, current_rev=rev, updated_by=eid)
+            s.add(d); s.flush()
+            rn = int(rev.split(".")[1])
+            for r in range(rn + 1):
+                s.add(DocumentVersion(document_id=d.id, rev=f"Rev.{r}", original_filename=f"{no}_r{r}.pdf",
+                                      note=("初版" if r == 0 else f"改訂{r}"), updated_by=eid))
+
+        # 通知
+        NOTIFS = [
+            ("工程遅延", "接続損失測定が遅延しています", "熊本中央局 光設備更改工事の「接続損失測定」が予定より2日遅延しています。要員不足が原因です。", "熊本中央局 光設備更改工事", "2026/07/21 11:05", False, True, "/schedule"),
+            ("写真未提出", "施工写真が未提出です", "接続損失測定の測定結果写真が未提出です（提出期限 7/23）。", "熊本中央局 光設備更改工事", "2026/07/21 11:00", False, True, "/photos"),
+            ("再撮影依頼", "ONU設置写真の再撮影依頼", "設備タグ未装着のため再撮影を依頼しました。", "熊本中央局 光設備更改工事", "2026/07/21 09:32", False, False, "/quality"),
+            ("品質確認待ち", "品質確認待ちが7件あります", "ケーブル余長・固定間隔ほか、確認待ち項目があります。", "熊本中央局 光設備更改工事", "2026/07/21 10:15", False, False, "/quality"),
+            ("承認依頼", "現場日報の承認依頼", "7/20の日報が提出されました。確認・承認をお願いします。", "熊本中央局 光設備更改工事", "2026/07/21 08:20", True, False, "/daily-report"),
+            ("資格期限接近", "高所作業車 特別教育の期限接近", "田中 一郎の資格更新期限が近づいています（残り30日）。", None, "2026/07/21 07:50", True, False, "/personnel"),
+            ("要員重複", "要員の重複配置の可能性", "鈴木 健が2案件に重複配置されています。調整してください。", "合志市 基地局設備更新工事", "2026/07/20 18:10", True, False, "/personnel"),
+            ("図面更新", "切替手順図が差し戻されました", "DWG-005 切替手順図が差し戻されました。修正が必要です。", "熊本中央局 光設備更改工事", "2026/07/21 08:06", False, False, "/drawings"),
+            ("天候注意", "強風注意報", "本日午後、南の風やや強く 最大7m/s。高所作業に注意してください。", None, "2026/07/21 06:30", True, False, "/dashboard"),
+            ("日報未提出", "日報未提出があります", "天草地区 通信設備復旧工事の7/20日報が未提出です。", "天草地区 通信設備復旧工事", "2026/07/20 20:00", True, False, "/daily-report"),
+        ]
+        for kind, title, body, projname, at, read, imp, link in NOTIFS:
+            pid = by_name[projname].id if projname and projname in by_name else None
+            s.add(Notification(user_id=None, kind=kind, title=title, body=body, project_id=pid,
+                               target_url=link, is_read=read, important=imp,
+                               created_at=datetime.strptime(at, "%Y/%m/%d %H:%M")))
+
         s.commit()
         print("Seed 完了:")
         print(f"  ユーザー {len(users)}名 / 案件 {len(projects)}件 / 工程 {len(TASKS)}件 / 写真 27枚 / 品質 7 / 日報 3")
+        print(f"  要員 {len(WORKERS)} / 図面 {len(DRAWINGS)} / 通知 {len(NOTIFS)} / 台帳 {len(PROJECTS)}")
         print(f"  管理者ログイン: {settings.seed_admin_email} / {settings.seed_admin_password}")
         print(f"  デモユーザー: yamada@example.co.jp ほか / {DEMO_PASSWORD}")
 

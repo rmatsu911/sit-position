@@ -7,7 +7,7 @@ import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
 import { StatusBadge } from '../components/ui/Badge'
 import { useApp } from '../context/AppContext'
-import { drawings } from '../data/drawings'
+import { useDocuments } from '../api/documents'
 
 const pins = [
   { x: 30, y: 32, label: 'クロージャ位置確認' },
@@ -17,13 +17,14 @@ const pins = [
 
 export default function Drawings() {
   const { toast } = useApp()
-  const [current, setCurrent] = useState(drawings[0].id)
+  const { data: drawings = [], isLoading } = useDocuments()
+  const [current, setCurrent] = useState<string | null>(null)
   const [zoom, setZoom] = useState(1)
   const [rotate, setRotate] = useState(0)
   const [page, setPage] = useState(1)
   const [showPins, setShowPins] = useState(true)
   const [showLayers, setShowLayers] = useState(true)
-  const dwg = drawings.find((d) => d.id === current)!
+  const dwg = drawings.find((d) => d.id === current) ?? drawings[0]
 
   const tools = [
     { icon: ZoomIn, label: '拡大', onClick: () => setZoom((z) => Math.min(2.5, z + 0.2)) },
@@ -77,6 +78,9 @@ export default function Drawings() {
             <span className="ml-auto text-xs text-ink-soft">{Math.round(zoom * 100)}%</span>
           </div>
 
+          {isLoading && <Panel><p className="py-10 text-center text-sm text-ink-soft">図面を読み込んでいます…</p></Panel>}
+          {!isLoading && !dwg && <Panel><p className="py-10 text-center text-sm text-ink-soft">図面が登録されていません。</p></Panel>}
+          {dwg && (
           <Panel bodyClassName="p-0" className="overflow-hidden">
             <div className="flex items-center justify-between border-b border-line bg-canvas px-3 py-2">
               <div><span className="text-[13px] font-semibold text-ink">{dwg.name}</span><span className="ml-2 text-xs text-ink-soft">{dwg.no} / {dwg.rev}</span></div>
@@ -98,6 +102,7 @@ export default function Drawings() {
               </div>
             </div>
           </Panel>
+          )}
         </div>
       </div>
     </div>
