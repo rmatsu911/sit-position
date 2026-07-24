@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
 import { format } from 'date-fns'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Plus, FolderPlus, CornerDownRight, Pencil, Trash2, Copy, ClipboardPaste,
   Undo2, Redo2, UserPlus, Users2, TrendingUp, Save, SlidersHorizontal, Filter,
@@ -11,11 +12,11 @@ import { StatusBadge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
 import { ContextMenu, type MenuItem } from '../components/ui/ContextMenu'
 import { useApp } from '../context/AppContext'
-import { useProjectTasks } from '../api/tasks'
+import { useCreateTask, useDeleteTask, useProjectTasks, useUpdateTask, type TaskWriteInput } from '../api/tasks'
+import { useProject, useProjects } from '../api/projects'
+import { ApiError } from '../lib/apiClient'
 import type { WbsTask } from '../types'
 
-// 熊本中央局 光設備更改工事（Seedの案件ID=1）の工程を読み込む
-const SCHEDULE_PROJECT_ID = 1
 import {
   days, dayWidthByMode, ROW_H, dayIndex, isHoliday, isWeekend, weekdayLabel,
   addDaysIso, todayDate, type ViewMode,
@@ -49,7 +50,17 @@ const LEFT_COLS = [
 
 export default function Schedule() {
   const { toast, confirm } = useApp()
-  const { data: apiTasks, isLoading: tasksLoading, isError: tasksError } = useProjectTasks(SCHEDULE_PROJECT_ID)
+  const navigate = useNavigate()
+  const { id } = useParams()
+  const [searchParams] = useSearchParams()
+  const { data: projects = [] } = useProjects()
+  const requestedId = Number(id ?? searchParams.get('project_id'))
+  const projectId = Number.isFinite(requestedId) && requestedId > 0 ? requestedId : projects[0]?.id
+  const { data: project } = useProject(projectId)
+  const { data: apiTasks, isLoading: tasksLoading, isError: tasksError } = useProjectTasks(projectId)
+  const createTaskMutation = useCreateTask(projectId ?? 0)
+  const updateTaskMutation = useUpdateTask(projectId ?? 0)
+  const deleteTaskMutation = useDeleteTask(projectId ?? 0)
   const [tasks, setTasks] = useState<WbsTask[]>([])
 
   // API取得（read）→ ローカルstateへ。取得失敗時は固定ダミーへフォールバックしない。
@@ -65,6 +76,7 @@ export default function Schedule() {
   const [progressVal, setProgressVal] = useState(0)
   const [forecastOpen, setForecastOpen] = useState(false)
   const [filterOpen, setFilterOpen] = useState(false)
+  const [editor, setEditor] = useState<{ mode: 'create' | 'edit' | 'copy'; parent?: WbsTask; task?: WbsTask } | null>(null)
 
   const dw = dayWidthByMode[view]
   const ganttRef = useRef<HTMLDivElement>(null)
@@ -81,18 +93,23 @@ export default function Schedule() {
       if (d.mode === 'move') setPreview({ id: d.id, ds: delta, de: delta })
       else setPreview({ id: d.id, ds: 0, de: delta })
     }
-    function onUp() {
+    async function onUp() {
       const d = dragRef.current
       const p = preview
       if (d && p && (p.ds !== 0 || p.de !== 0)) {
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.id === d.id
-              ? { ...t, planStart: addDaysIso(d.s, p.ds), planEnd: addDaysIso(d.e, p.de) }
-              : t,
-          ),
-        )
-        toast('この操作は現在準備中です', 'info')
+        const planStart = addDaysIso(d.s, p.ds)
+        const planEnd = addDaysIso(d.e, p.de)
+        try {
+          await updateTaskMutation.mutateAsync({
+            id: Number(d.id), name: tasks.find((t) => t.id === d.id)?.name ?? '',
+            planned_start_at: `${planStart}T00:00:00+09:00`,
+            planned_finish_at: `${planEnd}T23:59:59+09:00`,
+            change_reason: 'ガントチャートのドラッグ変更',
+          })
+          toast('日程変更を保存しました', 'ok')
+        } catch (e) {
+          toast(e instanceof ApiError ? e.message : '日程変更を保存できませんでした', 'ng')
+        }
       }
       dragRef.current = null
       setPreview(null)
@@ -103,7 +120,7 @@ export default function Schedule() {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
-  }, [dw, preview, toast])
+  }, [dw, preview, toast, tasks, updateTaskMutation])
 
   const visible = useMemo(() => {
     if (filterStatus !== 'all') return tasks.filter((t) => !t.isParent && t.status === filterStatus)
@@ -151,17 +168,19 @@ export default function Schedule() {
     dragRef.current = { id: t.id, mode, startX: e.clientX, s: t.planStart, e: t.planEnd }
   }
 
-  function updateProgress() {
+  async function updateProgress() {
     if (!progressModal) return
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === progressModal.id
-          ? { ...t, progress: progressVal, status: progressVal >= 100 ? '完了' : progressVal > 0 ? '施工中' : t.status }
-          : t,
-      ),
-    )
-    toast(`「${progressModal.name}」の進捗を ${progressVal}% に更新しました`, 'ok')
-    setProgressModal(null)
+    try {
+      await updateTaskMutation.mutateAsync({
+        id: Number(progressModal.id), name: progressModal.name, actual_progress: progressVal,
+        status: progressVal >= 100 ? '完了' : progressVal > 0 ? '施工中' : progressModal.status,
+        change_reason: '工程管理画面から進捗更新',
+      })
+      toast(`「${progressModal.name}」の進捗を ${progressVal}% に更新しました`, 'ok')
+      setProgressModal(null)
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : '進捗を保存できませんでした', 'ng')
+    }
   }
 
   async function deleteTask(t: WbsTask) {
@@ -172,24 +191,28 @@ export default function Schedule() {
       danger: true,
     })
     if (ok) {
-      setTasks((prev) => prev.filter((x) => x.id !== t.id && !x.wbs.startsWith(t.wbs + '.')))
-      toast('この操作は現在準備中です', 'info')
+      try {
+        await deleteTaskMutation.mutateAsync(Number(t.id))
+        toast('工程を削除しました', 'ok')
+      } catch (e) {
+        toast(e instanceof ApiError ? e.message : '工程を削除できませんでした', 'ng')
+      }
     }
   }
 
   const menuTask = menu ? tasks.find((t) => t.id === menu.id) : null
   const menuItems: MenuItem[] = menuTask
     ? [
-        { label: '工程を追加', icon: Plus, onClick: () => toast('この操作は現在準備中です', 'info') },
-        { label: '子工程を追加', icon: CornerDownRight, onClick: () => toast('この操作は現在準備中です', 'info') },
-        { label: '工程を編集', icon: Pencil, onClick: () => toast('この操作は現在準備中です') },
-        { label: '工程をコピー', icon: Copy, onClick: () => toast('この操作は現在準備中です') },
+        { label: '工程を追加', icon: Plus, onClick: () => setEditor({ mode: 'create' }) },
+        { label: '子工程を追加', icon: CornerDownRight, onClick: () => setEditor({ mode: 'create', parent: menuTask }) },
+        { label: '工程を編集', icon: Pencil, onClick: () => setEditor({ mode: 'edit', task: menuTask }) },
+        { label: '工程をコピー', icon: Copy, onClick: () => setEditor({ mode: 'copy', task: menuTask }) },
         { label: '', onClick: () => {}, divider: true },
         { label: '担当者を割り当て', icon: UserPlus, onClick: () => toast('この操作は現在準備中です') },
         { label: '前工程と関連付け', icon: Link2, onClick: () => toast('この操作は現在準備中です') },
         { label: '後工程と関連付け', icon: Link2, onClick: () => toast('この操作は現在準備中です') },
         { label: '進捗を更新', icon: TrendingUp, onClick: () => { setProgressModal(menuTask); setProgressVal(menuTask.progress) } },
-        { label: '完了にする', icon: CheckCircle2, onClick: () => { setTasks((p) => p.map((t) => t.id === menuTask.id ? { ...t, progress: 100, status: '完了' } : t)); toast(`「${menuTask.name}」を完了にしました`, 'ok') } },
+        { label: '完了にする', icon: CheckCircle2, onClick: () => { updateTaskMutation.mutate({ id: Number(menuTask.id), name: menuTask.name, actual_progress: 100, status: '完了', change_reason: '右クリックメニューから完了' }, { onSuccess: () => toast(`「${menuTask.name}」を完了にしました`, 'ok'), onError: () => toast('完了状態を保存できませんでした', 'ng') }) } },
         { label: '詳細を表示', icon: Eye, onClick: () => { setProgressModal(menuTask); setProgressVal(menuTask.progress) } },
         { label: '', onClick: () => {}, divider: true },
         { label: '工程を削除', icon: Trash2, onClick: () => deleteTask(menuTask), danger: true },
@@ -218,14 +241,14 @@ export default function Schedule() {
 
   const toolbarGroups: { icon: typeof Plus; label: string; onClick: () => void }[][] = [
     [
-      { icon: Plus, label: '工程追加', onClick: () => toast('この操作は現在準備中です', 'info') },
-      { icon: FolderPlus, label: '親工程追加', onClick: () => toast('この操作は現在準備中です', 'info') },
-      { icon: CornerDownRight, label: '子工程追加', onClick: () => toast('この操作は現在準備中です', 'info') },
+      { icon: Plus, label: '工程追加', onClick: () => setEditor({ mode: 'create' }) },
+      { icon: FolderPlus, label: '親工程追加', onClick: () => setEditor({ mode: 'create' }) },
+      { icon: CornerDownRight, label: '子工程追加', onClick: () => { const t = tasks.find((x) => selected.has(x.id)); t ? setEditor({ mode: 'create', parent: t }) : toast('親工程を選択してください', 'info') } },
     ],
     [
-      { icon: Pencil, label: '編集', onClick: () => toast('この操作は現在準備中です') },
-      { icon: Trash2, label: '削除', onClick: () => toast('削除対象を選択してください') },
-      { icon: Copy, label: 'コピー', onClick: () => toast('この操作は現在準備中です') },
+      { icon: Pencil, label: '編集', onClick: () => { const t = tasks.find((x) => selected.has(x.id)); t ? setEditor({ mode: 'edit', task: t }) : toast('工程を選択してください') } },
+      { icon: Trash2, label: '削除', onClick: () => { const t = tasks.find((x) => selected.has(x.id)); t ? void deleteTask(t) : toast('削除対象を選択してください') } },
+      { icon: Copy, label: 'コピー', onClick: () => { const t = tasks.find((x) => selected.has(x.id)); t ? setEditor({ mode: 'copy', task: t }) : toast('工程を選択してください') } },
       { icon: ClipboardPaste, label: '貼り付け', onClick: () => toast('この操作は現在準備中です') },
       { icon: Undo2, label: '元に戻す', onClick: () => toast('この操作は現在準備中です') },
       { icon: Redo2, label: 'やり直す', onClick: () => toast('この操作は現在準備中です') },
@@ -249,13 +272,18 @@ export default function Schedule() {
       <PageHeader
         breadcrumb={[
           { label: '案件一覧', to: '/projects' },
-          { label: '熊本中央局 光設備更改工事', to: `/projects/${SCHEDULE_PROJECT_ID}` },
+          { label: project?.name ?? '案件を選択', to: projectId ? `/projects/${projectId}` : '/projects' },
           { label: '工程管理' },
         ]}
         title="工程管理"
-        description={`熊本中央局 光設備更改工事 ／ WBS・ガントチャート ${tasksLoading ? '（工程データを読み込み中...）' : tasksError ? '（工程データの取得に失敗しました）' : '（API連携）'}`}
+        description={`${project?.name ?? '案件未選択'} ／ WBS・ガントチャート ${tasksLoading ? '（工程データを読み込み中...）' : tasksError ? '（工程データの取得に失敗しました）' : '（DB保存）'}`}
         actions={
-          <div className="flex items-center gap-1 rounded border border-line bg-white p-0.5">
+          <div className="flex items-center gap-2">
+            <select className="field !w-64 !py-1 text-xs" value={projectId ?? ''} onChange={(e) => navigate(`/projects/${e.target.value}/schedule`)}>
+              <option value="" disabled>案件を選択</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.construction_number} {p.name}</option>)}
+            </select>
+            <div className="flex items-center gap-1 rounded border border-line bg-white p-0.5">
             {(['day', 'week', 'month'] as ViewMode[]).map((v) => (
               <button
                 key={v}
@@ -268,6 +296,7 @@ export default function Schedule() {
             <button onClick={() => toast('この操作は現在準備中です')} className="ml-1 rounded p-1 text-ink-soft hover:bg-canvas" title="全画面表示"><Maximize2 size={15} /></button>
             <button onClick={() => setView('week')} className="rounded p-1 text-ink-soft hover:bg-canvas" title="縮小"><ZoomOut size={15} /></button>
             <button onClick={() => setView('day')} className="rounded p-1 text-ink-soft hover:bg-canvas" title="拡大"><ZoomIn size={15} /></button>
+            </div>
           </div>
         }
       />
@@ -489,7 +518,108 @@ export default function Schedule() {
         footer={<button className="btn-primary" onClick={() => setForecastOpen(false)}>閉じる</button>}>
         <ForecastView />
       </Modal>
+      <TaskEditor
+        open={!!editor}
+        editor={editor}
+        tasks={tasks}
+        saving={createTaskMutation.isPending || updateTaskMutation.isPending}
+        onClose={() => setEditor(null)}
+        onSave={async (input) => {
+          if (!projectId || !editor) return
+          try {
+            if (editor.mode === 'edit' && editor.task) {
+              await updateTaskMutation.mutateAsync({ id: Number(editor.task.id), ...input, change_reason: '工程編集' })
+            } else {
+              await createTaskMutation.mutateAsync(input)
+            }
+            toast(editor.mode === 'edit' ? '工程を更新しました' : '工程を追加しました', 'ok')
+            setEditor(null)
+          } catch (e) {
+            toast(e instanceof ApiError ? e.message : '工程を保存できませんでした', 'ng')
+          }
+        }}
+      />
     </div>
+  )
+}
+
+function TaskEditor({
+  open, editor, tasks, saving, onClose, onSave,
+}: {
+  open: boolean
+  editor: { mode: 'create' | 'edit' | 'copy'; parent?: WbsTask; task?: WbsTask } | null
+  tasks: WbsTask[]
+  saving: boolean
+  onClose: () => void
+  onSave: (input: TaskWriteInput) => Promise<void>
+}) {
+  const source = editor?.task
+  const parent = editor?.parent
+  const nextRoot = Math.max(0, ...tasks.filter((t) => t.isParent).map((t) => Number(t.wbs) || 0)) + 1
+  const childCount = parent ? tasks.filter((t) => t.wbs.startsWith(`${parent.wbs}.`)).length : 0
+  const [form, setForm] = useState({
+    wbs: source ? (editor?.mode === 'copy' ? `${source.wbs}-copy` : source.wbs) : parent ? `${parent.wbs}.${childCount + 1}` : String(nextRoot),
+    name: source ? `${source.name}${editor?.mode === 'copy' ? '（コピー）' : ''}` : '',
+    planStart: source?.planStart ?? parent?.planStart ?? format(todayDate, 'yyyy-MM-dd'),
+    planEnd: source?.planEnd ?? parent?.planEnd ?? format(todayDate, 'yyyy-MM-dd'),
+    actualStart: source?.actualStart ?? '',
+    actualEnd: source?.actualEnd ?? '',
+    plannedProgress: source?.progress ?? 0,
+    actualProgress: source?.progress ?? 0,
+    plannedWorkers: source?.planPeople ?? 0,
+    actualWorkers: source?.actualPeople ?? 0,
+    status: source?.status ?? '未着手',
+    notes: '',
+    predecessor: source?.predecessors[0] ?? '',
+  })
+  useEffect(() => {
+    if (!open) return
+    setForm({
+      wbs: source ? (editor?.mode === 'copy' ? `${source.wbs}-copy` : source.wbs) : parent ? `${parent.wbs}.${childCount + 1}` : String(nextRoot),
+      name: source ? `${source.name}${editor?.mode === 'copy' ? '（コピー）' : ''}` : '',
+      planStart: source?.planStart ?? parent?.planStart ?? format(todayDate, 'yyyy-MM-dd'),
+      planEnd: source?.planEnd ?? parent?.planEnd ?? format(todayDate, 'yyyy-MM-dd'),
+      actualStart: source?.actualStart ?? '', actualEnd: source?.actualEnd ?? '',
+      plannedProgress: source?.progress ?? 0, actualProgress: source?.progress ?? 0,
+      plannedWorkers: source?.planPeople ?? 0, actualWorkers: source?.actualPeople ?? 0,
+      status: source?.status ?? '未着手', notes: '', predecessor: source?.predecessors[0] ?? '',
+    })
+  }, [open, source, parent, editor?.mode, childCount, nextRoot])
+  async function submit() {
+    if (!form.name.trim() || !form.wbs.trim()) return
+    const predecessor = tasks.find((t) => t.wbs === form.predecessor)
+    await onSave({
+      parent_task_id: parent ? Number(parent.id) : source?.isParent ? null : undefined,
+      wbs_code: form.wbs.trim(), name: form.name.trim(),
+      planned_start_at: `${form.planStart}T00:00:00+09:00`,
+      planned_finish_at: `${form.planEnd}T23:59:59+09:00`,
+      actual_start_at: form.actualStart ? `${form.actualStart}T00:00:00+09:00` : null,
+      actual_finish_at: form.actualEnd ? `${form.actualEnd}T23:59:59+09:00` : null,
+      planned_progress: form.plannedProgress, actual_progress: form.actualProgress,
+      planned_workers: form.plannedWorkers, actual_workers: form.actualWorkers,
+      status: form.status, notes: form.notes || null,
+      dependency_ids: predecessor ? [Number(predecessor.id)] : [],
+    })
+  }
+  return (
+    <Modal open={open} onClose={onClose} title={editor?.mode === 'edit' ? '工程を編集' : editor?.mode === 'copy' ? '工程をコピー' : parent ? '子工程を追加' : '工程を追加'} size="lg"
+      footer={<><button className="btn-default" onClick={onClose}>キャンセル</button><button className="btn-primary" disabled={saving || !form.name.trim()} onClick={submit}>{saving ? '保存中…' : '保存'}</button></>}>
+      <div className="grid grid-cols-3 gap-3">
+        <div><label className="label">WBS *</label><input className="field" value={form.wbs} onChange={(e) => setForm({ ...form, wbs: e.target.value })} /></div>
+        <div className="col-span-2"><label className="label">工程名 *</label><input className="field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+        <div><label className="label">開始予定</label><input type="date" className="field" value={form.planStart} onChange={(e) => setForm({ ...form, planStart: e.target.value })} /></div>
+        <div><label className="label">終了予定</label><input type="date" className="field" value={form.planEnd} onChange={(e) => setForm({ ...form, planEnd: e.target.value })} /></div>
+        <div><label className="label">先行工程</label><select className="field" value={form.predecessor} onChange={(e) => setForm({ ...form, predecessor: e.target.value })}><option value="">なし</option>{tasks.filter((t) => t.id !== source?.id).map((t) => <option key={t.id} value={t.wbs}>{t.wbs} {t.name}</option>)}</select></div>
+        <div><label className="label">開始実績</label><input type="date" className="field" value={form.actualStart} onChange={(e) => setForm({ ...form, actualStart: e.target.value })} /></div>
+        <div><label className="label">終了実績</label><input type="date" className="field" value={form.actualEnd} onChange={(e) => setForm({ ...form, actualEnd: e.target.value })} /></div>
+        <div><label className="label">ステータス</label><select className="field" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as WbsTask['status'] })}>{['未着手','施工中','完了','一時停止','遅延'].map((s) => <option key={s}>{s}</option>)}</select></div>
+        <div><label className="label">予定進捗 (%)</label><input type="number" min="0" max="100" className="field" value={form.plannedProgress} onChange={(e) => setForm({ ...form, plannedProgress: Number(e.target.value) })} /></div>
+        <div><label className="label">実績進捗 (%)</label><input type="number" min="0" max="100" className="field" value={form.actualProgress} onChange={(e) => setForm({ ...form, actualProgress: Number(e.target.value) })} /></div>
+        <div><label className="label">予定人数</label><input type="number" min="0" className="field" value={form.plannedWorkers} onChange={(e) => setForm({ ...form, plannedWorkers: Number(e.target.value) })} /></div>
+        <div><label className="label">実績人数</label><input type="number" min="0" className="field" value={form.actualWorkers} onChange={(e) => setForm({ ...form, actualWorkers: Number(e.target.value) })} /></div>
+        <div className="col-span-3"><label className="label">備考</label><textarea className="field min-h-20" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
+      </div>
+    </Modal>
   )
 }
 

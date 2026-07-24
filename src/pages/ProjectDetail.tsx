@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ExternalLink, Truck, Wrench, HardHat, AlertTriangle, Clock, Loader2 } from 'lucide-react'
 import { PageHeader } from '../components/layout/Breadcrumb'
@@ -8,7 +8,7 @@ import { Progress } from '../components/ui/Progress'
 import { Modal } from '../components/ui/Modal'
 import { PhotoImage } from '../components/ui/PhotoImage'
 import { manYen } from '../lib/format'
-import { useProject } from '../api/projects'
+import { useProject, useUpdateProject, type ApiProject } from '../api/projects'
 import { usePhotos } from '../api/photos'
 import { useProjectMaterials, useCreateMaterial } from '../api/materials'
 import { ApiError } from '../lib/apiClient'
@@ -27,6 +27,7 @@ export default function ProjectDetail() {
   const pid = Number(id)
   const { data: p, isLoading, isError, error } = useProject(Number.isNaN(pid) ? undefined : pid)
   const [tab, setTab] = useState<Tab>('概要')
+  const [editOpen, setEditOpen] = useState(false)
 
   if (isLoading) {
     return <div className="flex items-center justify-center gap-2 py-24 text-ink-soft"><Loader2 size={24} className="animate-spin text-sysken-500" />案件を読み込んでいます...</div>
@@ -53,7 +54,7 @@ export default function ProjectDetail() {
         breadcrumb={[{ label: '案件一覧', to: '/projects' }, { label: p.name }]}
         title={p.name}
         description={`${code} ／ ${client} ／ ${location}`}
-        actions={<><StatusBadge status={p.status} /><button className="btn-primary" onClick={() => navigate('/schedule')}>工程管理を開く</button></>}
+        actions={<><StatusBadge status={p.status} /><button className="btn-default" onClick={() => setEditOpen(true)}>基本情報を編集</button><button className="btn-primary" onClick={() => navigate(`/projects/${p.id}/schedule`)}>工程管理を開く</button></>}
       />
 
       {/* 基本情報（API連携） */}
@@ -90,9 +91,56 @@ export default function ProjectDetail() {
       {tab === '資材' && <Materials projectId={pid} />}
       {tab === '操作履歴' && <History />}
       {(['工程', '施工写真', '図面', '現場日報', '品質', '要員', '報告書'] as Tab[]).includes(tab) && (
-        <LinkTab tab={tab} to={routeByTab[tab]!} onGo={() => navigate(routeByTab[tab]!)} projectId={String(p.id)} />
+        <LinkTab tab={tab} to={tab === '工程' ? `/projects/${p.id}/schedule` : `${routeByTab[tab]!}?project_id=${p.id}`} onGo={() => navigate(tab === '工程' ? `/projects/${p.id}/schedule` : `${routeByTab[tab]!}?project_id=${p.id}`)} projectId={String(p.id)} />
       )}
+      <ProjectEditModal open={editOpen} onClose={() => setEditOpen(false)} project={p} />
     </div>
+  )
+}
+
+function ProjectEditModal({ open, onClose, project }: { open: boolean; onClose: () => void; project: ApiProject }) {
+  const update = useUpdateProject(project.id)
+  const [form, setForm] = useState({
+    name: project.name, customer: project.customer ?? '', area: project.area ?? '',
+    location: project.location ?? '', start_planned_at: project.start_planned_at ?? '',
+    finish_planned_at: project.finish_planned_at ?? '', status: project.status,
+  })
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    if (open) setForm({
+      name: project.name, customer: project.customer ?? '', area: project.area ?? '',
+      location: project.location ?? '', start_planned_at: project.start_planned_at ?? '',
+      finish_planned_at: project.finish_planned_at ?? '', status: project.status,
+    })
+  }, [open, project])
+  async function save() {
+    setError(null)
+    if (!form.name.trim()) return setError('工事名は必須です')
+    try {
+      await update.mutateAsync({
+        name: form.name.trim(), customer: form.customer || undefined, area: form.area || undefined,
+        location: form.location || undefined, start_planned_at: form.start_planned_at || null,
+        finish_planned_at: form.finish_planned_at || null, status: form.status,
+      })
+      onClose()
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : '保存に失敗しました')
+    }
+  }
+  return (
+    <Modal open={open} onClose={onClose} title="案件基本情報を編集" size="lg"
+      footer={<><button className="btn-default" onClick={onClose}>キャンセル</button><button className="btn-primary" disabled={update.isPending} onClick={save}>{update.isPending ? '保存中…' : '保存'}</button></>}>
+      {error && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-ng">{error}</div>}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="col-span-2"><label className="label">工事名 *</label><input className="field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+        <div><label className="label">顧客</label><input className="field" value={form.customer} onChange={(e) => setForm({ ...form, customer: e.target.value })} /></div>
+        <div><label className="label">エリア</label><input className="field" value={form.area} onChange={(e) => setForm({ ...form, area: e.target.value })} /></div>
+        <div className="col-span-2"><label className="label">工事場所</label><input className="field" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></div>
+        <div><label className="label">開始予定</label><input type="date" className="field" value={form.start_planned_at} onChange={(e) => setForm({ ...form, start_planned_at: e.target.value })} /></div>
+        <div><label className="label">終了予定</label><input type="date" className="field" value={form.finish_planned_at} onChange={(e) => setForm({ ...form, finish_planned_at: e.target.value })} /></div>
+        <div className="col-span-2"><label className="label">ステータス</label><select className="field" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{['未着工','準備中','施工中','確認待ち','一時停止','遅延','完了','中止'].map((s) => <option key={s}>{s}</option>)}</select></div>
+      </div>
+    </Modal>
   )
 }
 

@@ -163,6 +163,8 @@ class TaskOut(BaseModel):
     process_type: str | None = None
     crew: str | None = None
     manager: str | None = None
+    manager_id: int | None = None
+    site_id: int | None = None
     planned_start_at: datetime | None = None
     planned_finish_at: datetime | None = None
     actual_start_at: datetime | None = None
@@ -172,11 +174,14 @@ class TaskOut(BaseModel):
     planned_workers: int
     actual_workers: int
     status: str
+    delay_reason: str | None = None
+    notes: str | None = None
+    dependencies: list[int] = Field(default_factory=list)
 
 
 class TaskCreate(BaseModel):
-    project_id: int
     parent_task_id: int | None = None
+    site_id: int | None = None
     wbs_code: str | None = None
     name: str
     work_type_id: int | None = None
@@ -184,20 +189,36 @@ class TaskCreate(BaseModel):
     planned_start_at: datetime | None = None
     planned_finish_at: datetime | None = None
     planned_progress: int = 0
+    actual_progress: int = 0
     planned_workers: int = 0
+    actual_workers: int = 0
     manager_id: int | None = None
     status: str = "未着手"
+    delay_reason: str | None = None
+    notes: str | None = None
+    dependency_ids: list[int] = Field(default_factory=list)
 
 
 class TaskUpdate(BaseModel):
+    parent_task_id: int | None = None
+    site_id: int | None = None
+    wbs_code: str | None = None
     name: str | None = None
+    work_type_id: int | None = None
+    process_type_id: int | None = None
     planned_start_at: datetime | None = None
     planned_finish_at: datetime | None = None
     actual_start_at: datetime | None = None
     actual_finish_at: datetime | None = None
+    planned_progress: int | None = None
     actual_progress: int | None = None
+    planned_workers: int | None = None
     actual_workers: int | None = None
+    manager_id: int | None = None
     status: str | None = None
+    delay_reason: str | None = None
+    notes: str | None = None
+    dependency_ids: list[int] | None = None
     change_reason: str | None = None
 
 

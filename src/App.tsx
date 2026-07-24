@@ -35,6 +35,7 @@ export default function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/:id" element={<ProjectDetail />} />
+          <Route path="/projects/:id/schedule" element={<Schedule />} />
           <Route path="/schedule" element={<Schedule />} />
           <Route path="/photos" element={<Photos />} />
           <Route path="/drawings" element={<Drawings />} />
