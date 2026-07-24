@@ -6,19 +6,9 @@ import { StatusBadge, Badge } from '../components/ui/Badge'
 import { useApp } from '../context/AppContext'
 import { useWorkers, useAssignWorker } from '../api/personnel'
 import { useProjects } from '../api/projects'
-import { IS_DEV_VISIBLE } from '../lib/env'
-import type { Worker, WorkStatus } from '../types'
+import type { Worker } from '../types'
 
-// 勤務予定（勤怠）は専用テーブル未整備のため、開発環境の確認用サンプルとしてのみ表示する。
-const scheduleDates = ['1日目', '2日目', '3日目', '4日目', '5日目', '6日目', '7日目']
 const allLicenses = ['高所作業車', '酸素欠乏危険作業', '職長・安全衛生責任者', '光ファイバ融着', '電気工事士', '玉掛け', '小型移動式クレーン', '低圧電気取扱', 'フルハーネス特別教育', '交通誘導']
-
-const cellColor: Record<WorkStatus, string> = {
-  稼働: 'bg-sysken-100 text-sysken-700',
-  待機: 'bg-slate-100 text-slate-500',
-  休暇: 'bg-amber-50 text-warn',
-  移動中: 'bg-emerald-50 text-ok',
-}
 
 export default function Personnel() {
   const { toast } = useApp()
@@ -91,7 +81,6 @@ export default function Personnel() {
         <>
           <div className="mb-2 rounded border border-line bg-white px-3 py-2 text-[12.5px] text-ink-soft">
             勤務予定（勤怠）管理は未連携です。以下は要員台帳に登録された情報を表示しています。
-            {IS_DEV_VISIBLE && '（右側の日別列は開発環境の確認用サンプルです）'}
           </div>
           <Panel bodyClassName="p-0" className="overflow-hidden">
             <div className="thin-scroll overflow-x-auto">
@@ -99,13 +88,12 @@ export default function Personnel() {
                 <thead className="bg-canvas text-[12.5px] text-ink-soft">
                   <tr>
                     {['氏名', '所属', '班', '役割', '保有資格', '現在の配置先', '稼働状況', '連続勤務', '休暇'].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}
-                    {IS_DEV_VISIBLE && scheduleDates.map((d) => <th key={d} className="px-2 py-2 text-center font-semibold">{d}</th>)}
                   </tr>
                 </thead>
                 <tbody>
-                  {isLoading && <tr><td colSpan={IS_DEV_VISIBLE ? 16 : 9} className="px-3 py-8 text-center text-ink-soft">要員を読み込んでいます…</td></tr>}
-                  {isError && <tr><td colSpan={IS_DEV_VISIBLE ? 16 : 9} className="px-3 py-8 text-center text-ng">要員の取得に失敗しました。</td></tr>}
-                  {!isLoading && !isError && filtered.length === 0 && <tr><td colSpan={IS_DEV_VISIBLE ? 16 : 9} className="px-3 py-8 text-center text-ink-soft">該当する要員がいません。</td></tr>}
+                  {isLoading && <tr><td colSpan={9} className="px-3 py-8 text-center text-ink-soft">要員を読み込んでいます…</td></tr>}
+                  {isError && <tr><td colSpan={9} className="px-3 py-8 text-center text-ng">要員の取得に失敗しました。</td></tr>}
+                  {!isLoading && !isError && filtered.length === 0 && <tr><td colSpan={9} className="px-3 py-8 text-center text-ink-soft">該当する要員がいません。</td></tr>}
                   {filtered.map((w) => (
                     <tr key={w.id} className="hover:bg-canvas">
                       <td className="px-3 py-1.5 font-medium text-ink">{w.name}</td>
@@ -117,7 +105,6 @@ export default function Personnel() {
                       <td className="px-3"><StatusBadge status={w.status} /></td>
                       <td className="px-3 text-center tabular-nums"><span className={w.continuousDays >= 7 ? 'font-bold text-ng' : ''}>{w.continuousDays}日</span></td>
                       <td className="px-3 text-ink-soft">{w.vacation}</td>
-                      {IS_DEV_VISIBLE && w.schedule.map((s, i) => <td key={i} className="px-1 py-1 text-center"><span className={`inline-block w-full rounded px-1 py-0.5 text-[11px] ${cellColor[s]}`}>{s}</span></td>)}
                     </tr>
                   ))}
                 </tbody>

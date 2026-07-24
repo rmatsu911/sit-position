@@ -12,9 +12,7 @@ import {
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useNotifications } from '../../api/notifications'
-import { DemoGuide } from './DemoGuide'
 import { useAuth } from '../../auth/AuthContext'
-import { IS_DEV_VISIBLE } from '../../lib/env'
 
 const ROLE_LABELS: Record<string, string> = {
   ADMIN: '管理者',
@@ -68,9 +66,6 @@ export function AppHeader() {
       </form>
 
       <div className="ml-auto flex items-center gap-1">
-        {/* デモガイド（発表者向け・開発/検証環境のみ） */}
-        {IS_DEV_VISIBLE && <DemoGuide />}
-
         {/* AIパネル開閉 */}
         <button
           onClick={toggleAiPanel}

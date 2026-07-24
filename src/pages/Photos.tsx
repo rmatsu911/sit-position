@@ -11,7 +11,6 @@ import { PhotoImage } from '../components/ui/PhotoImage'
 import { RecognitionOverlay, RecognitionLegend } from '../components/ui/RecognitionOverlay'
 import { useApp } from '../context/AppContext'
 import { qualityJudgeFor, boxColor, type Recognition } from '../data/aiPreview'
-import { IS_DEV_VISIBLE } from '../lib/env'
 import {
   usePhotos, usePhotoAi, useUploadPhoto, useUpdatePhoto, useConfirmPhoto, useDeletePhoto,
   usePredictionFeedback, useReportMissed, DEMO_PROJECT_ID,
@@ -411,14 +410,12 @@ function ClassificationSupport({
 }
 
 // モデル状態の表示（実学習済みが未配置のときは「実AIが完成」に見せない）。
-// DEMO/検証用の内部状態は開発/検証環境でのみ明示する。
+// DEMO/seed 等の内部状態は表示せず、実運用向けの表記に統一する。
 function modelNote(ai: ReturnType<typeof usePhotoAi>['data']): { text: string; tone: 'ok' | 'warn' | 'info' } | null {
   if (!ai || ai.source === 'none') return null
   const status = (ai.modelStatus ?? '').toUpperCase()
   if (status === 'ACTIVE') return { text: `${ai.model ?? 'AIモデル'}（${ai.modelVersion ?? '-'}）`, tone: 'ok' }
   if (status === 'MODEL_NOT_AVAILABLE') return { text: 'AIモデル未設定', tone: 'warn' }
-  // DEMO / seed-demo 等の内部状態は本番ユーザーには見せない
-  if (IS_DEV_VISIBLE) return { text: `検証用モデル（${ai.modelVersion ?? '-'}）`, tone: 'warn' }
   return { text: 'AI解析結果', tone: 'info' }
 }
 

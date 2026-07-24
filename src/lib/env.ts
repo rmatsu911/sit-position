@@ -1,5 +1,4 @@
 // アプリ実行環境・バージョンの一元管理。
-// 開発専用の表示（Seed識別・AIのDEMO状態・デバッグ情報）は production では出さない。
 
 declare const __APP_VERSION__: string
 
@@ -12,9 +11,6 @@ function resolveEnv(): AppEnv {
 }
 
 export const APP_ENV: AppEnv = resolveEnv()
-export const IS_PRODUCTION = APP_ENV === 'production'
-// production 以外（開発・検証）では開発向け表示を許可する
-export const IS_DEV_VISIBLE = APP_ENV !== 'production'
 
 export const APP_VERSION: string =
   (import.meta.env.VITE_APP_VERSION as string | undefined) ??

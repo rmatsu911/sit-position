@@ -30,10 +30,6 @@ interface AppContextValue {
   toggleAiPanel: () => void
   openAiPanel: () => void
   closeAiPanel: () => void
-  demoMode: boolean
-  setDemoMode: (v: boolean) => void
-  demoEpoch: number
-  bumpDemoEpoch: () => void
   toasts: ToastItem[]
   toast: (message: string, tone?: Tone) => void
   dismissToast: (id: number) => void
@@ -49,8 +45,6 @@ let toastSeq = 0
 export function AppProvider({ children }: { children: ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [aiPanelOpen, setAiPanelOpen] = useState(false) // 初期は折りたたみ
-  const [demoMode, setDemoMode] = useState(false)
-  const [demoEpoch, setDemoEpoch] = useState(0)
   const [toasts, setToasts] = useState<ToastItem[]>([])
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null)
 
@@ -98,10 +92,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       toggleAiPanel: () => setAiPanelOpen((v) => !v),
       openAiPanel: () => setAiPanelOpen(true),
       closeAiPanel: () => setAiPanelOpen(false),
-      demoMode,
-      setDemoMode,
-      demoEpoch,
-      bumpDemoEpoch: () => setDemoEpoch((v) => v + 1),
       toasts,
       toast,
       dismissToast,
@@ -109,7 +99,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       confirm,
       resolveConfirm,
     }),
-    [sidebarCollapsed, aiPanelOpen, demoMode, demoEpoch, toasts, toast, dismissToast, confirmState, confirm, resolveConfirm],
+    [sidebarCollapsed, aiPanelOpen, toasts, toast, dismissToast, confirmState, confirm, resolveConfirm],
   )
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
@@ -120,15 +110,4 @@ export function useApp(): AppContextValue {
   const ctx = useContext(AppContext)
   if (!ctx) throw new Error('useApp must be used within AppProvider')
   return ctx
-}
-
-// デモリセット用フック（ルーター依存のためコンポーネント側で使用）
-// eslint-disable-next-line react-refresh/only-export-components
-export function useDemoReset() {
-  const { closeAiPanel, bumpDemoEpoch, toast } = useApp()
-  return useCallback(() => {
-    closeAiPanel()
-    bumpDemoEpoch()
-    toast('デモを初期状態にリセットしました', 'ok')
-  }, [closeAiPanel, bumpDemoEpoch, toast])
 }
