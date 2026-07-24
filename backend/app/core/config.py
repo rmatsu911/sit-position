@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,6 +13,17 @@ class Settings(BaseSettings):
 
     # DB
     database_url: str = "postgresql+psycopg2://sysken:sysken@localhost:5432/sysken"
+
+    @field_validator("database_url")
+    @classmethod
+    def _normalize_database_url(cls, v: str) -> str:
+        """クラウド(Render/Heroku等)が渡す postgres:// / postgresql:// を
+        SQLAlchemy が使う postgresql+psycopg2:// へ正規化する。"""
+        if v.startswith("postgres://"):
+            return "postgresql+psycopg2://" + v[len("postgres://"):]
+        if v.startswith("postgresql://") and "+psycopg2" not in v:
+            return "postgresql+psycopg2://" + v[len("postgresql://"):]
+        return v
 
     # Auth
     jwt_secret: str = "dev-secret-change-me"

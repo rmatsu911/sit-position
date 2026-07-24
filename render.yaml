@@ -1,0 +1,60 @@
+# Render Blueprint — 株式会社SYSKEN AI施工管理システム
+# React(静的) + FastAPI(Docker) + PostgreSQL(マネージド) を一括デプロイする。
+# 使い方: https://dashboard.render.com/ → New → Blueprint → このリポジトリを選択。
+# デプロイ後に、下の sync:false の2値（VITE_API_BASE_URL / CORS_ORIGINS / PUBLIC_BASE_URL）を
+# 実際に払い出された URL に合わせて設定し、再デプロイする（詳細は docs/deploy-render.md）。
+
+databases:
+  - name: sysken-db
+    databaseName: sysken
+    user: sysken
+    plan: free
+
+services:
+  # ---- Backend (FastAPI, Docker) ----
+  - type: web
+    name: sysken-backend
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    # 起動時に マイグレーション → 初期データ投入(冪等) → uvicorn。
+    # Seed は既存データがあればスキップされる。初期管理者と表示用データを用意する。
+    dockerCommand: sh -c "alembic upgrade head && python -m app.seed.seed --force-production && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sysken-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true          # 長いランダム値を自動生成
+      - key: SEED_ADMIN_EMAIL
+        value: admin@example.co.jp
+      - key: SEED_ADMIN_PASSWORD
+        sync: false                  # 初回デプロイ前に安全な値を設定（チャットに貼らない）
+      - key: STORAGE_BACKEND
+        value: local
+      - key: PUBLIC_BASE_URL
+        sync: false                  # 例: https://sysken-backend.onrender.com
+      - key: CORS_ORIGINS
+        sync: false                  # 例: https://sysken-frontend.onrender.com
+
+  # ---- Frontend (静的サイト) ----
+  - type: web
+    name: sysken-frontend
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    # SPA: すべてのパスを index.html へ（直リンク404を防ぐ）
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_APP_ENV
+        value: production
+      - key: VITE_API_BASE_URL
+        sync: false                  # 例: https://sysken-backend.onrender.com/api
