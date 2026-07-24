@@ -117,9 +117,9 @@ AI Worker(分離)＋YOLO推論IF(交換可)＋正規化bbox＋既存UIへの実�
 
 ## 次回作業（1〜3項目）
 
-1. SYSKEN実施工写真のアノテーション＋YOLO学習→weights配置→実推論の有効化（`pip install -e ".[ai]"` → train → AI_MODEL_PATH）
-2. AI結果採用率/修正率/確認時間のKPI集計API（`ai_feedback`ベース）＋ダッシュボード表示
-3. 帳票の共通基盤へ他帳票追加 / weather_records基盤
+1. Ver.0.2.3の残監査：図面新版・品質状態遷移・日報承認・通知既読・設定マスタを実ブラウザで再確認
+2. 工程管理の担当班マスタ連携、基準工程の版保存、Undo/Redo、ドラッグE2Eを追加
+3. 上記完了後にSYSKEN実施工写真のアノテーション＋YOLO学習へ進む
 
 ## 変更ログ（差分のみ追記）
 
@@ -131,3 +131,4 @@ AI Worker(分離)＋YOLO推論IF(交換可)＋正規化bbox＋既存UIへの実�
 - 2026-07-23 Ver.0.1.3 完了（要員配置永続化・資材・試験記録・図面実ファイル表示・帳票実出力[施工管理表 PDF/Excel]、migration 6b1c1111572b[44テーブル]、openpyxl/reportlab追加、pytest36/build/E2E）
 - 2026-07-23 Ver.0.2 完了（AI Worker分離・YOLO推論IF[交換可/MODEL_NOT_AVAILABLE]・正規化bbox・既存UI実接続・人間フィードバック[ai_feedback]・data.yamlクラス体系・学習/評価スクリプト、migration 5aeaba61edcb、pytest41/build/E2E。実weightsは未配置）
 - 2026-07-23 Ver.0.2.1 完了（実運用化総点検・デモ要素撤去：APP_ENV環境分離＋Seed production ガード、AI/品質/工程/要員/図面/案件詳細/設定 の固定ダミー撤去→Empty State 化、API失敗時の固定フォールバック全廃、未使用固定データ7ファイル削除、DEMO/Seed表示は開発環境のみ、pytest41/tsc/build/スモーク。本番相当で表示される架空業務データは残存なし）
+- 2026-07-24 Ver.0.2.3 業務フロー・UI回帰総点検（第1段階）：案件CREATE→LIST→DETAIL→UPDATE→再取得の統合テストを追加。案件詳細に編集UIを追加しQuery prefix invalidation＋active refetchを明示。工程画面の固定`project_id=1`を廃止して案件IDルーティングへ統一。本格WBS＋ガントUIを維持したまま工程追加/親子/編集/コピー/削除/進捗更新/完了/依存関係/ドラッグ日程変更をTask APIへ接続し、工程変更履歴・監査ログ・reload保持を維持。Task APIに依存関係入出力と論理削除を追加。pytest43件、TypeScript、production build、lint（警告のみ）成功。Cloud Browser接続タイムアウトのため実ブラウザ確認は未完了。AI関連は未変更。

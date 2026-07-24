@@ -1,9 +1,9 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/apiClient'
 import type { WbsTask } from '../types'
 
 // バックエンド TaskOut に対応
-interface ApiTask {
+export interface ApiTask {
   id: number
   project_id: number
   parent_task_id: number | null
@@ -13,6 +13,8 @@ interface ApiTask {
   process_type: string | null
   crew: string | null
   manager: string | null
+  manager_id: number | null
+  site_id: number | null
   planned_start_at: string | null
   planned_finish_at: string | null
   actual_start_at: string | null
@@ -22,6 +24,9 @@ interface ApiTask {
   planned_workers: number
   actual_workers: number
   status: string
+  delay_reason: string | null
+  notes: string | null
+  dependencies: number[]
 }
 
 const CRITICAL_NAMES = new Set([
@@ -36,18 +41,11 @@ function ymd(iso: string | null): string | null {
 // API のタスクを既存ガント用 WbsTask 形式へ変換（工程 read の表示互換）
 export function toWbsTasks(rows: ApiTask[]): WbsTask[] {
   const sorted = [...rows].sort((a, b) => (a.wbs_code ?? '').localeCompare(b.wbs_code ?? '', 'en', { numeric: true }))
-  // 先行工程: 同一親内の直前の子工程（依存線の近似表示）
-  const prevByParent = new Map<string, string>()
+  const wbsById = new Map(rows.map((t) => [t.id, t.wbs_code ?? String(t.id)]))
   return sorted.map((t) => {
     const wbs = t.wbs_code ?? String(t.id)
     const isParent = !wbs.includes('.')
-    const parentKey = wbs.includes('.') ? wbs.split('.')[0] : '__root__'
-    const predecessors: string[] = []
-    if (!isParent) {
-      const prev = prevByParent.get(parentKey)
-      if (prev) predecessors.push(prev)
-      prevByParent.set(parentKey, wbs)
-    }
+    const predecessors = t.dependencies.map((id) => wbsById.get(id)).filter((v): v is string => !!v)
     const ps = ymd(t.planned_start_at) ?? '2026-06-01'
     const pe = ymd(t.planned_finish_at) ?? ps
     const planDays = Math.max(
@@ -84,6 +82,62 @@ export function useProjectTasks(projectId: number | undefined) {
     queryKey: ['tasks', projectId],
     queryFn: async () => toWbsTasks(await api<ApiTask[]>(`/projects/${projectId}/tasks`)),
     enabled: !!projectId,
+  })
+}
+
+export interface TaskWriteInput {
+  parent_task_id?: number | null
+  site_id?: number | null
+  wbs_code?: string | null
+  name: string
+  planned_start_at?: string | null
+  planned_finish_at?: string | null
+  actual_start_at?: string | null
+  actual_finish_at?: string | null
+  planned_progress?: number
+  actual_progress?: number
+  planned_workers?: number
+  actual_workers?: number
+  manager_id?: number | null
+  status?: string
+  delay_reason?: string | null
+  notes?: string | null
+  dependency_ids?: number[]
+  change_reason?: string
+}
+
+function invalidateTasks(qc: ReturnType<typeof useQueryClient>, projectId: number) {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: ['tasks', projectId] }),
+    qc.invalidateQueries({ queryKey: ['task-options', projectId] }),
+    qc.invalidateQueries({ queryKey: ['dashboard'] }),
+    qc.invalidateQueries({ queryKey: ['project', projectId] }),
+  ])
+}
+
+export function useCreateTask(projectId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: TaskWriteInput) =>
+      api<ApiTask>(`/projects/${projectId}/tasks`, { method: 'POST', body: input }),
+    onSuccess: async () => { await invalidateTasks(qc, projectId) },
+  })
+}
+
+export function useUpdateTask(projectId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...input }: TaskWriteInput & { id: number }) =>
+      api<ApiTask>(`/tasks/${id}`, { method: 'PUT', body: input }),
+    onSuccess: async () => { await invalidateTasks(qc, projectId) },
+  })
+}
+
+export function useDeleteTask(projectId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api<void>(`/tasks/${id}`, { method: 'DELETE' }),
+    onSuccess: async () => { await invalidateTasks(qc, projectId) },
   })
 }
 

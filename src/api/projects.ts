@@ -64,7 +64,13 @@ export function useCreateProject() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (input: ProjectCreateInput) => api<ApiProject>('/projects', { method: 'POST', body: input }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+    onSuccess: async (created) => {
+      // 案件一覧は status/q ごとに複数のQuery Keyを持つ。prefixで全派生一覧を
+      // stale化し、表示中一覧はPOST完了後に再取得してCREATE→LISTを保証する。
+      await qc.invalidateQueries({ queryKey: ['projects'] })
+      await qc.refetchQueries({ queryKey: ['projects'], type: 'active' })
+      qc.setQueryData(['project', created.id], created)
+    },
   })
 }
 
