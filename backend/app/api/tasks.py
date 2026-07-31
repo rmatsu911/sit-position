@@ -40,6 +40,7 @@ def build_out(db: Session, t: Task) -> TaskOut:
         status=t.status,
         delay_reason=t.delay_reason,
         notes=t.notes,
+        schedule_precision=t.schedule_precision or "day",
         dependencies=list(
             db.execute(
                 select(TaskDependency.depends_on_task_id).where(TaskDependency.task_id == t.id)

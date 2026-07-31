@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import select, text
 
@@ -184,7 +184,19 @@ def _d(s: str | None) -> date | None:
 
 
 def _dt(s: str | None) -> datetime | None:
-    return datetime.fromisoformat(s + "T09:00:00") if s else None
+    """日付文字列を Asia/Tokyo のその日 00:00 として返す（工程の開始＝inclusive）。"""
+    return datetime.fromisoformat(s + "T00:00:00+09:00") if s else None
+
+
+def _dt_end(s: str | None) -> datetime | None:
+    """終了日（その日を含む）を exclusive な「翌日 00:00 (JST)」として返す。
+
+    工程の期間は [開始, 終了) の半開区間で保持する。日単位の工程は
+    00:00 始まり・翌日 00:00 終わりになり、0.5日単位では 12:00 が境界になる。
+    """
+    if not s:
+        return None
+    return datetime.fromisoformat(s + "T00:00:00+09:00") + timedelta(days=1)
 
 
 def get_or_create(session, model, code_field, code, **kw):
@@ -296,7 +308,7 @@ def run(reset_first: bool = False, allow_production: bool = False) -> None:
                 project_id=p1.id, site_id=site.id, parent_task_id=parent_id, wbs_code=wbs, name=name,
                 work_type_id=wtypes.get(wt).id if wt in wtypes else None,
                 process_type_id=ptypes.get(pt).id if pt in ptypes else None,
-                planned_start_at=_dt(ps), planned_finish_at=_dt(pe), actual_start_at=_dt(as_), actual_finish_at=_dt(ae),
+                planned_start_at=_dt(ps), planned_finish_at=_dt_end(pe), actual_start_at=_dt(as_), actual_finish_at=_dt_end(ae),
                 planned_progress=prog, actual_progress=prog, planned_workers=pw, actual_workers=aw,
                 manager_id=users["高橋 誠"].id, status=st,
             )

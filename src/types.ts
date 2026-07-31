@@ -42,6 +42,9 @@ export interface Project {
 // ============ 工程 (WBS/ガント) ============
 export type TaskStatus = '未着手' | '施工中' | '完了' | '一時停止' | '遅延'
 
+/** 入力・表示の粒度。日時が正で、これは粒度の判定にのみ使う。 */
+export type SchedulePrecision = 'day' | 'half_day' | 'time'
+
 export interface WbsTask {
   id: string
   wbs: string // 1 / 1.1 / 1.2 ...
@@ -49,11 +52,15 @@ export interface WbsTask {
   workType: string // 工種
   crew: string // 担当班
   manager: string // 責任者
-  planStart: string // YYYY-MM-DD
-  planEnd: string
-  actualStart: string | null
-  actualEnd: string | null
-  planDays: number
+  // 期間は [開始, 終了) の半開区間（ISO日時・Asia/Tokyo基準）。
+  // 終了は exclusive のため、1日工程は 00:00〜翌00:00、午前のみは 00:00〜12:00 になる。
+  planStartAt: string
+  planEndAt: string
+  actualStartAt: string | null
+  actualEndAt: string | null
+  /** 入力・表示の粒度（日単位 / 0.5日単位 / 任意時刻） */
+  precision: SchedulePrecision
+  planDays: number // 予定日数（0.5刻み）
   progress: number // 0-100
   planPeople: number
   actualPeople: number

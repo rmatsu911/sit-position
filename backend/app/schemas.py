@@ -176,6 +176,7 @@ class TaskOut(BaseModel):
     status: str
     delay_reason: str | None = None
     notes: str | None = None
+    schedule_precision: str = "day"
     dependencies: list[int] = Field(default_factory=list)
 
 
@@ -196,6 +197,7 @@ class TaskCreate(BaseModel):
     status: str = "未着手"
     delay_reason: str | None = None
     notes: str | None = None
+    schedule_precision: str = "day"
     dependency_ids: list[int] = Field(default_factory=list)
 
 
@@ -218,6 +220,7 @@ class TaskUpdate(BaseModel):
     status: str | None = None
     delay_reason: str | None = None
     notes: str | None = None
+    schedule_precision: str | None = None
     dependency_ids: list[int] | None = None
     change_reason: str | None = None
 

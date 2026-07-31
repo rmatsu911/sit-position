@@ -11,6 +11,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
+    "typecheck": "tsc -b --force",
     "test:timeline": "esbuild src/lib/timeline.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/timeline.test.mjs --log-level=error && node scripts/timeline.test.mjs"
   },
   "dependencies": {

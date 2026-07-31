@@ -1,5 +1,4 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from 'react'
-import { format } from 'date-fns'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Plus, FolderPlus, CornerDownRight, Pencil, Trash2, Copy, ClipboardPaste,
@@ -17,11 +16,14 @@ import { useProject, useProjects } from '../api/projects'
 import { ApiError } from '../lib/apiClient'
 import type { WbsTask } from '../types'
 
-import { dayWidthByMode, ROW_H, weekdayLabel, addDaysIso, type ViewMode } from './schedule/ganttUtils'
+import { dayWidthByMode, ROW_H, weekdayLabel, type ViewMode } from './schedule/ganttUtils'
 import {
-  createTimeline, groupSlots, nowJst, rangeFromPeriods, type Timeline,
+  createTimeline, durationInDays, endAtOf, formatJst, formatPeriod, groupSlots, jstDateKey, nowJst,
+  rangeFromPeriods, shiftDays, splitEndAt, splitStartAt, startAtOf, toJstIsoString,
+  type HalfDay, type Timeline,
 } from '../lib/timeline'
 import { JP_HOLIDAYS } from '../lib/holidays'
+import { ScheduleTabs } from './schedule/ScheduleTabs'
 
 const statusColor: Record<string, string> = {
   完了: '#2e8b57',
@@ -85,7 +87,7 @@ export default function Schedule() {
   // 時間軸は工程の実期間から動的に決める（固定の表示期間・固定の「今日」は持たない）。
   // ヘッダーもバーもこの timeline を唯一の基準にするため、両者がずれない。
   const timeline: Timeline = useMemo(() => {
-    const { from, to } = rangeFromPeriods(tasks.map((t) => ({ start: t.planStart, end: t.planEnd })))
+    const { from, to } = rangeFromPeriods(tasks.map((t) => ({ start: t.planStartAt, end: t.planEndAt })))
     return createTimeline({ scale: 'day', from, to, slotWidth: dw, holidays: JP_HOLIDAYS })
   }, [tasks, dw])
 
@@ -105,13 +107,14 @@ export default function Schedule() {
       const d = dragRef.current
       const p = preview
       if (d && p && (p.ds !== 0 || p.de !== 0)) {
-        const planStart = addDaysIso(d.s, p.ds)
-        const planEnd = addDaysIso(d.e, p.de)
+        // ISO日時のまま日数をずらすため、午前/午後の区分は保たれる
+        const planStartAt = shiftDays(d.s, p.ds)
+        const planEndAt = shiftDays(d.e, p.de)
         try {
           await updateTaskMutation.mutateAsync({
             id: Number(d.id), name: tasks.find((t) => t.id === d.id)?.name ?? '',
-            planned_start_at: `${planStart}T00:00:00+09:00`,
-            planned_finish_at: `${planEnd}T23:59:59+09:00`,
+            planned_start_at: planStartAt,
+            planned_finish_at: planEndAt,
             change_reason: 'ガントチャートのドラッグ変更',
           })
           toast('日程変更を保存しました', 'ok')
@@ -172,7 +175,7 @@ export default function Schedule() {
   function startDrag(e: React.PointerEvent, t: WbsTask, mode: 'move' | 'resize') {
     e.stopPropagation()
     if (t.isMilestone) return
-    dragRef.current = { id: t.id, mode, startX: e.clientX, s: t.planStart, e: t.planEnd }
+    dragRef.current = { id: t.id, mode, startX: e.clientX, s: t.planStartAt, e: t.planEndAt }
   }
 
   async function updateProgress() {
@@ -237,10 +240,10 @@ export default function Schedule() {
         const pr = rowIndexById.get(pred.id)!
         const sr = rowIndexById.get(t.id)!
         // 先行工程のバー右端（終了日の翌日0時）から、後続工程の開始位置へ引く
-        const predBar = timeline.spanOf(pred.planStart, pred.planEnd, { inclusiveEndDay: true })
+        const predBar = timeline.spanOf(pred.planStartAt, pred.planEndAt)
         const x1 = predBar.left + predBar.width
         const y1 = pr * ROW_H + 11
-        const x2 = timeline.xOf(t.planStart)
+        const x2 = timeline.xOf(t.planStartAt)
         const y2 = sr * ROW_H + 11
         lines.push({ x1, y1, x2, y2, critical: !!(t.critical && pred.critical) })
       }
@@ -309,6 +312,8 @@ export default function Schedule() {
           </div>
         }
       />
+
+      <ScheduleTabs projectId={projectId} />
 
       {/* ツールバー */}
       <div className="mb-2 flex flex-wrap items-center gap-1 rounded border border-line bg-white px-2 py-1.5">
@@ -404,10 +409,10 @@ export default function Schedule() {
                       <td className="border-r border-line px-2 text-ink-soft" style={{ width: 72 }}>{t.workType}</td>
                       <td className="border-r border-line px-2 text-ink-soft" style={{ width: 68 }}>{t.crew}</td>
                       <td className="border-r border-line px-2 text-ink-soft" style={{ width: 76 }}>{t.manager}</td>
-                      <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{t.planStart.slice(5)}</td>
-                      <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{t.planEnd.slice(5)}</td>
-                      <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{t.actualStart?.slice(5) ?? '—'}</td>
-                      <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{t.actualEnd?.slice(5) ?? '—'}</td>
+                      <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{edgeLabel(t.planStartAt, 'start', t.precision)}</td>
+                      <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{edgeLabel(t.planEndAt, 'end', t.precision)}</td>
+                      <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{t.actualStartAt ? edgeLabel(t.actualStartAt, 'start', t.precision) : '—'}</td>
+                      <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{t.actualEndAt ? edgeLabel(t.actualEndAt, 'end', t.precision) : '—'}</td>
                       <td className="border-r border-line px-2 text-center tabular-nums text-ink-soft" style={{ width: 44 }}>{t.planDays}</td>
                       <td className="border-r border-line px-2 text-right tabular-nums font-medium" style={{ width: 52 }}>{t.progress}%</td>
                       <td className="border-r border-line px-2 text-center tabular-nums text-ink-soft" style={{ width: 52 }}>{t.planPeople}</td>
@@ -506,7 +511,7 @@ export default function Schedule() {
             <div className="grid grid-cols-2 gap-3 text-[13px]">
               <Info label="工種" value={progressModal.workType} />
               <Info label="担当班" value={progressModal.crew} />
-              <Info label="予定期間" value={`${progressModal.planStart.slice(5)} 〜 ${progressModal.planEnd.slice(5)}`} />
+              <Info label="予定期間" value={formatPeriod(progressModal.planStartAt, progressModal.planEndAt, progressModal.precision)} />
               <Info label="ステータス" value={progressModal.status} />
             </div>
             <div>
@@ -550,6 +555,38 @@ export default function Schedule() {
   )
 }
 
+/** 工程の期間入力（1日単位／0.5日単位）。日時が正で、precision は入力粒度の判定に使う。 */
+type ScheduleUnit = 'day' | 'half'
+
+/** 既存工程の日時から、フォームの初期値（日付＋区分）を作る。 */
+function periodFormOf(task?: WbsTask, parent?: WbsTask) {
+  const src = task ?? parent
+  const todayKey = jstDateKey(nowJst())
+  if (!src) {
+    return {
+      unit: 'day' as ScheduleUnit,
+      planStartDate: todayKey, planStartHalf: 'AM' as HalfDay,
+      planEndDate: todayKey, planEndHalf: 'PM' as HalfDay,
+    }
+  }
+  const s0 = splitStartAt(src.planStartAt)
+  const e0 = splitEndAt(src.planEndAt)
+  return {
+    unit: (src.precision === 'half_day' ? 'half' : 'day') as ScheduleUnit,
+    planStartDate: s0.dateKey, planStartHalf: s0.half,
+    planEndDate: e0.dateKey, planEndHalf: e0.half,
+  }
+}
+
+function actualFormOf(task?: WbsTask) {
+  const s0 = task?.actualStartAt ? splitStartAt(task.actualStartAt) : null
+  const e0 = task?.actualEndAt ? splitEndAt(task.actualEndAt) : null
+  return {
+    actualStartDate: s0?.dateKey ?? '', actualStartHalf: (s0?.half ?? 'AM') as HalfDay,
+    actualEndDate: e0?.dateKey ?? '', actualEndHalf: (e0?.half ?? 'PM') as HalfDay,
+  }
+}
+
 function TaskEditor({
   open, editor, tasks, saving, onClose, onSave,
 }: {
@@ -564,13 +601,11 @@ function TaskEditor({
   const parent = editor?.parent
   const nextRoot = Math.max(0, ...tasks.filter((t) => t.isParent).map((t) => Number(t.wbs) || 0)) + 1
   const childCount = parent ? tasks.filter((t) => t.wbs.startsWith(`${parent.wbs}.`)).length : 0
-  const [form, setForm] = useState({
+  const initial = () => ({
     wbs: source ? (editor?.mode === 'copy' ? `${source.wbs}-copy` : source.wbs) : parent ? `${parent.wbs}.${childCount + 1}` : String(nextRoot),
     name: source ? `${source.name}${editor?.mode === 'copy' ? '（コピー）' : ''}` : '',
-    planStart: source?.planStart ?? parent?.planStart ?? format(nowJst(), 'yyyy-MM-dd'),
-    planEnd: source?.planEnd ?? parent?.planEnd ?? format(nowJst(), 'yyyy-MM-dd'),
-    actualStart: source?.actualStart ?? '',
-    actualEnd: source?.actualEnd ?? '',
+    ...periodFormOf(source, parent),
+    ...actualFormOf(source),
     plannedProgress: source?.progress ?? 0,
     actualProgress: source?.progress ?? 0,
     plannedWorkers: source?.planPeople ?? 0,
@@ -579,46 +614,109 @@ function TaskEditor({
     notes: '',
     predecessor: source?.predecessors[0] ?? '',
   })
+  const [form, setForm] = useState(initial)
+  const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     if (!open) return
-    setForm({
-      wbs: source ? (editor?.mode === 'copy' ? `${source.wbs}-copy` : source.wbs) : parent ? `${parent.wbs}.${childCount + 1}` : String(nextRoot),
-      name: source ? `${source.name}${editor?.mode === 'copy' ? '（コピー）' : ''}` : '',
-      planStart: source?.planStart ?? parent?.planStart ?? format(nowJst(), 'yyyy-MM-dd'),
-      planEnd: source?.planEnd ?? parent?.planEnd ?? format(nowJst(), 'yyyy-MM-dd'),
-      actualStart: source?.actualStart ?? '', actualEnd: source?.actualEnd ?? '',
-      plannedProgress: source?.progress ?? 0, actualProgress: source?.progress ?? 0,
-      plannedWorkers: source?.planPeople ?? 0, actualWorkers: source?.actualPeople ?? 0,
-      status: source?.status ?? '未着手', notes: '', predecessor: source?.predecessors[0] ?? '',
-    })
+    setForm(initial())
+    setError(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, source, parent, editor?.mode, childCount, nextRoot])
+
+  const half = form.unit === 'half'
+  // 0.5日単位でないときは 午前開始〜午後終了（＝丸1日）に固定する
+  const startAt = startAtOf(form.planStartDate, half ? form.planStartHalf : 'AM')
+  const endAt = endAtOf(form.planEndDate, half ? form.planEndHalf : 'PM')
+  const days = durationInDays(startAt, endAt)
+
   async function submit() {
     if (!form.name.trim() || !form.wbs.trim()) return
+    if (days <= 0) {
+      setError('終了は開始より後にしてください')
+      return
+    }
+    setError(null)
     const predecessor = tasks.find((t) => t.wbs === form.predecessor)
     await onSave({
       parent_task_id: parent ? Number(parent.id) : source?.isParent ? null : undefined,
       wbs_code: form.wbs.trim(), name: form.name.trim(),
-      planned_start_at: `${form.planStart}T00:00:00+09:00`,
-      planned_finish_at: `${form.planEnd}T23:59:59+09:00`,
-      actual_start_at: form.actualStart ? `${form.actualStart}T00:00:00+09:00` : null,
-      actual_finish_at: form.actualEnd ? `${form.actualEnd}T23:59:59+09:00` : null,
+      // 日時（開始=inclusive / 終了=exclusive）が正。precision は入力粒度の記録。
+      planned_start_at: startAt,
+      planned_finish_at: endAt,
+      actual_start_at: form.actualStartDate ? startAtOf(form.actualStartDate, half ? form.actualStartHalf : 'AM') : null,
+      actual_finish_at: form.actualEndDate ? endAtOf(form.actualEndDate, half ? form.actualEndHalf : 'PM') : null,
+      schedule_precision: half ? 'half_day' : 'day',
       planned_progress: form.plannedProgress, actual_progress: form.actualProgress,
       planned_workers: form.plannedWorkers, actual_workers: form.actualWorkers,
       status: form.status, notes: form.notes || null,
       dependency_ids: predecessor ? [Number(predecessor.id)] : [],
     })
   }
+
+  const halfSelect = (value: HalfDay, onChange: (v: HalfDay) => void) => (
+    <select className="field !w-20" value={value} onChange={(e) => onChange(e.target.value as HalfDay)}>
+      <option value="AM">午前</option>
+      <option value="PM">午後</option>
+    </select>
+  )
+
   return (
     <Modal open={open} onClose={onClose} title={editor?.mode === 'edit' ? '工程を編集' : editor?.mode === 'copy' ? '工程をコピー' : parent ? '子工程を追加' : '工程を追加'} size="lg"
       footer={<><button className="btn-default" onClick={onClose}>キャンセル</button><button className="btn-primary" disabled={saving || !form.name.trim()} onClick={submit}>{saving ? '保存中…' : '保存'}</button></>}>
+      {error && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-ng">{error}</div>}
       <div className="grid grid-cols-3 gap-3">
         <div><label className="label">WBS *</label><input className="field" value={form.wbs} onChange={(e) => setForm({ ...form, wbs: e.target.value })} /></div>
         <div className="col-span-2"><label className="label">工程名 *</label><input className="field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-        <div><label className="label">開始予定</label><input type="date" className="field" value={form.planStart} onChange={(e) => setForm({ ...form, planStart: e.target.value })} /></div>
-        <div><label className="label">終了予定</label><input type="date" className="field" value={form.planEnd} onChange={(e) => setForm({ ...form, planEnd: e.target.value })} /></div>
+
+        {/* 期間の単位。既定は1日単位で、0.5日を選んだときだけ午前/午後を出す */}
+        <div className="col-span-3 rounded border border-line bg-canvas px-3 py-2">
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label className="label">期間の単位</label>
+              <div className="flex items-center gap-0.5 rounded border border-line bg-white p-0.5">
+                {([['day', '1日単位'], ['half', '0.5日単位']] as const).map(([v, label]) => (
+                  <button key={v} type="button" onClick={() => setForm({ ...form, unit: v })}
+                    className={`rounded px-2.5 py-1 text-xs font-medium ${form.unit === v ? 'bg-sysken-500 text-white' : 'text-ink hover:bg-canvas'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="label">開始予定</label>
+              <div className="flex items-center gap-1">
+                <input type="date" className="field !w-36" value={form.planStartDate} onChange={(e) => setForm({ ...form, planStartDate: e.target.value })} />
+                {half && halfSelect(form.planStartHalf, (v) => setForm({ ...form, planStartHalf: v }))}
+              </div>
+            </div>
+            <div>
+              <label className="label">終了予定</label>
+              <div className="flex items-center gap-1">
+                <input type="date" className="field !w-36" value={form.planEndDate} onChange={(e) => setForm({ ...form, planEndDate: e.target.value })} />
+                {half && halfSelect(form.planEndHalf, (v) => setForm({ ...form, planEndHalf: v }))}
+              </div>
+            </div>
+            <div className="pb-2 text-[13px] text-ink-soft">
+              期間：<span className="font-semibold text-ink">{days > 0 ? `${days}日` : '—'}</span>
+            </div>
+          </div>
+        </div>
+
         <div><label className="label">先行工程</label><select className="field" value={form.predecessor} onChange={(e) => setForm({ ...form, predecessor: e.target.value })}><option value="">なし</option>{tasks.filter((t) => t.id !== source?.id).map((t) => <option key={t.id} value={t.wbs}>{t.wbs} {t.name}</option>)}</select></div>
-        <div><label className="label">開始実績</label><input type="date" className="field" value={form.actualStart} onChange={(e) => setForm({ ...form, actualStart: e.target.value })} /></div>
-        <div><label className="label">終了実績</label><input type="date" className="field" value={form.actualEnd} onChange={(e) => setForm({ ...form, actualEnd: e.target.value })} /></div>
+        <div>
+          <label className="label">開始実績</label>
+          <div className="flex items-center gap-1">
+            <input type="date" className="field" value={form.actualStartDate} onChange={(e) => setForm({ ...form, actualStartDate: e.target.value })} />
+            {half && form.actualStartDate && halfSelect(form.actualStartHalf, (v) => setForm({ ...form, actualStartHalf: v }))}
+          </div>
+        </div>
+        <div>
+          <label className="label">終了実績</label>
+          <div className="flex items-center gap-1">
+            <input type="date" className="field" value={form.actualEndDate} onChange={(e) => setForm({ ...form, actualEndDate: e.target.value })} />
+            {half && form.actualEndDate && halfSelect(form.actualEndHalf, (v) => setForm({ ...form, actualEndHalf: v }))}
+          </div>
+        </div>
         <div><label className="label">ステータス</label><select className="field" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as WbsTask['status'] })}>{['未着手','施工中','完了','一時停止','遅延'].map((s) => <option key={s}>{s}</option>)}</select></div>
         <div><label className="label">予定進捗 (%)</label><input type="number" min="0" max="100" className="field" value={form.plannedProgress} onChange={(e) => setForm({ ...form, plannedProgress: Number(e.target.value) })} /></div>
         <div><label className="label">実績進捗 (%)</label><input type="number" min="0" max="100" className="field" value={form.actualProgress} onChange={(e) => setForm({ ...form, actualProgress: Number(e.target.value) })} /></div>
@@ -671,9 +769,9 @@ function GanttRow({
 }) {
   const ds = preview?.ds ?? 0
   const de = preview?.de ?? 0
-  // ドラッグ中はプレビュー分だけ日付をずらしてから座標化する
-  const planBar = timeline.spanOf(addDaysIso(t.planStart, ds), addDaysIso(t.planEnd, de), { inclusiveEndDay: true })
-  const baseBar = timeline.spanOf(t.planStart, t.planEnd, { inclusiveEndDay: true })
+  // ドラッグ中はプレビュー分だけ日付をずらしてから座標化する（区分=午前/午後は保たれる）
+  const planBar = timeline.spanOf(shiftDays(t.planStartAt, ds), shiftDays(t.planEndAt, de))
+  const baseBar = timeline.spanOf(t.planStartAt, t.planEndAt)
   const planLeft = planBar.left
   const planW = planBar.width
   const top = row * ROW_H
@@ -690,11 +788,12 @@ function GanttRow({
 
   // 実績バー（終了実績が無い＝進行中は本日まで伸ばす）
   let actualEl = null
-  if (t.actualStart) {
-    const aEnd = t.actualEnd ?? format(nowJst(), 'yyyy-MM-dd')
-    const actualBar = timeline.spanOf(t.actualStart, aEnd, { inclusiveEndDay: true })
+  if (t.actualStartAt) {
+    const aEndAt = t.actualEndAt ?? toJstIsoString(nowJst())
+    const actualBar = timeline.spanOf(t.actualStartAt, aEndAt)
     actualEl = (
-      <div className="absolute rounded-sm" style={{ top: top + 18, left: actualBar.left, width: actualBar.width, height: 7, background: '#2e8b57', opacity: 0.9 }} title={`実績 ${t.actualStart.slice(5)}〜${aEnd.slice(5)}`} />
+      <div className="absolute rounded-sm" style={{ top: top + 18, left: actualBar.left, width: actualBar.width, height: 7, background: '#2e8b57', opacity: 0.9 }}
+        title={`実績 ${formatPeriod(t.actualStartAt, aEndAt, t.precision)}`} />
     )
   }
 
@@ -721,7 +820,7 @@ function GanttRow({
         onContextMenu={onContext}
         onClick={onSelect}
         onDoubleClick={onOpenProgress}
-        title={`${t.name} ｜ 予定 ${t.planStart.slice(5)}〜${t.planEnd.slice(5)} ｜ 進捗${t.progress}% ｜ ${t.actualPeople || t.planPeople}名`}
+        title={`${t.name} ｜ 予定 ${formatPeriod(t.planStartAt, t.planEndAt, t.precision)}（${t.planDays}日） ｜ 進捗${t.progress}% ｜ ${t.actualPeople || t.planPeople}名`}
       >
         {/* 進捗塗り */}
         <div className="absolute left-0 top-0 h-full rounded-l-sm bg-black/25" style={{ width: `${t.progress}%` }} />
@@ -749,6 +848,16 @@ function ForecastView() {
       </p>
     </div>
   )
+}
+
+/**
+ * 左表の日付セル表示。0.5日単位の工程だけ「午前／午後」を併記する。
+ * 終了は exclusive のため、表示用に日付＋区分へ戻してから整形する。
+ */
+function edgeLabel(iso: string, edge: 'start' | 'end', precision: WbsTask['precision']): string {
+  const { dateKey, half } = edge === 'start' ? splitStartAt(iso) : splitEndAt(iso)
+  const date = formatJst(dateKey, 'MM-dd')
+  return precision === 'half_day' ? `${date} ${half === 'AM' ? '午前' : '午後'}` : date
 }
 
 function Info({ label, value }: { label: string; value: string }) {

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/apiClient'
+import { durationInDays, endAtOf, jstDateKey, startAtOf } from '../lib/timeline'
 import type { WbsTask } from '../types'
 
 // バックエンド TaskOut に対応
@@ -26,6 +27,7 @@ export interface ApiTask {
   status: string
   delay_reason: string | null
   notes: string | null
+  schedule_precision: string
   dependencies: number[]
 }
 
@@ -34,11 +36,8 @@ const CRITICAL_NAMES = new Set([
   '接続損失測定', '光成端', '切替工', '切替作業', '通信試験', '完成検査', '引き渡し',
 ])
 
-function ymd(iso: string | null): string | null {
-  return iso ? iso.slice(0, 10) : null
-}
-
-// API のタスクを既存ガント用 WbsTask 形式へ変換（工程 read の表示互換）
+// API のタスクを既存ガント用 WbsTask 形式へ変換。
+// 日時は丸めずそのまま保持する（0.5日=午前/午後を表現するため）。
 export function toWbsTasks(rows: ApiTask[]): WbsTask[] {
   const sorted = [...rows].sort((a, b) => (a.wbs_code ?? '').localeCompare(b.wbs_code ?? '', 'en', { numeric: true }))
   const wbsById = new Map(rows.map((t) => [t.id, t.wbs_code ?? String(t.id)]))
@@ -46,12 +45,10 @@ export function toWbsTasks(rows: ApiTask[]): WbsTask[] {
     const wbs = t.wbs_code ?? String(t.id)
     const isParent = !wbs.includes('.')
     const predecessors = t.dependencies.map((id) => wbsById.get(id)).filter((v): v is string => !!v)
-    const ps = ymd(t.planned_start_at) ?? '2026-06-01'
-    const pe = ymd(t.planned_finish_at) ?? ps
-    const planDays = Math.max(
-      0,
-      Math.round((new Date(pe).getTime() - new Date(ps).getTime()) / 86400000) + 1,
-    )
+    // 日時が無い工程は「今日1日」として扱う（バーを描けない状態を作らない）
+    const fallbackStart = startAtOf(jstDateKey(new Date()), 'AM')
+    const planStartAt = t.planned_start_at ?? fallbackStart
+    const planEndAt = t.planned_finish_at ?? endAtOf(jstDateKey(planStartAt), 'PM')
     return {
       id: String(t.id),
       wbs,
@@ -59,11 +56,12 @@ export function toWbsTasks(rows: ApiTask[]): WbsTask[] {
       workType: t.work_type ?? '—',
       crew: t.crew ?? '—',
       manager: t.manager ?? '—',
-      planStart: ps,
-      planEnd: pe,
-      actualStart: ymd(t.actual_start_at),
-      actualEnd: ymd(t.actual_finish_at),
-      planDays,
+      planStartAt,
+      planEndAt,
+      actualStartAt: t.actual_start_at,
+      actualEndAt: t.actual_finish_at,
+      precision: (t.schedule_precision as WbsTask['precision']) ?? 'day',
+      planDays: durationInDays(planStartAt, planEndAt),
       progress: t.actual_progress,
       planPeople: t.planned_workers,
       actualPeople: t.actual_workers,
@@ -102,6 +100,7 @@ export interface TaskWriteInput {
   status?: string
   delay_reason?: string | null
   notes?: string | null
+  schedule_precision?: string
   dependency_ids?: number[]
   change_reason?: string
 }

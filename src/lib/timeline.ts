@@ -34,8 +34,12 @@ export const DEFAULT_SLOT_WIDTH: Record<TimeScale, number> = {
   year: 120,
 }
 
-/** 極端に短い工程（0.5日など）でも視認できる最小バー幅(px)。 */
-export const MIN_BAR_WIDTH = 6
+/**
+ * バーの最小幅(px)。潰れて見えなくなるのを防ぐためだけの下限で、
+ * これで長さをごまかさない（0.5日は必ず1日の半分の実寸で描く）。
+ * 月表示など列幅が極端に狭いときでも実寸の比率が保たれるよう小さめにしている。
+ */
+export const MIN_BAR_WIDTH = 3
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 
@@ -60,6 +64,16 @@ export function toJst(value: DateInput): Date {
   return new Date(d.getTime() + (JST_OFFSET_MINUTES + d.getTimezoneOffset()) * 60_000)
 }
 
+/**
+ * JST壁時計の Date を、JSTオフセット付きのISO文字列へ戻す。
+ *
+ * `toJst()` は「絶対時刻 → JST壁時計」の一方向変換で冪等ではないため、
+ * 値を返す関数は Date ではなくこの形式の文字列を返し、再変換の事故を防ぐ。
+ */
+export function toJstIsoString(jstWall: Date): string {
+  return `${format(jstWall, "yyyy-MM-dd'T'HH:mm:ss")}+09:00`
+}
+
 /** JST壁時計の Date を `yyyy-MM-dd` などの書式で表示する。 */
 export function formatJst(value: DateInput, pattern: string): string {
   return format(toJst(value), pattern, { locale: ja })
@@ -73,6 +87,107 @@ export function jstDateKey(value: DateInput): string {
 /** 現在時刻（JST壁時計）。 */
 export function nowJst(): Date {
   return toJst(new Date())
+}
+
+// ===== 工程期間の粒度（日単位 / 0.5日単位 / 任意時刻） =====
+
+/**
+ * 入力・表示の粒度。日時が正であり、これは「どの粒度で入力・表示するか」の
+ * 判定にだけ使う（日時と二重管理しない）。
+ */
+export type SchedulePrecision = 'day' | 'half_day' | 'time'
+
+/** 午前 = 00:00〜12:00 / 午後 = 12:00〜翌0:00 */
+export type HalfDay = 'AM' | 'PM'
+
+/** 期間は [開始, 終了) の半開区間で扱う。終了は exclusive。 */
+export interface SchedulePeriod {
+  /** 開始日時（inclusive・ISO文字列） */
+  startAt: string
+  /** 終了日時（exclusive・ISO文字列） */
+  endAt: string
+}
+
+/**
+ * JSTの日付（`yyyy-MM-dd`）＋区分から、開始日時（inclusive）のISO文字列を作る。
+ * 午前＝その日の 00:00、午後＝その日の 12:00。
+ */
+export function startAtOf(dateKey: string, half: HalfDay = 'AM'): string {
+  return `${dateKey}T${half === 'PM' ? '12' : '00'}:00:00+09:00`
+}
+
+/**
+ * JSTの日付（`yyyy-MM-dd`）＋区分から、終了日時（exclusive）のISO文字列を作る。
+ * 「午前まで」＝ その日の 12:00、「午後まで」＝ 翌日の 00:00。
+ */
+export function endAtOf(dateKey: string, half: HalfDay = 'PM'): string {
+  if (half === 'AM') return `${dateKey}T12:00:00+09:00`
+  return `${format(addDays(toJst(dateKey), 1), 'yyyy-MM-dd')}T00:00:00+09:00`
+}
+
+/** 開始日時（inclusive）から、日付と区分へ戻す。 */
+export function splitStartAt(value: DateInput): { dateKey: string; half: HalfDay } {
+  const d = toJst(value)
+  return { dateKey: format(d, 'yyyy-MM-dd'), half: d.getHours() >= 12 ? 'PM' : 'AM' }
+}
+
+/**
+ * 終了日時（exclusive）から、日付と区分へ戻す。
+ * 12:00 → その日の「午前まで」、翌0:00 → 前日の「午後まで」。
+ */
+export function splitEndAt(value: DateInput): { dateKey: string; half: HalfDay } {
+  const d = toJst(value)
+  if (d.getHours() === 0 && d.getMinutes() === 0) {
+    // 翌日 00:00 = 前日の午後まで
+    return { dateKey: format(addDays(d, -1), 'yyyy-MM-dd'), half: 'PM' }
+  }
+  return { dateKey: format(d, 'yyyy-MM-dd'), half: 'AM' }
+}
+
+/**
+ * 日時を n 日ずらす（JSTのカレンダー日単位）。
+ * 時刻（午前=00:00 / 午後=12:00 の区分）は保たれるため、ガントのドラッグ移動で
+ * 半日工程の区分が失われない。
+ */
+export function shiftDays(value: DateInput, n: number): string {
+  return toJstIsoString(addDays(toJst(value), n))
+}
+
+/**
+ * 期間の長さを「日数」で返す（0.5刻み）。
+ * 同日の午前のみ／午後のみ = 0.5、同日の午前〜午後 = 1。
+ */
+export function durationInDays(startAt: DateInput, endAt: DateInput): number {
+  const s = toJst(startAt).getTime()
+  const e = toJst(endAt).getTime()
+  return Math.max(0, (e - s) / 86_400_000)
+}
+
+/** 期間が 0.5日単位（12:00 境界を含む）かどうか。表示の判定に使う。 */
+export function isHalfDayPeriod(startAt: DateInput, endAt: DateInput): boolean {
+  const s = toJst(startAt)
+  const e = toJst(endAt)
+  const onBoundary = (d: Date) => d.getMinutes() === 0 && (d.getHours() === 0 || d.getHours() === 12)
+  if (!onBoundary(s) || !onBoundary(e)) return false
+  return s.getHours() === 12 || e.getHours() === 12
+}
+
+/** 期間を「6/1 午後 〜 6/3 午前」のような日本語表記にする。 */
+export function formatPeriod(
+  startAt: DateInput,
+  endAt: DateInput,
+  precision: SchedulePrecision,
+  pattern = 'MM-dd',
+): string {
+  const s = splitStartAt(startAt)
+  const e = splitEndAt(endAt)
+  const sd = format(toJst(s.dateKey), pattern)
+  const ed = format(toJst(e.dateKey), pattern)
+  if (precision !== 'half_day') return sd === ed ? sd : `${sd}〜${ed}`
+  const label = (h: HalfDay) => (h === 'AM' ? '午前' : '午後')
+  return sd === ed && s.half === e.half
+    ? `${sd} ${label(s.half)}`
+    : `${sd} ${label(s.half)}〜${ed} ${label(e.half)}`
 }
 
 /** 単位の先頭へ丸める。 */
@@ -267,7 +382,7 @@ export function groupSlots(timeline: Timeline, by: 'day' | 'month' | 'year'): Sl
 export function rangeFromPeriods(
   periods: readonly { start?: string | null; end?: string | null }[],
   options?: { padDays?: number; includeToday?: boolean; now?: DateInput },
-): { from: Date; to: Date } {
+): { from: string; to: string } {
   const pad = options?.padDays ?? 7
   const now = options?.now ? toJst(options.now) : nowJst()
   const times: number[] = []
@@ -276,7 +391,10 @@ export function rangeFromPeriods(
     if (p.end) times.push(toJst(p.end).getTime())
   }
   if (!times.length) {
-    return { from: addDays(startOfDay(now), -pad * 2), to: addDays(startOfDay(now), pad * 4) }
+    return {
+      from: toJstIsoString(addDays(startOfDay(now), -pad * 2)),
+      to: toJstIsoString(addDays(startOfDay(now), pad * 4)),
+    }
   }
   let min = Math.min(...times)
   let max = Math.max(...times)
@@ -285,5 +403,8 @@ export function rangeFromPeriods(
     min = Math.min(min, now.getTime())
     max = Math.max(max, now.getTime())
   }
-  return { from: addDays(startOfDay(new Date(min)), -pad), to: addDays(startOfDay(new Date(max)), pad) }
+  return {
+    from: toJstIsoString(addDays(startOfDay(new Date(min)), -pad)),
+    to: toJstIsoString(addDays(startOfDay(new Date(max)), pad)),
+  }
 }

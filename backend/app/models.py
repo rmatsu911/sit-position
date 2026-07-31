@@ -206,6 +206,10 @@ class Task(Base, TimestampMixin, SoftDeleteMixin):
     status: Mapped[str] = mapped_column(String(32), default="未着手")
     delay_reason: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
+    # 入力・表示の粒度。日時(planned_*/actual_*)が正であり、この列は
+    # 「どの粒度で入力・表示するか」の判定だけに使う（日時と二重管理しない）。
+    # day = 日単位 / half_day = 0.5日単位(午前・午後) / time = 任意時刻(将来用)
+    schedule_precision: Mapped[str] = mapped_column(String(16), default="day", server_default="day")
 
 
 class TaskDependency(Base, TimestampMixin):

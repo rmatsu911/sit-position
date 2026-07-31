@@ -7,6 +7,9 @@ import Dashboard from './pages/Dashboard'
 import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
 import Schedule from './pages/Schedule'
+import CrossSchedule from './pages/schedule/CrossSchedule'
+import CrossMilestones from './pages/schedule/CrossMilestones'
+import ScheduleCalendar from './pages/schedule/ScheduleCalendar'
 import Photos from './pages/Photos'
 import Drawings from './pages/Drawings'
 import Quality from './pages/Quality'
@@ -35,8 +38,15 @@ export default function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/:id" element={<ProjectDetail />} />
+          {/* 工程管理のタブ（案件工程／横断工程／横断マイルストーン／カレンダー） */}
           <Route path="/projects/:id/schedule" element={<Schedule />} />
+          <Route path="/projects/:id/schedule/cross" element={<CrossSchedule />} />
+          <Route path="/projects/:id/schedule/milestones" element={<CrossMilestones />} />
+          <Route path="/projects/:id/schedule/calendar" element={<ScheduleCalendar />} />
           <Route path="/schedule" element={<Schedule />} />
+          <Route path="/schedule/cross" element={<CrossSchedule />} />
+          <Route path="/schedule/milestones" element={<CrossMilestones />} />
+          <Route path="/schedule/calendar" element={<ScheduleCalendar />} />
           <Route path="/photos" element={<Photos />} />
           <Route path="/drawings" element={<Drawings />} />
           <Route path="/quality" element={<Quality />} />

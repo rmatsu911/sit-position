@@ -135,6 +135,32 @@ AI Worker(分離)＋YOLO推論IF(交換可)＋正規化bbox＋既存UIへの実�
 - **テスト**：pytest **43件通過**、`tsc` エラー0、ESLint **エラー0**、`npm run build` 成功、
   `test:timeline` **21件通過**、全13ルートのブラウザ回帰で**コンソールエラー0・失敗リクエスト0**
 
+## Ver.0.3 Phase 1 で追加（0.5日単位の工程＋工程管理のタブ構造・2026-07-31）
+
+- **DB**：`tasks.schedule_precision`（`day` / `half_day` / `time`）を追加。migration `a1c7d3f90b21`。
+  **日時が正**で、precision は入力・表示の粒度判定にだけ使う（日時と二重管理しない）
+- **日時の意味を統一**：工程の期間を `[開始, 終了)` の半開区間（Asia/Tokyo）へ。
+  午前=00:00〜12:00 / 午後=12:00〜翌00:00、終了は exclusive。
+  同じ migration で既存工程の `09:00` プレースホルダを **日単位（00:00〜翌00:00）へ正規化**し、
+  半日として誤解釈されないようにした（表示上の期間は不変）。Seed も同じ形へ修正
+- **時間軸エンジン拡張**（`src/lib/timeline.ts`）：`startAtOf`/`endAtOf`/`splitStartAt`/`splitEndAt`/
+  `durationInDays`/`isHalfDayPeriod`/`formatPeriod`/`shiftDays` を追加。
+  **値を返す関数は Date ではなく ISO 文字列を返す**設計にし、`toJst()` の二重適用（9時間ずれ）を構造的に防止
+- **フロント**：`WbsTask` を `planStartAt`/`planEndAt`/`actualStartAt`/`actualEndAt`＋`precision` へ変更し、
+  アダプタの日付丸め（`ymd()`）を撤廃。ガントのバー・基準線・実績・依存線・ドラッグを日時基準に統一
+- **入力UI**：工程編集モーダルに「1日単位／0.5日単位」の切替（**既定は1日単位**）。
+  0.5日を選んだときだけ午前/午後を表示。期間（0.5刻み）をその場に表示し、終了≦開始はエラー表示
+- **タブ構造**：工程管理に `案件工程` / `横断工程` / `横断マイルストーン` / `カレンダー` を追加。
+  `/schedule/*` と `/projects/:id/schedule/*` の両方で直接開ける。
+  **未実装タブはダミーを出さず**「未実装です」＋実装予定の一覧のみ表示
+- **最小幅の是正**：`MIN_BAR_WIDTH` を 6→3px。月表示のような狭い列幅でも 0.5日 が 1日の半分の
+  実寸（比率0.50）で描かれ、最小幅で長さをごまかさない
+- **型検査ゲートの修正**：`npx tsc --noEmit` はソリューション構成のため**何も検査していなかった**。
+  `npm run typecheck`（`tsc -b`）を追加（`npm run build` 内では検査されていたため実害なし）
+- **テスト**：pytest **45件**（半日の往復・既定day・9時間ずれ検出を追加）、
+  `test:timeline` **46件**、ESLint 0 error、build 成功、13ルート回帰でコンソールエラー0。
+  実ブラウザで 半日の登録→保存→再読込→ドラッグ移動→再読込、日/週/月表示、折りたたみ、依存線を確認
+
 ## 残課題（未実装・設計は MASTER_SPEC / ai-design 参照）
 
 - **実weights未配置**（`MODEL_NOT_AVAILABLE`）。SYSKEN実写真のアノテーション→学習→`AI_MODEL_PATH`配置は今後（基盤は完成）
@@ -144,12 +170,11 @@ AI Worker(分離)＋YOLO推論IF(交換可)＋正規化bbox＋既存UIへの実�
 
 ## 次回作業（1〜3項目）
 
-1. **Phase 1**：AM/PM（0.5日）対応＝`src/api/tasks.ts` の日付丸め（`ymd()`）を撤廃して時刻を保持し、
-   日スケールを2スロット化。工程管理へタブ（案件工程／横断工程／横断マイルストーン／カレンダー）の器を追加
-2. **Phase 2**：横断工程表（複数案件の集約API・案件別/担当者別/担当会社別グルーピング・
+1. **Phase 2**：横断工程表（複数案件の集約API・案件別/担当者別/担当会社別グルーピング・
    3時間〜年の粒度・保存済み検索条件）。`tasks` への担当会社紐付けと `saved_searches` の migration が必要
-3. **Phase 3**：`milestones` テーブル新設＋横断マイルストーン（Excel出力は既存 `reports.py` を再利用）と
+2. **Phase 3**：`milestones` テーブル新設＋横断マイルストーン（Excel出力は既存 `reports.py` を再利用）と
    共通カレンダーイベントAPI
+3. **Phase 4以降**：個人設定（表示設定・職種と権限の分離・カレンダー購読）、報告強化、現場連絡、AI高度化
 
 ## 変更ログ（差分のみ追記）
 
@@ -163,3 +188,4 @@ AI Worker(分離)＋YOLO推論IF(交換可)＋正規化bbox＋既存UIへの実�
 - 2026-07-23 Ver.0.2.1 完了（実運用化総点検・デモ要素撤去：APP_ENV環境分離＋Seed production ガード、AI/品質/工程/要員/図面/案件詳細/設定 の固定ダミー撤去→Empty State 化、API失敗時の固定フォールバック全廃、未使用固定データ7ファイル削除、DEMO/Seed表示は開発環境のみ、pytest41/tsc/build/スモーク。本番相当で表示される架空業務データは残存なし）
 - 2026-07-24 Ver.0.2.3 業務フロー・UI回帰総点検（第1段階）：案件CREATE→LIST→DETAIL→UPDATE→再取得の統合テストを追加。案件詳細に編集UIを追加しQuery prefix invalidation＋active refetchを明示。工程画面の固定`project_id=1`を廃止して案件IDルーティングへ統一。本格WBS＋ガントUIを維持したまま工程追加/親子/編集/コピー/削除/進捗更新/完了/依存関係/ドラッグ日程変更をTask APIへ接続し、工程変更履歴・監査ログ・reload保持を維持。Task APIに依存関係入出力と論理削除を追加。pytest43件、TypeScript、production build、lint（警告のみ）成功。Cloud Browser接続タイムアウトのため実ブラウザ確認は未完了。AI関連は未変更。
 - 2026-07-31 Ver.0.3 Phase 0 完了（改修基盤：時間軸エンジン `src/lib/timeline.ts` 新設で日付→座標を集約、ガントの固定表示期間・固定「今日」を撤廃し実データから動的算出、ESLintをゲート化[12 error→0]、時間軸21ケース＋全ルート回帰スクリプトを追加。JST二重変換バグを検出・修正。画面の見た目・操作は非変更。pytest43/tsc/lint/build/timeline21/E2Eエラー0）
+- 2026-07-31 Ver.0.3 Phase 1 完了（0.5日単位の工程：tasks.schedule_precision 追加[migration a1c7d3f90b21]、期間を[開始,終了)の半開区間へ統一し既存の09:00を日単位へ正規化、timeline に半日ユーティリティ追加[値はISO文字列を返し二重変換を防止]、WbsTaskを日時基準へ変更、編集UIに1日/0.5日切替[既定1日]、工程管理に4タブ追加[未実装タブはダミーなし]、MIN_BAR_WIDTH 6→3で最小幅による見た目のごまかしを排除、npm run typecheck 追加。pytest45/timeline46/lint0/build/13ルート回帰エラー0）
