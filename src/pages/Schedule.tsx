@@ -360,7 +360,13 @@ export default function Schedule() {
 
       {/* ガント本体 */}
       <Panel className="overflow-hidden" bodyClassName="p-0">
-        <div className="thin-scroll flex max-h-[calc(100vh-320px)] overflow-y-auto">
+        {/*
+          items-start が必須。既定の stretch だと左右の枠が親と同じ高さに引き伸ばされ、
+          overflow-x-auto の指定によって縦方向も auto 扱いになるため、左の工程表と
+          右のガントがそれぞれ独立したスクロール枠になり縦位置がずれる。
+          items-start で各枠の高さを内容と同じにすると、縦スクロールは外側の1箇所だけになる。
+        */}
+        <div className="thin-scroll flex max-h-[calc(100vh-320px)] items-start overflow-y-auto">
           {/* 左：工程表（横スクロール・固定列） */}
           <div className="thin-scroll shrink-0 overflow-x-auto border-r border-line" style={{ width: 560 }}>
             <table className="grid-table text-[12.5px]">

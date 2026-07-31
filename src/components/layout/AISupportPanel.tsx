@@ -12,6 +12,7 @@ export function AISupportPanel() {
 
   return (
     <aside
+      data-print="hide"
       className={`h-full shrink-0 overflow-hidden bg-white transition-[width] duration-150 ${
         aiPanelOpen ? 'w-[320px] border-l border-line' : 'w-0'
       }`}

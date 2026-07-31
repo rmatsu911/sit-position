@@ -7,6 +7,7 @@ export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar } = useApp()
   return (
     <aside
+      data-print="hide"
       className={`flex h-full shrink-0 flex-col border-r border-line bg-sysken-700 text-slate-100 transition-[width] duration-150 ${
         sidebarCollapsed ? 'w-14' : 'w-56'
       }`}

@@ -17,9 +17,10 @@ import { StatusBadge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
 import { ContextMenu, type MenuItem } from '../../components/ui/ContextMenu'
 import { useApp } from '../../context/AppContext'
+import { useAuth } from '../../auth/AuthContext'
 import { ApiError } from '../../lib/apiClient'
 import {
-  createTimeline, DEFAULT_SLOT_WIDTH, formatPeriod, nowJst, rangeFromPeriods,
+  createTimeline, DEFAULT_SLOT_WIDTH, formatJst, formatPeriod, nowJst, rangeFromPeriods,
   shiftDays, snapDelta, snapStepOf, toJstIsoString,
   type SchedulePrecision, type TimeScale, type Timeline,
 } from '../../lib/timeline'
@@ -29,7 +30,7 @@ import {
   downloadCrossSchedule, EMPTY_FILTERS, hasAnyFilter, toWbsTask, useCreateSavedSearch,
   useCrossSchedule, useCrossScheduleOptions, useDeleteSavedSearch, useSavedSearches,
   useUpdateCrossTask,
-  type CrossFilters, type CrossScheduleOptions, type CrossTask, type SystemDetection,
+  type CrossFilters, type CrossScheduleOptions, type CrossTask, type IdName, type SystemDetection,
 } from '../../api/crossSchedule'
 import { ScheduleTabs } from './ScheduleTabs'
 import {
@@ -415,6 +416,8 @@ export default function CrossSchedule() {
 
   return (
     <div>
+      {/* 画面用の見出しと操作ボタン。印刷では PrintHeader が代わりを務める */}
+      <div data-print="hide">
       <PageHeader
         breadcrumb={[{ label: '案件一覧', to: '/projects' }, { label: '工程管理', to: '/schedule' }, { label: '横断工程' }]}
         title="横断工程"
@@ -447,10 +450,21 @@ export default function CrossSchedule() {
         }
       />
 
-      <ScheduleTabs projectId={scopedProjectId} />
+        <ScheduleTabs projectId={scopedProjectId} />
+      </div>
+
+      {/* 印刷時だけ出す見出し（画面・Excel・PDF と同じ条件・同じ件数であることを紙面にも残す） */}
+      <PrintHeader
+        filters={filters}
+        options={options}
+        group={group}
+        total={data?.total ?? 0}
+        shown={data?.tasks.filter((t) => t.matched).length ?? 0}
+        scopedProjectId={scopedProjectId}
+      />
 
       {/* ツールバー */}
-      <div className="mb-2 flex flex-wrap items-center gap-2 rounded border border-line bg-white px-2 py-1.5">
+      <div data-print="hide" className="mb-2 flex flex-wrap items-center gap-2 rounded border border-line bg-white px-2 py-1.5">
         <input
           className="field !w-56 !py-1 text-xs"
           placeholder="工程名・案件名・WBS・備考"
@@ -470,7 +484,11 @@ export default function CrossSchedule() {
         </span>
       </div>
 
-      {filterOpen && options && <FilterPanel filters={filters} options={options} onChange={setFilters} />}
+      {filterOpen && options && (
+        <div data-print="hide">
+          <FilterPanel filters={filters} options={options} onChange={setFilters} />
+        </div>
+      )}
 
       {/* 検索中 / 取得失敗 / 0件 を区別して表示する（ダミー工程は出さない） */}
       {isError && (
@@ -497,7 +515,11 @@ export default function CrossSchedule() {
         </div>
       )}
 
-      {!!detections.length && <DetectionPanel detections={detections} />}
+      {!!detections.length && (
+        <div data-print="hide">
+          <DetectionPanel detections={detections} />
+        </div>
+      )}
 
       {/*
         一覧＋ガント。
@@ -508,7 +530,7 @@ export default function CrossSchedule() {
         なり、左一覧と右ガントの縦位置が常に一致する。
       */}
       <Panel className="overflow-hidden" bodyClassName="p-0">
-        <div className="thin-scroll flex max-h-[calc(100vh-380px)] items-start overflow-y-auto">
+        <div data-print="sheet" className="thin-scroll flex max-h-[calc(100vh-380px)] items-start overflow-y-auto">
           <div className="thin-scroll shrink-0 overflow-x-auto border-r border-line" style={{ width: LEFT_PANE_W }}>
             <table className="grid-table text-[12.5px]">
               <thead className="sticky top-0 z-20 bg-canvas">
@@ -571,7 +593,8 @@ export default function CrossSchedule() {
             </table>
           </div>
 
-          <div ref={ganttRef} className="thin-scroll flex-1 overflow-x-auto">
+          {/* ガントは紙面の幅に収まらないため印刷しない（工程一覧を印刷する） */}
+          <div ref={ganttRef} data-print="hide" className="thin-scroll flex-1 overflow-x-auto">
             <div style={{ width: totalW }}>
               <GanttHeader timeline={timeline} />
               <div className="relative" style={{ height: bodyH }}>
@@ -604,7 +627,9 @@ export default function CrossSchedule() {
             </div>
           </div>
         </div>
-        <GanttLegend note="工程バーはドラッグで移動（0.5日単位の工程は0.5日刻み）／右端で期間変更 ／ 右クリックで操作メニュー" />
+        <div data-print="hide">
+          <GanttLegend note="工程バーはドラッグで移動（0.5日単位の工程は0.5日刻み）／右端で期間変更 ／ 右クリックで操作メニュー" />
+        </div>
       </Panel>
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
@@ -645,6 +670,79 @@ function ToolButton({
       <Icon size={15} className="text-sysken-600" />
       {label}
     </button>
+  )
+}
+
+/**
+ * 印刷時だけ紙面に出す見出し。
+ * 出力日時・出力者・適用した検索条件・対象件数を残し、画面／Excel／PDF と
+ * 同じ条件・同じ件数で出力されたことを紙の上でも確認できるようにする。
+ */
+function PrintHeader({
+  filters, options, group, total, shown, scopedProjectId,
+}: {
+  filters: CrossFilters
+  options: CrossScheduleOptions | undefined
+  group: GroupKey
+  total: number
+  shown: number
+  scopedProjectId?: number
+}) {
+  const { user } = useAuth()
+  const nameOf = (items: IdName[] | undefined, ids: number[]) =>
+    ids.map((id) => {
+      const hit = items?.find((x) => x.id === id)
+      return hit ? `${hit.name}（ID ${id}）` : `ID ${id}`
+    }).join('、')
+
+  const conditions: [string, string][] = []
+  if (scopedProjectId) {
+    const p = options?.projects.find((x) => x.id === scopedProjectId)
+    conditions.push(['対象案件', p ? `${p.construction_number} ${p.name}` : `ID ${scopedProjectId}`])
+  }
+  if (filters.q.trim()) conditions.push(['キーワード', filters.q.trim()])
+  if (filters.dateFrom || filters.dateTo) {
+    conditions.push(['表示期間', `${filters.dateFrom || '—'} 〜 ${filters.dateTo || '—'}`])
+  }
+  if (filters.projectIds.length) {
+    conditions.push(['案件', filters.projectIds.map((id) => {
+      const p = options?.projects.find((x) => x.id === id)
+      return p ? `${p.construction_number} ${p.name}` : `ID ${id}`
+    }).join('、')])
+  }
+  if (filters.constructionTypeIds.length) conditions.push(['工事区分・業種', nameOf(options?.construction_types, filters.constructionTypeIds)])
+  if (filters.departmentIds.length) conditions.push(['部署', nameOf(options?.departments, filters.departmentIds)])
+  if (filters.managerIds.length) conditions.push(['担当者', nameOf(options?.managers, filters.managerIds)])
+  if (filters.companyIds.length) conditions.push(['担当会社', nameOf(options?.companies, filters.companyIds)])
+  if (filters.statuses.length) conditions.push(['状態', filters.statuses.join('、')])
+  if (filters.delayedOnly) conditions.push(['遅延のみ', 'はい'])
+  if (filters.unassignedOnly) conditions.push(['未割当のみ', 'はい'])
+  if (!conditions.length) conditions.push(['検索条件', '指定なし（全件）'])
+
+  return (
+    <div data-print="only" className="hidden">
+      <h1 className="mb-1 text-[16px] font-bold text-ink">横断工程表</h1>
+      <table className="mb-3 text-[11px]">
+        <tbody>
+          <tr>
+            <th className="pr-2 text-left font-semibold">出力日時</th>
+            <td className="pr-6">{formatJst(nowJst(), 'yyyy/MM/dd HH:mm')}</td>
+            <th className="pr-2 text-left font-semibold">出力者</th>
+            <td className="pr-6">{user ? `${user.name}（${user.role}）` : '—'}</td>
+            <th className="pr-2 text-left font-semibold">表示の切替</th>
+            <td className="pr-6">{GROUPS.find((g) => g.key === group)?.label ?? '—'}</td>
+            <th className="pr-2 text-left font-semibold">対象工程数</th>
+            <td>{total} 件{shown !== total ? `（表示 ${shown} 件）` : ''}</td>
+          </tr>
+          {conditions.map(([label, value]) => (
+            <tr key={label}>
+              <th className="pr-2 text-left align-top font-semibold">{label}</th>
+              <td colSpan={7}>{value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
 

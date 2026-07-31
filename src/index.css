@@ -94,3 +94,80 @@ body {
 .today-line {
   box-shadow: 0 0 0 0.5px rgba(214, 69, 69, 0.35);
 }
+
+/* ============================================================
+   印刷（横断工程表の一覧を A4 横で出力する）
+
+   window.print() を呼ぶだけでは、サイドバー・ツールバー・スクロール枠の
+   高さ制限がそのまま残り、1ページ目に一部しか出ない。印刷時は業務で必要な
+   「見出し＋検索条件＋工程一覧」だけを残す。
+   ============================================================ */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  /* 画面操作のための要素は印刷しない（サイドバー・ヘッダー・ツールバー・ボタン等） */
+  [data-print='hide'] {
+    display: none !important;
+  }
+
+  /* 画面は h-screen / overflow-hidden で1画面に収める作りなので、紙面では解除する */
+  [data-print='shell'] {
+    display: block !important;
+    height: auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+  }
+  [data-print='main'] {
+    overflow: visible !important;
+  }
+  [data-print='main'] > div {
+    padding: 0 !important;
+  }
+
+  /* 印刷時だけ出す見出し（出力日時・出力者・適用条件） */
+  [data-print='only'] {
+    display: block !important;
+  }
+
+  /* スクロール枠の高さ制限を外し、全行を紙に流す */
+  [data-print='sheet'] {
+    max-height: none !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+  [data-print='sheet'] > * {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+  }
+
+  /* sticky は紙面では効かないうえ重なりの原因になるため解除する */
+  [data-print='sheet'] th,
+  [data-print='sheet'] td {
+    position: static !important;
+    background: #fff !important;
+  }
+
+  /* 行が途中で切れないようにする */
+  [data-print='sheet'] tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  [data-print='sheet'] thead {
+    display: table-header-group;
+  }
+
+  .panel {
+    box-shadow: none !important;
+    border-color: #94a3b8 !important;
+  }
+}

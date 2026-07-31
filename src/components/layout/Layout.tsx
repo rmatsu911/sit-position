@@ -7,11 +7,13 @@ import { ToastHost } from '../ui/ToastHost'
 import { ConfirmDialog } from '../ui/ConfirmDialog'
 export function Layout() {
   return (
-    <div className="flex h-screen w-screen min-w-[1280px] flex-col overflow-hidden bg-canvas">
+    /* data-print は印刷時だけ効く目印（src/index.css の @media print を参照）。
+       画面表示のレイアウトには影響しない。 */
+    <div data-print="shell" className="flex h-screen w-screen min-w-[1280px] flex-col overflow-hidden bg-canvas">
       <AppHeader />
-      <div className="flex min-h-0 flex-1">
+      <div data-print="shell" className="flex min-h-0 flex-1">
         <Sidebar />
-        <main className="thin-scroll min-w-0 flex-1 overflow-y-auto">
+        <main data-print="main" className="thin-scroll min-w-0 flex-1 overflow-y-auto">
           <div className="min-h-full p-6">
             <Outlet />
           </div>

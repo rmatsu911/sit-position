@@ -35,7 +35,7 @@ export function AppHeader() {
   const roleLabel = user ? (ROLE_LABELS[user.role] ?? user.role) : ''
 
   return (
-    <header className="relative z-30 flex h-14 shrink-0 items-center gap-4 border-b border-line bg-white px-4">
+    <header data-print="hide" className="relative z-30 flex h-14 shrink-0 items-center gap-4 border-b border-line bg-white px-4">
       <button onClick={toggleSidebar} className="rounded p-1.5 text-ink-soft hover:bg-canvas" title="メニュー開閉">
         <MenuIcon size={20} />
       </button>

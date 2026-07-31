@@ -214,6 +214,24 @@ AI Worker(分離)＋YOLO推論IF(交換可)＋正規化bbox＋既存UIへの実�
   ESLint 0 error、build 成功、**18ルート**の回帰でコンソールエラー0・失敗リクエスト0、
   `scripts/cross-schedule-measure.mjs` の**ピクセル実測25件**すべて一致
 
+### Phase 2 完了処理（2026-07-31）
+
+- **既存「案件工程」の縦スクロールずれを是正**：横断工程で見つけた原因（flex の既定
+  `stretch` と `overflow-x-auto` の組み合わせで左右が独立したスクロール枠になる）は
+  既存画面にも当てはまっていたため、同じ `items-start` を適用。
+  レイアウト・配色・列構成・横スクロール・固定列・折りたたみ・依存線・ドラッグは非変更。
+  実測で左一覧の行と右ガントのバーがともに **320px** 動くことを確認
+- **印刷を実装**：`window.print()` だけでは紙面が崩れるため、`@media print`
+  （`src/index.css`）と `data-print` 属性で帳票として成立させた。
+  サイドバー・アプリヘッダー・ステータスバー・ツールバー・絞り込み・システム検知・
+  凡例・タブ・操作ボタン・ガントを除外し、印刷用見出し（帳票名／出力日時／出力者／
+  表示の切替／対象工程数／適用した検索条件）＋工程一覧を出力する。
+  スクロール枠の高さ制限と `sticky` を解除して全行を紙面に流す。
+  **印刷される工程行数がAPIの返却件数と一致**することを実測で確認（画面・Excel・PDF と同条件）
+- **最終回帰**：`scripts/cross-schedule-final.mjs` を追加（**39件すべて一致**）。
+  複数案件 / 未割当 / 同名でIDが異なる担当会社 / 3種のグループ切替 / truncated /
+  半日ドラッグと再読込 / 既存案件工程と横断工程の縦位置 / コンソールエラー0・失敗リクエスト0
+
 ## 残課題（未実装・設計は MASTER_SPEC / ai-design 参照）
 
 - **実weights未配置**（`MODEL_NOT_AVAILABLE`）。SYSKEN実写真のアノテーション→学習→`AI_MODEL_PATH`配置は今後（基盤は完成）
@@ -241,3 +259,4 @@ AI Worker(分離)＋YOLO推論IF(交換可)＋正規化bbox＋既存UIへの実�
 - 2026-07-31 Ver.0.3 Phase 0 完了（改修基盤：時間軸エンジン `src/lib/timeline.ts` 新設で日付→座標を集約、ガントの固定表示期間・固定「今日」を撤廃し実データから動的算出、ESLintをゲート化[12 error→0]、時間軸21ケース＋全ルート回帰スクリプトを追加。JST二重変換バグを検出・修正。画面の見た目・操作は非変更。pytest43/tsc/lint/build/timeline21/E2Eエラー0）
 - 2026-07-31 Ver.0.3 Phase 1 完了（0.5日単位の工程：tasks.schedule_precision 追加[migration a1c7d3f90b21]、期間を[開始,終了)の半開区間へ統一し既存の09:00を日単位へ正規化、timeline に半日ユーティリティ追加[値はISO文字列を返し二重変換を防止]、WbsTaskを日時基準へ変更、編集UIに1日/0.5日切替[既定1日]、工程管理に4タブ追加[未実装タブはダミーなし]、MIN_BAR_WIDTH 6→3で最小幅による見た目のごまかしを排除、npm run typecheck 追加。pytest45/timeline46/lint0/build/13ルート回帰エラー0）
 - 2026-07-31 Ver.0.3 Phase 2 完了（横断工程表：tasks.company_id と saved_searches を追加[migration b3e5a71c2d40]、GET /schedule/cross 集約API[複合フィルタ・N+1回避・権限と案件スコープをAPI側で適用・WBS親子を維持]、cross/options と cross/export[Excel/PDF]、保存検索条件CRUD、横断工程画面[案件別/担当者別/担当会社別・3時間〜年・列表示設定・URLクエリ連動・縦スクロール同期]、編集操作[進捗/担当者/担当会社/0.5日スナップドラッグ/右クリック・楽観更新のロールバック]、確定計算のシステム検知[AI予測とは表示しない]、ガント共通部品を GanttParts.tsx へ抽出して案件工程と共有、MIN_BAR_WIDTH 3→1 と左一覧の独立スクロールを是正。pytest56/timeline75/lint0/build/18ルート回帰エラー0/実ブラウザ実測25件一致）
+- 2026-07-31 Ver.0.3 Phase 2 完了処理（既存「案件工程」の縦スクロールずれを items-start で是正[レイアウト非変更・左右とも320px一致を実測]、横断工程表の印刷を実装[@media print と data-print でサイドバー/ツールバー/ガント等を除外し、出力日時・出力者・表示の切替・対象工程数・適用条件つきの帳票に。印刷行数=API返却件数を実測で一致確認]、最終回帰スクリプト cross-schedule-final.mjs を追加。pytest56/timeline75/lint0/build/18ルート回帰エラー0/座標実測25件/完了確認39件すべて一致）
