@@ -7,7 +7,16 @@ from sqlalchemy.orm import Session
 from app.core.audit import write_audit
 from app.core.db import get_db
 from app.core.deps import ensure_project_access, get_current_user, require_roles
-from app.models import ProcessType, Task, TaskAsset, TaskChangeHistory, TaskDependency, User, WorkType
+from app.models import (
+    Company,
+    ProcessType,
+    Task,
+    TaskAsset,
+    TaskChangeHistory,
+    TaskDependency,
+    User,
+    WorkType,
+)
 from app.schemas import TaskCreate, TaskOut, TaskUpdate
 
 router = APIRouter()
@@ -17,6 +26,7 @@ def build_out(db: Session, t: Task) -> TaskOut:
     wt = db.get(WorkType, t.work_type_id) if t.work_type_id else None
     pt = db.get(ProcessType, t.process_type_id) if t.process_type_id else None
     mgr = db.get(User, t.manager_id) if t.manager_id else None
+    co = db.get(Company, t.company_id) if t.company_id else None
     return TaskOut(
         id=t.id,
         project_id=t.project_id,
@@ -28,6 +38,8 @@ def build_out(db: Session, t: Task) -> TaskOut:
         crew=None,
         manager=mgr.name if mgr else None,
         manager_id=t.manager_id,
+        company=co.name if co else None,
+        company_id=t.company_id,
         site_id=t.site_id,
         planned_start_at=t.planned_start_at,
         planned_finish_at=t.planned_finish_at,

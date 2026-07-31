@@ -210,6 +210,8 @@ class Task(Base, TimestampMixin, SoftDeleteMixin):
     # 「どの粒度で入力・表示するか」の判定だけに使う（日時と二重管理しない）。
     # day = 日単位 / half_day = 0.5日単位(午前・午後) / time = 任意時刻(将来用)
     schedule_precision: Mapped[str] = mapped_column(String(16), default="day", server_default="day")
+    # 担当会社（協力会社を含む）。担当者の所属とは独立して割り当てられる。
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), index=True)
 
 
 class TaskDependency(Base, TimestampMixin):
@@ -600,6 +602,22 @@ class ReportExport(Base, TimestampMixin):
 
 
 # ===== 監査ログ =====
+class SavedSearch(Base, TimestampMixin):
+    """ユーザーごとの保存検索条件（横断工程表などの絞り込み）。
+
+    条件は画面ごとに形が異なるためJSON文字列で保持する。
+    localStorageではなくDBに保存し、端末を変えても再利用できるようにする。
+    """
+
+    __tablename__ = "saved_searches"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    screen: Mapped[str] = mapped_column(String(32), index=True)  # 例: cross_schedule
+    name: Mapped[str] = mapped_column(String(120))
+    conditions: Mapped[str] = mapped_column(Text)  # JSON文字列
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     id: Mapped[int] = mapped_column(primary_key=True)

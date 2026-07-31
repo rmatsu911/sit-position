@@ -16,6 +16,7 @@ from app.api import (
     projects,
     quality,
     reports,
+    schedule,
     sites,
     tasks,
     test_records,
@@ -28,6 +29,7 @@ api_router.include_router(projects.router, prefix="/projects", tags=["projects"]
 api_router.include_router(sites.router, prefix="/sites", tags=["sites"])
 api_router.include_router(assets.router, prefix="/assets", tags=["assets"])
 api_router.include_router(tasks.router, tags=["tasks"])
+api_router.include_router(schedule.router, prefix="/schedule", tags=["schedule"])
 api_router.include_router(daily_reports.router, prefix="/daily-reports", tags=["daily-reports"])
 api_router.include_router(quality.router, prefix="/quality-checks", tags=["quality"])
 api_router.include_router(photos.router, prefix="/photos", tags=["photos"])

@@ -164,6 +164,8 @@ class TaskOut(BaseModel):
     crew: str | None = None
     manager: str | None = None
     manager_id: int | None = None
+    company: str | None = None
+    company_id: int | None = None
     site_id: int | None = None
     planned_start_at: datetime | None = None
     planned_finish_at: datetime | None = None
@@ -194,6 +196,7 @@ class TaskCreate(BaseModel):
     planned_workers: int = 0
     actual_workers: int = 0
     manager_id: int | None = None
+    company_id: int | None = None
     status: str = "未着手"
     delay_reason: str | None = None
     notes: str | None = None
@@ -217,6 +220,7 @@ class TaskUpdate(BaseModel):
     planned_workers: int | None = None
     actual_workers: int | None = None
     manager_id: int | None = None
+    company_id: int | None = None
     status: str | None = None
     delay_reason: str | None = None
     notes: str | None = None
@@ -635,3 +639,110 @@ class TestRecordCreate(BaseModel):
     judge: str = "未判定"
     instrument: str | None = None
     comment: str | None = None
+
+
+# ===== 横断工程表（複数案件の工程を1画面で確認する）=====
+class CrossTaskOut(BaseModel):
+    """既存 TaskOut に、横断表示で必要な案件・組織・担当会社の情報を加えたもの。
+
+    日時は既存工程と同じ [開始, 終了) の半開区間（Asia/Tokyo）で返す。
+    横断工程表は独自データを持たず、この形で既存 tasks を横断表示するだけ。
+    """
+    id: int
+    project_id: int
+    project_name: str
+    project_number: str
+    construction_type_id: int | None = None
+    construction_type: str | None = None
+    department_id: int | None = None
+    department: str | None = None
+    parent_task_id: int | None = None
+    wbs_code: str | None = None
+    name: str
+    work_type: str | None = None
+    process_type: str | None = None
+    manager_id: int | None = None
+    manager: str | None = None
+    company_id: int | None = None
+    company: str | None = None
+    site_id: int | None = None
+    planned_start_at: datetime | None = None
+    planned_finish_at: datetime | None = None
+    actual_start_at: datetime | None = None
+    actual_finish_at: datetime | None = None
+    planned_progress: int
+    actual_progress: int
+    planned_workers: int
+    actual_workers: int
+    status: str
+    delay_reason: str | None = None
+    notes: str | None = None
+    schedule_precision: str = "day"
+    dependencies: list[int] = Field(default_factory=list)
+    is_delayed: bool = False
+    # 絞り込みに一致した工程か。False は WBS の親子関係を保つために補われた祖先工程。
+    matched: bool = True
+
+
+class SystemDetectionOut(BaseModel):
+    """確定計算による検知結果。AI予測ではない（推論・確率を含まない）。"""
+    kind: str          # schedule_overrun / manager_overlap / company_overlap / unassigned / actual_missing
+    label: str
+    severity: str      # high / medium / low
+    message: str
+    task_ids: list[int] = Field(default_factory=list)
+
+
+class CrossScheduleOut(BaseModel):
+    tasks: list[CrossTaskOut]
+    total: int          # 絞り込みに一致した工程数（補われた祖先を除く）
+    truncated: bool     # 上限件数で打ち切られたか
+    limit: int
+    range_from: datetime | None = None  # 対象工程の実期間（固定値ではない）
+    range_to: datetime | None = None
+    detections: list[SystemDetectionOut] = Field(default_factory=list)
+
+
+class IdNameOut(BaseModel):
+    id: int
+    name: str
+
+
+class CrossProjectOption(BaseModel):
+    id: int
+    name: str
+    construction_number: str
+    construction_type_id: int | None = None
+    department_id: int | None = None
+    status: str
+
+
+class CrossScheduleOptions(BaseModel):
+    """絞り込みの選択肢。権限と案件スコープを適用した範囲だけを返す。"""
+    projects: list[CrossProjectOption]
+    construction_types: list[IdNameOut]
+    departments: list[IdNameOut]
+    managers: list[IdNameOut]
+    companies: list[IdNameOut]
+    statuses: list[str]
+
+
+# ===== 保存検索条件 =====
+class SavedSearchOut(BaseModel):
+    id: int
+    screen: str
+    name: str
+    conditions: dict
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class SavedSearchCreate(BaseModel):
+    screen: str
+    name: str
+    conditions: dict
+
+
+class SavedSearchUpdate(BaseModel):
+    name: str | None = None
+    conditions: dict | None = None
