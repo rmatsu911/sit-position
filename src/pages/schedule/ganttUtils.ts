@@ -1,45 +1,32 @@
-import { addDays, differenceInCalendarDays, eachDayOfInterval, format, parseISO } from 'date-fns'
+/**
+ * 工程管理画面（ガント）の表示設定。
+ *
+ * 日付→座標の計算は `src/lib/timeline.ts` に集約している。
+ * ここには画面固有の見た目の設定（行高・ズーム倍率）だけを置く。
+ */
+import { addDays, format } from 'date-fns'
 import { ja } from 'date-fns/locale'
-import { ganttRange, holidays } from '../../data/schedule'
+import { toJst } from '../../lib/timeline'
 
-export const rangeStart = parseISO(ganttRange.start)
-export const rangeEnd = parseISO(ganttRange.end)
-export const todayDate = parseISO(ganttRange.today)
-
-export const days = eachDayOfInterval({ start: rangeStart, end: rangeEnd })
-
+/** ガントのズーム。列は日単位のまま、幅だけを変えて表示範囲を広げる。 */
 export type ViewMode = 'day' | 'week' | 'month'
 
+/** ズームごとの列幅(px)。 */
 export const dayWidthByMode: Record<ViewMode, number> = {
   day: 34,
   week: 15,
   month: 7,
 }
 
+/** 1行の高さ(px)。左表とガントで共有し、行位置を同期させる。 */
 export const ROW_H = 32
 
-export function dayIndex(iso: string): number {
-  return differenceInCalendarDays(parseISO(iso), rangeStart)
-}
-
-export function isHoliday(d: Date): boolean {
-  const s = format(d, 'yyyy-MM-dd')
-  return holidays.includes(s)
-}
-
-export function isWeekend(d: Date): boolean {
-  const g = d.getDay()
-  return g === 0 || g === 6
-}
-
+/** 曜日ラベル（日本語）。 */
 export function weekdayLabel(d: Date): string {
   return format(d, 'E', { locale: ja })
 }
 
+/** `yyyy-MM-dd` に日数を加算する（ドラッグ移動用）。 */
 export function addDaysIso(iso: string, n: number): string {
-  return format(addDays(parseISO(iso), n), 'yyyy-MM-dd')
-}
-
-export function spanDays(startIso: string, endIso: string): number {
-  return differenceInCalendarDays(parseISO(endIso), parseISO(startIso)) + 1
+  return format(addDays(toJst(iso), n), 'yyyy-MM-dd')
 }

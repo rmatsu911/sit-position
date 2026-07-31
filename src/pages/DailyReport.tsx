@@ -38,7 +38,6 @@ export default function DailyReportPage() {
     const id = reports.some((r) => r.id === currentId) ? currentId : reports[0].id
     if (id !== currentId) setCurrentId(id)
     setDraft({ ...reports.find((r) => r.id === id)! })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reports, currentId])
 
   const current = draft

@@ -108,6 +108,33 @@ AI Worker(分離)＋YOLO推論IF(交換可)＋正規化bbox＋既存UIへの実�
 - **デモ検索の最終結果**：`demo/sample/seed/mock/dummy/ダミー/サンプル` の残存は (1)説明コメント (2)**開発/検証環境のみ表示の「発表用デモモード」**（Layoutバナー/DemoGuide/Settings demoタブ=すべて `IS_DEV_VISIBLE`・`devOnly` ゲート、本番非表示） (3)AIの `seed-demo`/`DEMO` モデル状態の**正直な**ハンドリング（本番はSeed非投入のため出現せず、出ても内部名は非表示） (4)PhotoPlaceholder の「サンプル」ラベル（実写真が無い場合の代替と明示）のみ。**本番相当（APP_ENV=production）で表示される固定業務データ・架空実績・偽の完成表示は残っていない**
 - **テスト**：pytest 41件通過、`npx tsc --noEmit` クリーン、`npm run build` 成功、backendスモーク（login/meta/projects/workers/documents/notifications/dashboard・photo AI=seed-demo/DEMO）確認。既存機能の非破壊を確認
 
+## Ver.0.3 Phase 0 で追加（改修の基盤整備・2026-07-31）
+
+参考システムの業務フロー（横断工程表・横断マイルストーン・カレンダー・報告・現場連絡）を
+取り込む大規模改修の**前段**として、既存機能を壊さずに土台だけを整える工程。
+**画面のレイアウト・配色・列構成・操作は変更していない。**
+
+- **監査**：43テーブル／19ルーターを調査。新規に必要な `milestones`・`chat_*`・`saved_searches`・
+  `user_settings`・`calendar_tokens`・`project_labels` は**すべて不在**を確認。ブロッカーを3件特定
+  （①ガントの表示期間と「今日」がハードコード ②AM/PMがフロントの日付丸めで失われる
+  ③マイルストーンが `name === '引き渡し'` の文字列一致ハック）
+- **時間軸エンジン新設**（`src/lib/timeline.ts`）：日付→座標の計算を1箇所へ集約。
+  3時間/日/週/月/年、Asia/Tokyo統一（固定オフセット＋DST非依存）、列境界はカレンダー演算、
+  座標は「列インデックス＋列内按分」で可変長の月/年でも正確。`MIN_BAR_WIDTH` で0.5日工程も視認可。
+  **ヘッダーとバーが同じ `slots` を参照する構造**にし、ずれを設計で防止
+- **固定値の撤廃**：`data/schedule.ts` の `ganttRange`（2026-06-01〜08-12）と固定の
+  「今日」（2026-07-21）を削除。表示期間は工程の実期間＋前後7日（今日を含む）から動的算出。
+  今日線は実時刻位置に描画し、範囲外なら非表示。進行中工程の実績バーは実際の今日まで
+- **ESLintをゲートとして機能化**：`backend/**`（Python venv同梱JS）を除外し、宣言だけで
+  動いていなかった `react-hooks` / `react-refresh` のルールを有効化 → **12 error → 0 error**
+- **検証資産**：`npm run test:timeline`（時間軸21ケース）と `scripts/e2e-regression.mjs`
+  （全13ルートのスクショ・コンソールエラー・失敗リクエスト収集）、`docs/regression-baseline.md`
+- **バグ検出と修正**：ユニットテストにより `xOf`/`spanOf` の**JST二重変換**（9時間ずれ）を発見し修正。
+  実ブラウザ実測でバー幅＝`(終了日−開始日+1)×列幅`、今日線＝06-01から60.47日
+  （60日＋実行時刻11:33 JSTの端数）で、バーと今日線が同一基準で正しいことを確認
+- **テスト**：pytest **43件通過**、`tsc` エラー0、ESLint **エラー0**、`npm run build` 成功、
+  `test:timeline` **21件通過**、全13ルートのブラウザ回帰で**コンソールエラー0・失敗リクエスト0**
+
 ## 残課題（未実装・設計は MASTER_SPEC / ai-design 参照）
 
 - **実weights未配置**（`MODEL_NOT_AVAILABLE`）。SYSKEN実写真のアノテーション→学習→`AI_MODEL_PATH`配置は今後（基盤は完成）
@@ -117,9 +144,12 @@ AI Worker(分離)＋YOLO推論IF(交換可)＋正規化bbox＋既存UIへの実�
 
 ## 次回作業（1〜3項目）
 
-1. Ver.0.2.3の残監査：図面新版・品質状態遷移・日報承認・通知既読・設定マスタを実ブラウザで再確認
-2. 工程管理の担当班マスタ連携、基準工程の版保存、Undo/Redo、ドラッグE2Eを追加
-3. 上記完了後にSYSKEN実施工写真のアノテーション＋YOLO学習へ進む
+1. **Phase 1**：AM/PM（0.5日）対応＝`src/api/tasks.ts` の日付丸め（`ymd()`）を撤廃して時刻を保持し、
+   日スケールを2スロット化。工程管理へタブ（案件工程／横断工程／横断マイルストーン／カレンダー）の器を追加
+2. **Phase 2**：横断工程表（複数案件の集約API・案件別/担当者別/担当会社別グルーピング・
+   3時間〜年の粒度・保存済み検索条件）。`tasks` への担当会社紐付けと `saved_searches` の migration が必要
+3. **Phase 3**：`milestones` テーブル新設＋横断マイルストーン（Excel出力は既存 `reports.py` を再利用）と
+   共通カレンダーイベントAPI
 
 ## 変更ログ（差分のみ追記）
 
@@ -132,3 +162,4 @@ AI Worker(分離)＋YOLO推論IF(交換可)＋正規化bbox＋既存UIへの実�
 - 2026-07-23 Ver.0.2 完了（AI Worker分離・YOLO推論IF[交換可/MODEL_NOT_AVAILABLE]・正規化bbox・既存UI実接続・人間フィードバック[ai_feedback]・data.yamlクラス体系・学習/評価スクリプト、migration 5aeaba61edcb、pytest41/build/E2E。実weightsは未配置）
 - 2026-07-23 Ver.0.2.1 完了（実運用化総点検・デモ要素撤去：APP_ENV環境分離＋Seed production ガード、AI/品質/工程/要員/図面/案件詳細/設定 の固定ダミー撤去→Empty State 化、API失敗時の固定フォールバック全廃、未使用固定データ7ファイル削除、DEMO/Seed表示は開発環境のみ、pytest41/tsc/build/スモーク。本番相当で表示される架空業務データは残存なし）
 - 2026-07-24 Ver.0.2.3 業務フロー・UI回帰総点検（第1段階）：案件CREATE→LIST→DETAIL→UPDATE→再取得の統合テストを追加。案件詳細に編集UIを追加しQuery prefix invalidation＋active refetchを明示。工程画面の固定`project_id=1`を廃止して案件IDルーティングへ統一。本格WBS＋ガントUIを維持したまま工程追加/親子/編集/コピー/削除/進捗更新/完了/依存関係/ドラッグ日程変更をTask APIへ接続し、工程変更履歴・監査ログ・reload保持を維持。Task APIに依存関係入出力と論理削除を追加。pytest43件、TypeScript、production build、lint（警告のみ）成功。Cloud Browser接続タイムアウトのため実ブラウザ確認は未完了。AI関連は未変更。
+- 2026-07-31 Ver.0.3 Phase 0 完了（改修基盤：時間軸エンジン `src/lib/timeline.ts` 新設で日付→座標を集約、ガントの固定表示期間・固定「今日」を撤廃し実データから動的算出、ESLintをゲート化[12 error→0]、時間軸21ケース＋全ルート回帰スクリプトを追加。JST二重変換バグを検出・修正。画面の見た目・操作は非変更。pytest43/tsc/lint/build/timeline21/E2Eエラー0）

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect } from 'react'
+import { useCallback, useMemo, useRef, useState, useEffect } from 'react'
 import { format } from 'date-fns'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
@@ -17,10 +17,11 @@ import { useProject, useProjects } from '../api/projects'
 import { ApiError } from '../lib/apiClient'
 import type { WbsTask } from '../types'
 
+import { dayWidthByMode, ROW_H, weekdayLabel, addDaysIso, type ViewMode } from './schedule/ganttUtils'
 import {
-  days, dayWidthByMode, ROW_H, dayIndex, isHoliday, isWeekend, weekdayLabel,
-  addDaysIso, todayDate, type ViewMode,
-} from './schedule/ganttUtils'
+  createTimeline, groupSlots, nowJst, rangeFromPeriods, type Timeline,
+} from '../lib/timeline'
+import { JP_HOLIDAYS } from '../lib/holidays'
 
 const statusColor: Record<string, string> = {
   完了: '#2e8b57',
@@ -81,6 +82,13 @@ export default function Schedule() {
   const dw = dayWidthByMode[view]
   const ganttRef = useRef<HTMLDivElement>(null)
 
+  // 時間軸は工程の実期間から動的に決める（固定の表示期間・固定の「今日」は持たない）。
+  // ヘッダーもバーもこの timeline を唯一の基準にするため、両者がずれない。
+  const timeline: Timeline = useMemo(() => {
+    const { from, to } = rangeFromPeriods(tasks.map((t) => ({ start: t.planStart, end: t.planEnd })))
+    return createTimeline({ scale: 'day', from, to, slotWidth: dw, holidays: JP_HOLIDAYS })
+  }, [tasks, dw])
+
   // ドラッグ
   const dragRef = useRef<{ id: string; mode: 'move' | 'resize'; startX: number; s: string; e: string } | null>(null)
   const [preview, setPreview] = useState<{ id: string; ds: number; de: number } | null>(null)
@@ -140,7 +148,7 @@ export default function Schedule() {
     return m
   }, [visible])
 
-  const totalW = days.length * dw
+  const totalW = timeline.totalWidth
   const bodyH = visible.length * ROW_H
 
   function toggleCollapse(id: string) {
@@ -152,15 +160,14 @@ export default function Schedule() {
     })
   }
 
-  function scrollToToday() {
-    if (ganttRef.current) {
-      ganttRef.current.scrollLeft = Math.max(0, dayIndex(format(todayDate, 'yyyy-MM-dd')) * dw - 200)
+  const scrollToToday = useCallback(() => {
+    if (ganttRef.current && timeline.todayX !== null) {
+      ganttRef.current.scrollLeft = Math.max(0, timeline.todayX - 200)
     }
-  }
+  }, [timeline])
   useEffect(() => {
     scrollToToday()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view])
+  }, [scrollToToday])
 
   function startDrag(e: React.PointerEvent, t: WbsTask, mode: 'move' | 'resize') {
     e.stopPropagation()
@@ -229,15 +236,17 @@ export default function Schedule() {
         if (!pred) continue
         const pr = rowIndexById.get(pred.id)!
         const sr = rowIndexById.get(t.id)!
-        const x1 = (dayIndex(pred.planEnd) + 1) * dw
+        // 先行工程のバー右端（終了日の翌日0時）から、後続工程の開始位置へ引く
+        const predBar = timeline.spanOf(pred.planStart, pred.planEnd, { inclusiveEndDay: true })
+        const x1 = predBar.left + predBar.width
         const y1 = pr * ROW_H + 11
-        const x2 = dayIndex(t.planStart) * dw
+        const x2 = timeline.xOf(t.planStart)
         const y2 = sr * ROW_H + 11
         lines.push({ x1, y1, x2, y2, critical: !!(t.critical && pred.critical) })
       }
     }
     return lines
-  }, [visible, rowIndexById, dw])
+  }, [visible, rowIndexById, timeline])
 
   const toolbarGroups: { icon: typeof Plus; label: string; onClick: () => void }[][] = [
     [
@@ -416,23 +425,19 @@ export default function Schedule() {
           <div ref={ganttRef} className="thin-scroll flex-1 overflow-x-auto">
             <div style={{ width: totalW }}>
               {/* ヘッダ */}
-              <GanttHeader dw={dw} view={view} />
+              <GanttHeader timeline={timeline} view={view} />
               {/* 本体 */}
               <div className="relative" style={{ height: bodyH }}>
                 {/* 縦グリッド・週末/祝日 */}
-                {days.map((d, i) => {
-                  const wk = isWeekend(d)
-                  const hol = isHoliday(d)
-                  return (
-                    <div
-                      key={i}
-                      className={`absolute top-0 border-r border-line/70 ${hol ? 'bg-red-50/50' : wk ? 'bg-slate-50/70' : ''}`}
-                      style={{ left: i * dw, width: dw, height: bodyH }}
-                    >
-                      {view === 'day' && <div className="absolute top-0 h-full border-r border-dashed border-line/40" style={{ left: dw / 2 }} />}
-                    </div>
-                  )
-                })}
+                {timeline.slots.map((s) => (
+                  <div
+                    key={s.index}
+                    className={`absolute top-0 border-r border-line/70 ${s.isHoliday ? 'bg-red-50/50' : s.isWeekend ? 'bg-slate-50/70' : ''}`}
+                    style={{ left: s.index * dw, width: dw, height: bodyH }}
+                  >
+                    {view === 'day' && <div className="absolute top-0 h-full border-r border-dashed border-line/40" style={{ left: dw / 2 }} />}
+                  </div>
+                ))}
                 {/* 行の下線 */}
                 {visible.map((_, i) => (
                   <div key={i} className="absolute left-0 border-b border-line/60" style={{ top: (i + 1) * ROW_H - 1, width: totalW }} />
@@ -456,17 +461,19 @@ export default function Schedule() {
                 </svg>
                 {/* バー */}
                 {visible.map((t, i) => (
-                  <GanttRow key={t.id} task={t} row={i} dw={dw} preview={preview?.id === t.id ? preview : null}
+                  <GanttRow key={t.id} task={t} row={i} dw={dw} timeline={timeline} preview={preview?.id === t.id ? preview : null}
                     onStartDrag={startDrag}
                     onContext={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, id: t.id }) }}
                     onSelect={() => setSelected(new Set([t.id]))}
                     onOpenProgress={() => { setProgressModal(t); setProgressVal(t.progress) }}
                   />
                 ))}
-                {/* 現在日時の縦線 */}
-                <div className="today-line pointer-events-none absolute top-0 z-10 border-l-2 border-ng" style={{ left: (dayIndex(format(todayDate, 'yyyy-MM-dd')) + 0.5) * dw, height: bodyH }}>
-                  <span className="absolute -top-0 -translate-x-1/2 rounded-b bg-ng px-1 text-[9px] text-white">本日</span>
-                </div>
+                {/* 現在日時の縦線（表示範囲内のときのみ） */}
+                {timeline.todayX !== null && (
+                  <div className="today-line pointer-events-none absolute top-0 z-10 border-l-2 border-ng" style={{ left: timeline.todayX, height: bodyH }}>
+                    <span className="absolute -top-0 -translate-x-1/2 rounded-b bg-ng px-1 text-[9px] text-white">本日</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -560,8 +567,8 @@ function TaskEditor({
   const [form, setForm] = useState({
     wbs: source ? (editor?.mode === 'copy' ? `${source.wbs}-copy` : source.wbs) : parent ? `${parent.wbs}.${childCount + 1}` : String(nextRoot),
     name: source ? `${source.name}${editor?.mode === 'copy' ? '（コピー）' : ''}` : '',
-    planStart: source?.planStart ?? parent?.planStart ?? format(todayDate, 'yyyy-MM-dd'),
-    planEnd: source?.planEnd ?? parent?.planEnd ?? format(todayDate, 'yyyy-MM-dd'),
+    planStart: source?.planStart ?? parent?.planStart ?? format(nowJst(), 'yyyy-MM-dd'),
+    planEnd: source?.planEnd ?? parent?.planEnd ?? format(nowJst(), 'yyyy-MM-dd'),
     actualStart: source?.actualStart ?? '',
     actualEnd: source?.actualEnd ?? '',
     plannedProgress: source?.progress ?? 0,
@@ -577,8 +584,8 @@ function TaskEditor({
     setForm({
       wbs: source ? (editor?.mode === 'copy' ? `${source.wbs}-copy` : source.wbs) : parent ? `${parent.wbs}.${childCount + 1}` : String(nextRoot),
       name: source ? `${source.name}${editor?.mode === 'copy' ? '（コピー）' : ''}` : '',
-      planStart: source?.planStart ?? parent?.planStart ?? format(todayDate, 'yyyy-MM-dd'),
-      planEnd: source?.planEnd ?? parent?.planEnd ?? format(todayDate, 'yyyy-MM-dd'),
+      planStart: source?.planStart ?? parent?.planStart ?? format(nowJst(), 'yyyy-MM-dd'),
+      planEnd: source?.planEnd ?? parent?.planEnd ?? format(nowJst(), 'yyyy-MM-dd'),
       actualStart: source?.actualStart ?? '', actualEnd: source?.actualEnd ?? '',
       plannedProgress: source?.progress ?? 0, actualProgress: source?.progress ?? 0,
       plannedWorkers: source?.planPeople ?? 0, actualWorkers: source?.actualPeople ?? 0,
@@ -623,15 +630,10 @@ function TaskEditor({
   )
 }
 
-function GanttHeader({ dw, view }: { dw: number; view: ViewMode }) {
-  // 月グループ
-  const months: { label: string; span: number }[] = []
-  days.forEach((d) => {
-    const label = format(d, 'yyyy年M月')
-    const last = months[months.length - 1]
-    if (last && last.label === label) last.span += 1
-    else months.push({ label, span: 1 })
-  })
+function GanttHeader({ timeline, view }: { timeline: Timeline; view: ViewMode }) {
+  // バーと同じ timeline.slots からヘッダーを作るため、両者がずれない
+  const months = groupSlots(timeline, 'month')
+  const dw = timeline.slotWidth
   return (
     <div className="sticky top-0 z-20 bg-canvas">
       <div className="flex h-6 border-b border-line">
@@ -642,12 +644,11 @@ function GanttHeader({ dw, view }: { dw: number; view: ViewMode }) {
         ))}
       </div>
       <div className="flex h-10 border-b border-line">
-        {days.map((d, i) => {
-          const wk = isWeekend(d)
-          const hol = isHoliday(d)
+        {timeline.slots.map((s) => {
+          const d = s.start
           const showNum = view === 'day' || view === 'week' || d.getDate() === 1 || d.getDay() === 1
           return (
-            <div key={i} className={`flex flex-col items-center justify-center gap-0.5 border-r border-line/70 ${hol ? 'bg-red-50 text-ng' : wk ? 'bg-slate-50 text-slate-400' : 'text-ink-soft'}`} style={{ width: dw }}>
+            <div key={s.index} className={`flex flex-col items-center justify-center gap-0.5 border-r border-line/70 ${s.isHoliday ? 'bg-red-50 text-ng' : s.isWeekend ? 'bg-slate-50 text-slate-400' : 'text-ink-soft'}`} style={{ width: dw }}>
               {showNum && <span className="text-[11px] font-medium leading-none tabular-nums">{d.getDate()}</span>}
               {view === 'day' && <span className="text-[11px] leading-none">{weekdayLabel(d)}</span>}
             </div>
@@ -659,9 +660,9 @@ function GanttHeader({ dw, view }: { dw: number; view: ViewMode }) {
 }
 
 function GanttRow({
-  task: t, row, dw, preview, onStartDrag, onContext, onSelect, onOpenProgress,
+  task: t, row, dw, timeline, preview, onStartDrag, onContext, onSelect, onOpenProgress,
 }: {
-  task: WbsTask; row: number; dw: number
+  task: WbsTask; row: number; dw: number; timeline: Timeline
   preview: { ds: number; de: number } | null
   onStartDrag: (e: React.PointerEvent, t: WbsTask, mode: 'move' | 'resize') => void
   onContext: (e: React.MouseEvent) => void
@@ -670,8 +671,11 @@ function GanttRow({
 }) {
   const ds = preview?.ds ?? 0
   const de = preview?.de ?? 0
-  const planLeft = (dayIndex(t.planStart) + ds) * dw
-  const planW = (dayIndex(t.planEnd) - dayIndex(t.planStart) + 1 + (de - ds)) * dw
+  // ドラッグ中はプレビュー分だけ日付をずらしてから座標化する
+  const planBar = timeline.spanOf(addDaysIso(t.planStart, ds), addDaysIso(t.planEnd, de), { inclusiveEndDay: true })
+  const baseBar = timeline.spanOf(t.planStart, t.planEnd, { inclusiveEndDay: true })
+  const planLeft = planBar.left
+  const planW = planBar.width
   const top = row * ROW_H
 
   if (t.isMilestone) {
@@ -684,14 +688,13 @@ function GanttRow({
 
   const color = statusColor[t.status] ?? '#005bac'
 
-  // 実績バー
+  // 実績バー（終了実績が無い＝進行中は本日まで伸ばす）
   let actualEl = null
   if (t.actualStart) {
-    const aEnd = t.actualEnd ?? format(todayDate, 'yyyy-MM-dd')
-    const aLeft = dayIndex(t.actualStart) * dw
-    const aW = (dayIndex(aEnd) - dayIndex(t.actualStart) + 1) * dw
+    const aEnd = t.actualEnd ?? format(nowJst(), 'yyyy-MM-dd')
+    const actualBar = timeline.spanOf(t.actualStart, aEnd, { inclusiveEndDay: true })
     actualEl = (
-      <div className="absolute rounded-sm" style={{ top: top + 18, left: aLeft, width: aW, height: 7, background: '#2e8b57', opacity: 0.9 }} title={`実績 ${t.actualStart.slice(5)}〜${aEnd.slice(5)}`} />
+      <div className="absolute rounded-sm" style={{ top: top + 18, left: actualBar.left, width: actualBar.width, height: 7, background: '#2e8b57', opacity: 0.9 }} title={`実績 ${t.actualStart.slice(5)}〜${aEnd.slice(5)}`} />
     )
   }
 
@@ -708,8 +711,8 @@ function GanttRow({
 
   return (
     <>
-      {/* 基準工程（薄い線） */}
-      <div className="absolute rounded-sm bg-slate-300" style={{ top: top + 3, left: (dayIndex(t.planStart)) * dw, width: (dayIndex(t.planEnd) - dayIndex(t.planStart) + 1) * dw, height: 3, opacity: 0.7 }} />
+      {/* 基準工程（薄い線・ドラッグ前の予定位置） */}
+      <div className="absolute rounded-sm bg-slate-300" style={{ top: top + 3, left: baseBar.left, width: baseBar.width, height: 3, opacity: 0.7 }} />
       {/* 予定バー */}
       <div
         className={`group absolute flex items-center rounded-sm ${t.status === '遅延' ? 'ring-1 ring-ng' : ''}`}
