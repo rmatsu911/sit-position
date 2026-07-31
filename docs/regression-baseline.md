@@ -1,4 +1,4 @@
-# 回帰確認の基準（Phase 0）
+# 回帰確認の基準（Ver.0.3）
 
 大きな改修（横断工程表・カレンダー・現場連絡など）の前後で、既存機能が
 壊れていないことを同じ手順で確認するための基準。
@@ -10,8 +10,9 @@
 | TypeScript | `npm run typecheck` | エラー 0（**`npx tsc --noEmit` はソリューション構成のため何も検査しない。必ず `-b` を使う**） |
 | ESLint | `npm run lint` | **エラー 0**（警告は Badge.tsx の HMR 警告 1件のみ） |
 | production build | `npm run build` | 成功（bundle 500kB超の警告は既知） |
-| 時間軸エンジン | `npm run test:timeline` | **46 passed / 0 failed** |
-| Backend テスト | `cd backend && python -m pytest` | **45 passed** |
+| 時間軸エンジン | `npm run test:timeline` | **75 passed / 0 failed**（Phase 2 で +29） |
+| Backend テスト | `cd backend && python -m pytest` | **56 passed**（Phase 2 で +11） |
+| 横断工程の座標実測 | `PW_CHROME=<chrome> node scripts/cross-schedule-measure.mjs` | **25 passed / 0 failed** |
 
 ## 2. 画面の回帰確認（実ブラウザ）
 
@@ -38,7 +39,10 @@ PW_CHROME=<chromeのパス> node scripts/e2e-regression.mjs --out /tmp/after
 | `/projects` | 案件一覧（8件）が表示 |
 | `/projects/1` | 案件詳細・タブ切替 |
 | `/schedule` | WBS＋ガント。バー・依存線・今日線・土日/祝の着色。タブ4種（案件工程／横断工程／横断マイルストーン／カレンダー） |
-| `/schedule/cross` 他 | 未実装タブ。「未実装です」と実装予定を表示し、ダミーデータを出さない |
+| `/schedule/cross` | 横断工程表。複数案件の工程を1画面で表示（Phase 2 で実装） |
+| `/schedule/cross?group=company&scale=week` | 担当会社別・週表示の横断工程表 |
+| `/projects/1/schedule/cross` | 対象案件で絞り込んだ横断工程表 |
+| `/schedule/milestones`・`/schedule/calendar` | 未実装タブ。「未実装です」と実装予定を表示し、ダミーデータを出さない |
 | `/photos` | 写真一覧・AI解析結果（未解析時は Empty State） |
 | `/drawings` | 図面一覧＋PDF/画像プレビュー。未登録は Empty State |
 | `/quality` | 品質チェック一覧・試験記録 |
@@ -109,3 +113,32 @@ PW_CHROME=<chromeのパス> node scripts/e2e-regression.mjs --out /tmp/after
 - 半日工程をドラッグで2日移動 → 保存 → 再読込しても幅 0.5日・位置 +68px（2日分）を維持
 - 日単位工程と半日工程が同じガント上で混在して正しく描画される
 - 親子の折りたたみ（28行→21行）、依存線（SVGパス111本）は従来どおり動作
+
+## 6. 横断工程表の座標検証（Phase 2 で追加）
+
+`scripts/cross-schedule-measure.mjs` が実ブラウザで**ピクセル実測**し、
+ヘッダー列・工程バー・今日線・依存線・ドラッグ後の位置が、すべて同じ座標基準
+（`src/lib/timeline.ts` の `slots`）になっていることを確認する。
+
+### 実測結果（Phase 2 実施結果・1920×1080）
+
+| 検証 | 実測値 |
+|---|---|
+| ヘッダー列の幅（日表示） | 34px |
+| 13日の工程バー幅 | 442px = 13 × 34px |
+| 6日の工程バー幅 | 204px = 6 × 34px |
+| バー間の距離（14日差） | 476px = 14 × 34px |
+| 0.5日バーの幅 | **17px = 列幅のちょうど半分** |
+| 午後開始〜翌午前終了 | 34px（1日）／列の中央から開始 |
+| 今日線の位置 | 基準バーから 39.688 日 = 実時刻との差と一致 |
+| 依存線 | 44パス。始点が先行工程バーの右端と一致 |
+| 週／月／年表示 | 列幅 60 / 90 / 120px。総幅 = 列数 × 列幅 |
+| 0.5日ドラッグ→保存→再読込 | **+17px（0.5列）だけ移動し、幅は 0.5日のまま** |
+| 縦スクロール | スクロール枠は1つ。左一覧の行と右ガントのバーが同じ 300px 動く |
+
+### Phase 2 で見つけて直した不具合
+
+| 不具合 | 原因 | 対処 |
+|---|---|---|
+| 月表示で 0.5日バーが 1日バーと同じ幅になる | `MIN_BAR_WIDTH = 3` が、1日 ≒ 3px の月表示で下限に張り付いていた | `MIN_BAR_WIDTH = 1` に変更。全表示単位で 0.5日 = 1日の半分を維持 |
+| 左一覧だけが縦スクロールしてガントとずれる | flex の既定 `align-items: stretch` で左右の枠が親と同じ高さに伸び、`overflow-x-auto` の副作用で縦も独立スクロール枠になっていた | 枠に `items-start` を付け、縦スクロールを外側の1箇所に集約 |

@@ -28,11 +28,12 @@ export default tseslint.config(
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
   },
-  // 開発用スクリプト（Node実行）
+  // 開発用スクリプト（Node実行）。Playwright の page.evaluate に渡す関数は
+  // ブラウザ側で実行されるため、ブラウザのグローバルも許可する。
   {
     files: ['scripts/**/*.{js,mjs}'],
     languageOptions: {
-      globals: { ...globals.node },
+      globals: { ...globals.node, ...globals.browser },
     },
   },
 )

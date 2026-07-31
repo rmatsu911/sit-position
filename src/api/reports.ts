@@ -7,17 +7,20 @@ export interface ReportType {
   label: string
 }
 
-// 帳票をダウンロード（認証付き fetch → Blob → 保存）。PostgreSQL→FastAPI→帳票→ブラウザDL。
-export async function downloadReport(reportType: string, projectId: number, format: 'pdf' | 'xlsx'): Promise<void> {
+/**
+ * 認証付きでファイルを取得して保存する（fetch → Blob → ダウンロード）。
+ * 帳票・横断工程表の出力など、Response をそのまま返すAPIで共用する。
+ */
+export async function downloadFile(path: string, fallbackName: string): Promise<void> {
   const token = getToken()
-  const res = await fetch(`${BASE_URL}/reports/${reportType}?project_id=${projectId}&format=${format}`, {
+  const res = await fetch(`${BASE_URL}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
-  if (!res.ok) throw new Error(`帳票の生成に失敗しました (${res.status})`)
+  if (!res.ok) throw new Error(`ファイルの生成に失敗しました (${res.status})`)
   const blob = await res.blob()
   const cd = res.headers.get('Content-Disposition') || ''
   const m = cd.match(/filename="?([^"]+)"?/)
-  const filename = m ? m[1] : `${reportType}.${format}`
+  const filename = m ? m[1] : fallbackName
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -26,4 +29,12 @@ export async function downloadReport(reportType: string, projectId: number, form
   a.click()
   a.remove()
   URL.revokeObjectURL(url)
+}
+
+// 帳票をダウンロード。PostgreSQL→FastAPI→帳票→ブラウザDL。
+export function downloadReport(reportType: string, projectId: number, format: 'pdf' | 'xlsx'): Promise<void> {
+  return downloadFile(
+    `/reports/${reportType}?project_id=${projectId}&format=${format}`,
+    `${reportType}.${format}`,
+  )
 }

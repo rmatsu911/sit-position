@@ -97,6 +97,7 @@ export interface TaskWriteInput {
   planned_workers?: number
   actual_workers?: number
   manager_id?: number | null
+  company_id?: number | null
   status?: string
   delay_reason?: string | null
   notes?: string | null
@@ -105,12 +106,21 @@ export interface TaskWriteInput {
   change_reason?: string
 }
 
-function invalidateTasks(qc: ReturnType<typeof useQueryClient>, projectId: number) {
+/**
+ * 工程の更新（PUT /tasks/{id}）。案件工程・横断工程の両方がこの1本を使う。
+ * 更新処理・監査ログを画面ごとに複製しないための共通入口。
+ */
+export function updateTaskRequest(id: number, input: TaskWriteInput) {
+  return api<ApiTask>(`/tasks/${id}`, { method: 'PUT', body: input })
+}
+
+export function invalidateTasks(qc: ReturnType<typeof useQueryClient>, projectId: number) {
   return Promise.all([
     qc.invalidateQueries({ queryKey: ['tasks', projectId] }),
     qc.invalidateQueries({ queryKey: ['task-options', projectId] }),
     qc.invalidateQueries({ queryKey: ['dashboard'] }),
     qc.invalidateQueries({ queryKey: ['project', projectId] }),
+    qc.invalidateQueries({ queryKey: ['cross-schedule'] }),
   ])
 }
 
@@ -126,8 +136,7 @@ export function useCreateTask(projectId: number) {
 export function useUpdateTask(projectId: number) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...input }: TaskWriteInput & { id: number }) =>
-      api<ApiTask>(`/tasks/${id}`, { method: 'PUT', body: input }),
+    mutationFn: ({ id, ...input }: TaskWriteInput & { id: number }) => updateTaskRequest(id, input),
     onSuccess: async () => { await invalidateTasks(qc, projectId) },
   })
 }

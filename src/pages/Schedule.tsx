@@ -16,22 +16,17 @@ import { useProject, useProjects } from '../api/projects'
 import { ApiError } from '../lib/apiClient'
 import type { WbsTask } from '../types'
 
-import { dayWidthByMode, ROW_H, weekdayLabel, type ViewMode } from './schedule/ganttUtils'
+import { dayWidthByMode, type ViewMode } from './schedule/ganttUtils'
 import {
-  createTimeline, durationInDays, endAtOf, formatJst, formatPeriod, groupSlots, jstDateKey, nowJst,
-  rangeFromPeriods, shiftDays, splitEndAt, splitStartAt, startAtOf, toJstIsoString,
+  createTimeline, durationInDays, endAtOf, formatPeriod, jstDateKey, nowJst,
+  rangeFromPeriods, shiftDays, splitEndAt, splitStartAt, startAtOf,
   type HalfDay, type Timeline,
 } from '../lib/timeline'
 import { JP_HOLIDAYS } from '../lib/holidays'
 import { ScheduleTabs } from './schedule/ScheduleTabs'
-
-const statusColor: Record<string, string> = {
-  完了: '#2e8b57',
-  施工中: '#005bac',
-  遅延: '#d64545',
-  一時停止: '#e6a700',
-  未着手: '#94a3b8',
-}
+import {
+  DependencyLines, edgeLabel, GanttGrid, GanttHeader, GanttLegend, GanttRow, ROW_H, TodayLine,
+} from './schedule/GanttParts'
 
 const LEFT_COLS = [
   { key: 'wbs', label: 'WBS', w: 46 },
@@ -430,43 +425,20 @@ export default function Schedule() {
           <div ref={ganttRef} className="thin-scroll flex-1 overflow-x-auto">
             <div style={{ width: totalW }}>
               {/* ヘッダ */}
-              <GanttHeader timeline={timeline} view={view} />
+              <GanttHeader timeline={timeline} />
               {/* 本体 */}
               <div className="relative" style={{ height: bodyH }}>
                 {/* 縦グリッド・週末/祝日 */}
-                {timeline.slots.map((s) => (
-                  <div
-                    key={s.index}
-                    className={`absolute top-0 border-r border-line/70 ${s.isHoliday ? 'bg-red-50/50' : s.isWeekend ? 'bg-slate-50/70' : ''}`}
-                    style={{ left: s.index * dw, width: dw, height: bodyH }}
-                  >
-                    {view === 'day' && <div className="absolute top-0 h-full border-r border-dashed border-line/40" style={{ left: dw / 2 }} />}
-                  </div>
-                ))}
+                <GanttGrid timeline={timeline} height={bodyH} />
                 {/* 行の下線 */}
                 {visible.map((_, i) => (
                   <div key={i} className="absolute left-0 border-b border-line/60" style={{ top: (i + 1) * ROW_H - 1, width: totalW }} />
                 ))}
                 {/* 依存線 */}
-                <svg className="pointer-events-none absolute left-0 top-0" width={totalW} height={bodyH}>
-                  {depLines.map((l, i) => {
-                    const midX = l.x2 - 8
-                    return (
-                      <g key={i}>
-                        <path
-                          d={`M${l.x1},${l.y1} L${midX},${l.y1} L${midX},${l.y2} L${l.x2},${l.y2}`}
-                          fill="none"
-                          stroke={l.critical ? '#d64545' : '#94a3b8'}
-                          strokeWidth={1.2}
-                        />
-                        <path d={`M${l.x2},${l.y2} l-5,-3 l0,6 z`} fill={l.critical ? '#d64545' : '#94a3b8'} />
-                      </g>
-                    )
-                  })}
-                </svg>
+                <DependencyLines lines={depLines} width={totalW} height={bodyH} />
                 {/* バー */}
                 {visible.map((t, i) => (
-                  <GanttRow key={t.id} task={t} row={i} dw={dw} timeline={timeline} preview={preview?.id === t.id ? preview : null}
+                  <GanttRow key={t.id} task={t} row={i} timeline={timeline} preview={preview?.id === t.id ? preview : null}
                     onStartDrag={startDrag}
                     onContext={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, id: t.id }) }}
                     onSelect={() => setSelected(new Set([t.id]))}
@@ -474,27 +446,14 @@ export default function Schedule() {
                   />
                 ))}
                 {/* 現在日時の縦線（表示範囲内のときのみ） */}
-                {timeline.todayX !== null && (
-                  <div className="today-line pointer-events-none absolute top-0 z-10 border-l-2 border-ng" style={{ left: timeline.todayX, height: bodyH }}>
-                    <span className="absolute -top-0 -translate-x-1/2 rounded-b bg-ng px-1 text-[9px] text-white">本日</span>
-                  </div>
-                )}
+                <TodayLine timeline={timeline} height={bodyH} />
               </div>
             </div>
           </div>
         </div>
 
         {/* 凡例 */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line bg-canvas px-3 py-1.5 text-[11px] text-ink-soft">
-          <Legend2 color="#005bac" label="予定バー" />
-          <Legend2 color="#2e8b57" label="実績バー" />
-          <span className="flex items-center gap-1"><span className="inline-block h-1 w-5 bg-slate-400" />基準工程</span>
-          <span className="flex items-center gap-1"><span className="text-ng">◆</span> マイルストン</span>
-          <span className="flex items-center gap-1"><span className="inline-block h-3 w-0.5 bg-ng" /> 本日</span>
-          <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 border border-ng bg-red-50" /> 遅延</span>
-          <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 bg-slate-50 ring-1 ring-line" /> 土日・祝</span>
-          <span className="ml-auto">クリティカル工程は赤の依存線で表示 ／ 工程バーはドラッグで移動・右端で期間変更</span>
-        </div>
+        <GanttLegend note="クリティカル工程は赤の依存線で表示 ／ 工程バーはドラッグで移動・右端で期間変更" />
       </Panel>
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
@@ -728,112 +687,6 @@ function TaskEditor({
   )
 }
 
-function GanttHeader({ timeline, view }: { timeline: Timeline; view: ViewMode }) {
-  // バーと同じ timeline.slots からヘッダーを作るため、両者がずれない
-  const months = groupSlots(timeline, 'month')
-  const dw = timeline.slotWidth
-  return (
-    <div className="sticky top-0 z-20 bg-canvas">
-      <div className="flex h-6 border-b border-line">
-        {months.map((m, i) => (
-          <div key={i} className="flex items-center border-r border-line px-2 text-[12px] font-semibold text-ink" style={{ width: m.span * dw }}>
-            {m.label}
-          </div>
-        ))}
-      </div>
-      <div className="flex h-10 border-b border-line">
-        {timeline.slots.map((s) => {
-          const d = s.start
-          const showNum = view === 'day' || view === 'week' || d.getDate() === 1 || d.getDay() === 1
-          return (
-            <div key={s.index} className={`flex flex-col items-center justify-center gap-0.5 border-r border-line/70 ${s.isHoliday ? 'bg-red-50 text-ng' : s.isWeekend ? 'bg-slate-50 text-slate-400' : 'text-ink-soft'}`} style={{ width: dw }}>
-              {showNum && <span className="text-[11px] font-medium leading-none tabular-nums">{d.getDate()}</span>}
-              {view === 'day' && <span className="text-[11px] leading-none">{weekdayLabel(d)}</span>}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-function GanttRow({
-  task: t, row, dw, timeline, preview, onStartDrag, onContext, onSelect, onOpenProgress,
-}: {
-  task: WbsTask; row: number; dw: number; timeline: Timeline
-  preview: { ds: number; de: number } | null
-  onStartDrag: (e: React.PointerEvent, t: WbsTask, mode: 'move' | 'resize') => void
-  onContext: (e: React.MouseEvent) => void
-  onSelect: () => void
-  onOpenProgress: () => void
-}) {
-  const ds = preview?.ds ?? 0
-  const de = preview?.de ?? 0
-  // ドラッグ中はプレビュー分だけ日付をずらしてから座標化する（区分=午前/午後は保たれる）
-  const planBar = timeline.spanOf(shiftDays(t.planStartAt, ds), shiftDays(t.planEndAt, de))
-  const baseBar = timeline.spanOf(t.planStartAt, t.planEndAt)
-  const planLeft = planBar.left
-  const planW = planBar.width
-  const top = row * ROW_H
-
-  if (t.isMilestone) {
-    return (
-      <div className="absolute" style={{ top: top + 5, left: planLeft + dw / 2 - 7 }} onContextMenu={onContext} onClick={onSelect}>
-        <div className="h-3.5 w-3.5 rotate-45 bg-ng" title={`${t.name}（マイルストン）`} />
-      </div>
-    )
-  }
-
-  const color = statusColor[t.status] ?? '#005bac'
-
-  // 実績バー（終了実績が無い＝進行中は本日まで伸ばす）
-  let actualEl = null
-  if (t.actualStartAt) {
-    const aEndAt = t.actualEndAt ?? toJstIsoString(nowJst())
-    const actualBar = timeline.spanOf(t.actualStartAt, aEndAt)
-    actualEl = (
-      <div className="absolute rounded-sm" style={{ top: top + 18, left: actualBar.left, width: actualBar.width, height: 7, background: '#2e8b57', opacity: 0.9 }}
-        title={`実績 ${formatPeriod(t.actualStartAt, aEndAt, t.precision)}`} />
-    )
-  }
-
-  if (t.isParent) {
-    return (
-      <>
-        <div className="absolute" style={{ top: top + 8, left: planLeft, width: planW, height: 8 }} onContextMenu={onContext} onClick={onSelect}>
-          <div className="h-2 w-full bg-sysken-700" style={{ clipPath: 'polygon(0 0,100% 0,100% 60%,calc(100% - 5px) 100%,5px 100%,0 60%)' }} />
-        </div>
-        {actualEl}
-      </>
-    )
-  }
-
-  return (
-    <>
-      {/* 基準工程（薄い線・ドラッグ前の予定位置） */}
-      <div className="absolute rounded-sm bg-slate-300" style={{ top: top + 3, left: baseBar.left, width: baseBar.width, height: 3, opacity: 0.7 }} />
-      {/* 予定バー */}
-      <div
-        className={`group absolute flex items-center rounded-sm ${t.status === '遅延' ? 'ring-1 ring-ng' : ''}`}
-        style={{ top: top + 6, left: planLeft, width: planW, height: 11, background: color, opacity: 0.9, cursor: 'grab' }}
-        onPointerDown={(e) => onStartDrag(e, t, 'move')}
-        onContextMenu={onContext}
-        onClick={onSelect}
-        onDoubleClick={onOpenProgress}
-        title={`${t.name} ｜ 予定 ${formatPeriod(t.planStartAt, t.planEndAt, t.precision)}（${t.planDays}日） ｜ 進捗${t.progress}% ｜ ${t.actualPeople || t.planPeople}名`}
-      >
-        {/* 進捗塗り */}
-        <div className="absolute left-0 top-0 h-full rounded-l-sm bg-black/25" style={{ width: `${t.progress}%` }} />
-        {/* 人数表示 */}
-        {planW > 40 && <span className="relative z-10 px-1 text-[9px] text-white">{t.actualPeople || t.planPeople}名</span>}
-        {/* リサイズハンドル */}
-        <div className="absolute right-0 top-0 h-full w-1.5 cursor-ew-resize opacity-0 group-hover:opacity-100" style={{ background: 'rgba(255,255,255,0.6)' }} onPointerDown={(e) => onStartDrag(e, t, 'resize')} />
-      </div>
-      {actualEl}
-    </>
-  )
-}
-
 function ForecastView() {
   return (
     <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center">
@@ -850,15 +703,6 @@ function ForecastView() {
   )
 }
 
-/**
- * 左表の日付セル表示。0.5日単位の工程だけ「午前／午後」を併記する。
- * 終了は exclusive のため、表示用に日付＋区分へ戻してから整形する。
- */
-function edgeLabel(iso: string, edge: 'start' | 'end', precision: WbsTask['precision']): string {
-  const { dateKey, half } = edge === 'start' ? splitStartAt(iso) : splitEndAt(iso)
-  const date = formatJst(dateKey, 'MM-dd')
-  return precision === 'half_day' ? `${date} ${half === 'AM' ? '午前' : '午後'}` : date
-}
 
 function Info({ label, value }: { label: string; value: string }) {
   return (
@@ -867,7 +711,4 @@ function Info({ label, value }: { label: string; value: string }) {
       <p className="font-medium text-ink">{value}</p>
     </div>
   )
-}
-function Legend2({ color, label }: { color: string; label: string }) {
-  return <span className="flex items-center gap-1"><span className="inline-block h-2 w-5 rounded-sm" style={{ background: color }} />{label}</span>
 }

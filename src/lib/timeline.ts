@@ -35,11 +35,13 @@ export const DEFAULT_SLOT_WIDTH: Record<TimeScale, number> = {
 }
 
 /**
- * バーの最小幅(px)。潰れて見えなくなるのを防ぐためだけの下限で、
- * これで長さをごまかさない（0.5日は必ず1日の半分の実寸で描く）。
- * 月表示など列幅が極端に狭いときでも実寸の比率が保たれるよう小さめにしている。
+ * バーの最小幅(px)。完全に消えるのを防ぐためだけの下限で、これで長さを
+ * ごまかさない（0.5日は必ず1日の半分の実寸で描く）。
+ *
+ * 月表示では 1日 ≒ 3px になるため、下限が 3px あると 0.5日バーが 1日バーと
+ * 同じ幅に膨らんでしまう。実寸の比率を保てるよう 1px にしている。
  */
-export const MIN_BAR_WIDTH = 3
+export const MIN_BAR_WIDTH = 1
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 
@@ -148,9 +150,27 @@ export function splitEndAt(value: DateInput): { dateKey: string; half: HalfDay }
  * 日時を n 日ずらす（JSTのカレンダー日単位）。
  * 時刻（午前=00:00 / 午後=12:00 の区分）は保たれるため、ガントのドラッグ移動で
  * 半日工程の区分が失われない。
+ *
+ * n には 0.5 のような端数も渡せる（0.5日刻みのドラッグ用）。整数部はカレンダー
+ * 日で進め、端数だけ時間を足す。日本標準時に夏時間は無いため時間加算で正確。
  */
 export function shiftDays(value: DateInput, n: number): string {
-  return toJstIsoString(addDays(toJst(value), n))
+  const whole = Math.trunc(n)
+  const fraction = n - whole
+  let d = addDays(toJst(value), whole)
+  if (fraction !== 0) d = addHours(d, fraction * 24)
+  return toJstIsoString(d)
+}
+
+/** 粒度に応じたドラッグの刻み（日）。day = 1日 / half_day = 0.5日。 */
+export function snapStepOf(precision: SchedulePrecision): number {
+  return precision === 'half_day' ? 0.5 : 1
+}
+
+/** ピクセルの移動量を、粒度の刻みに合わせた日数へ丸める。 */
+export function snapDelta(dx: number, slotWidth: number, precision: SchedulePrecision): number {
+  const step = snapStepOf(precision)
+  return Math.round(dx / slotWidth / step) * step
 }
 
 /**

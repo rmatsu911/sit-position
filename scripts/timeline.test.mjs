@@ -11,6 +11,7 @@
 import {
   createTimeline, groupSlots, toJst, rangeFromPeriods, MIN_BAR_WIDTH,
   startAtOf, endAtOf, splitStartAt, splitEndAt, durationInDays, isHalfDayPeriod, formatPeriod,
+  shiftDays, snapDelta, snapStepOf,
 } from '../node_modules/.cache/timeline.test.mjs'
 let pass = 0, fail = 0
 const ok = (cond, name, extra='') => { if (cond) { pass++; console.log(`  PASS ${name}`) } else { fail++; console.log(`  FAIL ${name} ${extra}`) } }
@@ -118,6 +119,58 @@ const barA = tlH2.spanOf(startAtOf('2026-06-10','PM'), endAtOf('2026-06-11','AM'
 const barB = tlH2.spanOf(savedStart, savedEnd)
 ok(near(barA.left, barB.left) && near(barA.width, barB.width), 'ISO文字列を往復しても同じ位置・長さ', `${barA.left}/${barB.left}`)
 ok(near(barB.width, 34), '午後開始〜翌午前終了 = 1日幅', barB.width)
+
+console.log('== 12. ドラッグのスナップ（Phase 2: 横断工程表） ==')
+ok(snapStepOf('day') === 1, '日単位の刻みは1日')
+ok(snapStepOf('half_day') === 0.5, '0.5日単位の刻みは0.5日')
+ok(snapStepOf('time') === 1, '時刻指定は Phase 2 では日単位扱い')
+// 列幅34pxで 20px 動かした場合
+ok(snapDelta(20, 34, 'day') === 1, '日単位: 20px → 1日', snapDelta(20,34,'day'))
+ok(snapDelta(20, 34, 'half_day') === 0.5, '0.5日単位: 20px → 0.5日', snapDelta(20,34,'half_day'))
+ok(snapDelta(12, 34, 'half_day') === 0.5, '0.5日単位: 12px → 0.5日', snapDelta(12,34,'half_day'))
+ok(snapDelta(6, 34, 'half_day') === 0, '0.5日単位: 6px は刻みの半分未満なので動かない', snapDelta(6,34,'half_day'))
+ok(snapDelta(8, 34, 'day') === 0, '日単位: 8px → 移動しない', snapDelta(8,34,'day'))
+ok(snapDelta(-20, 34, 'half_day') === -0.5, '負方向も0.5日刻み', snapDelta(-20,34,'half_day'))
+
+console.log('== 13. 0.5日ずらしても区分と長さが保たれる ==')
+const pmStart = startAtOf('2026-06-10','PM')   // 06-10 12:00
+const pmEnd = endAtOf('2026-06-10','PM')       // 06-11 00:00
+const movedS = shiftDays(pmStart, 0.5)
+const movedE = shiftDays(pmEnd, 0.5)
+ok(splitStartAt(movedS).dateKey === '2026-06-11' && splitStartAt(movedS).half === 'AM',
+   '午後の0.5日工程を +0.5日 → 翌日の午前', `${movedS}`)
+ok(durationInDays(movedS, movedE) === 0.5, '0.5日移動しても長さは0.5日', durationInDays(movedS, movedE))
+const movedBack = shiftDays(movedS, -0.5)
+ok(movedBack === pmStart, '戻すと元の日時に一致', `${movedBack} vs ${pmStart}`)
+// 整数の移動は従来どおり（既存の案件工程の挙動を変えない）
+ok(shiftDays(pmStart, 2) === startAtOf('2026-06-12','PM'), '2日移動しても午後のまま')
+// 月をまたいでも正しい
+ok(shiftDays(startAtOf('2026-06-30','PM'), 0.5) === startAtOf('2026-07-01','AM'), '月跨ぎの0.5日移動')
+// うるう年の 2/28 → 2/29
+ok(shiftDays(startAtOf('2028-02-28','PM'), 0.5) === startAtOf('2028-02-29','AM'), 'うるう年の0.5日移動')
+
+console.log('== 14. 横断工程表の表示単位（3時間〜年） ==')
+for (const [scale, from, to, expected] of [
+  ['hour3', '2026-06-01', '2026-06-01T23:59:59+09:00', 8],
+  ['day',   '2026-06-01', '2026-06-30', 30],
+  ['week',  '2026-06-01', '2026-06-28', 4],
+  ['month', '2026-01-01', '2026-12-31', 12],
+  ['year',  '2024-01-01', '2026-12-31', 3],
+]) {
+  const t = createTimeline({ scale, from, to, now: '2026-06-10T03:00:00Z' })
+  ok(t.slots.length === expected, `${scale} の列数 = ${expected}`, t.slots.length)
+  ok(t.totalWidth === t.slots.length * t.slotWidth, `${scale} の totalWidth が列数×幅`)
+}
+// 年跨ぎ・うるう年の月表示
+const tlLeap = createTimeline({ scale:'month', from:'2027-11-01', to:'2028-03-31', slotWidth:90 })
+ok(tlLeap.slots.length === 5, '年をまたぐ月表示は5列', tlLeap.slots.length)
+const feb = tlLeap.slots[3]
+ok(feb.start.getMonth() === 1 && feb.start.getFullYear() === 2028, '4列目が2028年2月')
+ok((feb.end - feb.start) / 86400000 === 29, 'うるう年の2月は29日', (feb.end - feb.start) / 86400000)
+// 月表示でも 0.5日は1日の半分の実寸
+const halfLeap = tlLeap.spanOf(startAtOf('2028-02-10','AM'), endAtOf('2028-02-10','AM'))
+const dayLeap = tlLeap.spanOf(startAtOf('2028-02-10','AM'), endAtOf('2028-02-10','PM'))
+ok(near(halfLeap.width / dayLeap.width, 0.5, 0.02), '月表示でも0.5日は1日の半分', `${halfLeap.width}/${dayLeap.width}`)
 
 console.log(`\n結果: ${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
