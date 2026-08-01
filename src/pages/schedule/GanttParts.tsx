@@ -5,15 +5,73 @@
  * 座標は必ず `timeline`（src/lib/timeline.ts）から取るため、ヘッダー・バー・
  * 今日線・依存線・ドラッグがすべて同じ基準になる。
  */
+import { ZoomIn, ZoomOut } from 'lucide-react'
 import {
   formatJst, formatPeriod, groupSlots, nowJst, shiftDays, splitEndAt, splitStartAt, toJstIsoString,
-  type Timeline,
+  type TimeScale, type Timeline,
 } from '../../lib/timeline'
 import type { WbsTask } from '../../types'
 import { weekdayLabel } from './ganttUtils'
 
 /** 1行の高さ(px)。左の一覧と右のガントで必ず同じ値を使い、縦位置を揃える。 */
 export const ROW_H = 32
+
+/**
+ * 表示単位の選択肢。案件工程・横断工程が同じ定義・同じUIを使う。
+ * 3時間はズーム操作でしか届かない状態にせず、必ず直接選べるようにする。
+ */
+export const SCALE_OPTIONS: { key: TimeScale; label: string }[] = [
+  { key: 'hour3', label: '3時間' },
+  { key: 'day', label: '日' },
+  { key: 'week', label: '週' },
+  { key: 'month', label: '月' },
+  { key: 'year', label: '年' },
+]
+
+/** 表示単位の切替。現在の単位が選択状態として一目で分かるようにする。 */
+export function ScaleSelector({
+  scale, onChange, label = '表示単位',
+}: {
+  scale: TimeScale
+  onChange: (s: TimeScale) => void
+  label?: string
+}) {
+  const index = SCALE_OPTIONS.findIndex((s) => s.key === scale)
+  const step = (delta: number) => {
+    const next = SCALE_OPTIONS[Math.min(SCALE_OPTIONS.length - 1, Math.max(0, index + delta))]
+    if (next) onChange(next.key)
+  }
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-[12px] text-ink-soft">{label}</span>
+      <div className="flex items-center gap-0.5 rounded border border-line bg-white p-0.5" role="group" aria-label={label}>
+        {SCALE_OPTIONS.map((s) => (
+          <button
+            key={s.key}
+            type="button"
+            onClick={() => onChange(s.key)}
+            aria-pressed={scale === s.key}
+            title={`${s.label}表示`}
+            className={`rounded px-2.5 py-1 text-xs font-medium ${
+              scale === s.key ? 'bg-sysken-500 text-white' : 'text-ink hover:bg-canvas'
+            }`}
+          >
+            {s.label}
+          </button>
+        ))}
+        {/* ズームは選択肢を1段ずつ動かすだけ。単位の表示は上のボタンが常に示す */}
+        <button type="button" onClick={() => step(1)} disabled={index >= SCALE_OPTIONS.length - 1}
+          className="ml-1 rounded p-1 text-ink-soft hover:bg-canvas disabled:opacity-30" title="表示単位を粗く">
+          <ZoomOut size={15} />
+        </button>
+        <button type="button" onClick={() => step(-1)} disabled={index <= 0}
+          className="rounded p-1 text-ink-soft hover:bg-canvas disabled:opacity-30" title="表示単位を細かく">
+          <ZoomIn size={15} />
+        </button>
+      </div>
+    </div>
+  )
+}
 
 export const statusColor: Record<string, string> = {
   完了: '#2e8b57',

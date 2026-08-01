@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Plus, FolderPlus, CornerDownRight, Pencil, Trash2, Copy, ClipboardPaste,
   Undo2, Redo2, UserPlus, Users2, TrendingUp, Save, SlidersHorizontal, Filter,
-  Crosshair, ZoomIn, ZoomOut, CheckCircle2, Link2, Eye, Maximize2,
+  Crosshair, CheckCircle2, Link2, Eye, Maximize2,
 } from 'lucide-react'
 import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
@@ -16,16 +16,16 @@ import { useProject, useProjects } from '../api/projects'
 import { ApiError } from '../lib/apiClient'
 import type { WbsTask } from '../types'
 
-import { dayWidthByMode, type ViewMode } from './schedule/ganttUtils'
 import {
-  createTimeline, durationInDays, endAtOf, formatPeriod, jstDateKey, nowJst,
-  rangeFromPeriods, shiftDays, splitEndAt, splitStartAt, startAtOf,
-  type HalfDay, type Timeline,
+  createTimeline, DEFAULT_SLOT_WIDTH, durationInDays, endAtOf, formatPeriod, jstDateKey, nowJst,
+  rangeForScale, shiftDays, snapDelta, splitEndAt, splitStartAt, startAtOf,
+  type HalfDay, type SchedulePrecision, type TimeScale, type Timeline,
 } from '../lib/timeline'
 import { JP_HOLIDAYS } from '../lib/holidays'
 import { ScheduleTabs } from './schedule/ScheduleTabs'
 import {
-  DependencyLines, edgeLabel, GanttGrid, GanttHeader, GanttLegend, GanttRow, ROW_H, TodayLine,
+  DependencyLines, edgeLabel, GanttGrid, GanttHeader, GanttLegend, GanttRow, ROW_H,
+  SCALE_OPTIONS, ScaleSelector, TodayLine,
 } from './schedule/GanttParts'
 
 const LEFT_COLS = [
@@ -50,7 +50,7 @@ export default function Schedule() {
   const { toast, confirm } = useApp()
   const navigate = useNavigate()
   const { id } = useParams()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { data: projects = [] } = useProjects()
   const requestedId = Number(id ?? searchParams.get('project_id'))
   const projectId = Number.isFinite(requestedId) && requestedId > 0 ? requestedId : projects[0]?.id
@@ -66,7 +66,16 @@ export default function Schedule() {
     if (apiTasks) setTasks(apiTasks.map((t) => ({ ...t })))
   }, [apiTasks])
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
-  const [view, setView] = useState<ViewMode>('day')
+  // 表示単位はURLクエリで保持する（再読込・URL共有でも同じ単位で開ける）
+  const scale = (SCALE_OPTIONS.some((s) => s.key === searchParams.get('scale'))
+    ? (searchParams.get('scale') as TimeScale)
+    : 'day')
+  const setScale = useCallback((next: TimeScale) => {
+    const p = new URLSearchParams(searchParams)
+    if (next === 'day') p.delete('scale')
+    else p.set('scale', next)
+    setSearchParams(p, { replace: true })
+  }, [searchParams, setSearchParams])
   const [filterStatus, setFilterStatus] = useState<string>('all')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null)
@@ -76,25 +85,35 @@ export default function Schedule() {
   const [filterOpen, setFilterOpen] = useState(false)
   const [editor, setEditor] = useState<{ mode: 'create' | 'edit' | 'copy'; parent?: WbsTask; task?: WbsTask } | null>(null)
 
-  const dw = dayWidthByMode[view]
   const ganttRef = useRef<HTMLDivElement>(null)
 
   // 時間軸は工程の実期間から動的に決める（固定の表示期間・固定の「今日」は持たない）。
   // ヘッダーもバーもこの timeline を唯一の基準にするため、両者がずれない。
-  const timeline: Timeline = useMemo(() => {
-    const { from, to } = rangeFromPeriods(tasks.map((t) => ({ start: t.planStartAt, end: t.planEndAt })))
-    return createTimeline({ scale: 'day', from, to, slotWidth: dw, holidays: JP_HOLIDAYS })
-  }, [tasks, dw])
+  // 表示範囲の決め方は横断工程と同じ rangeForScale を使い、画面ごとに別計算を作らない。
+  const range = useMemo(
+    () => rangeForScale(scale, tasks.map((t) => ({ start: t.planStartAt, end: t.planEndAt }))),
+    [scale, tasks],
+  )
+  const timeline: Timeline = useMemo(
+    () => createTimeline({
+      scale, from: range.from, to: range.to,
+      slotWidth: DEFAULT_SLOT_WIDTH[scale], holidays: JP_HOLIDAYS,
+    }),
+    [scale, range],
+  )
 
   // ドラッグ
-  const dragRef = useRef<{ id: string; mode: 'move' | 'resize'; startX: number; s: string; e: string } | null>(null)
+  const dragRef = useRef<{
+    id: string; mode: 'move' | 'resize'; startX: number; s: string; e: string; precision: SchedulePrecision
+  } | null>(null)
   const [preview, setPreview] = useState<{ id: string; ds: number; de: number } | null>(null)
 
   useEffect(() => {
     function onMove(ev: PointerEvent) {
       const d = dragRef.current
       if (!d) return
-      const delta = Math.round((ev.clientX - d.startX) / dw)
+      // 列幅ではなく「1日あたりのピクセル数」で換算する（3時間・週・月表示でもずれない）
+      const delta = snapDelta(ev.clientX - d.startX, timeline.pxPerDay, d.precision)
       if (d.mode === 'move') setPreview({ id: d.id, ds: delta, de: delta })
       else setPreview({ id: d.id, ds: 0, de: delta })
     }
@@ -126,7 +145,7 @@ export default function Schedule() {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
-  }, [dw, preview, toast, tasks, updateTaskMutation])
+  }, [timeline.pxPerDay, preview, toast, tasks, updateTaskMutation])
 
   const visible = useMemo(() => {
     if (filterStatus !== 'all') return tasks.filter((t) => !t.isParent && t.status === filterStatus)
@@ -170,7 +189,7 @@ export default function Schedule() {
   function startDrag(e: React.PointerEvent, t: WbsTask, mode: 'move' | 'resize') {
     e.stopPropagation()
     if (t.isMilestone) return
-    dragRef.current = { id: t.id, mode, startX: e.clientX, s: t.planStartAt, e: t.planEndAt }
+    dragRef.current = { id: t.id, mode, startX: e.clientX, s: t.planStartAt, e: t.planEndAt, precision: t.precision }
   }
 
   async function updateProgress() {
@@ -290,20 +309,9 @@ export default function Schedule() {
               <option value="" disabled>案件を選択</option>
               {projects.map((p) => <option key={p.id} value={p.id}>{p.construction_number} {p.name}</option>)}
             </select>
-            <div className="flex items-center gap-1 rounded border border-line bg-white p-0.5">
-            {(['day', 'week', 'month'] as ViewMode[]).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className={`rounded px-2.5 py-1 text-xs font-medium ${view === v ? 'bg-sysken-500 text-white' : 'text-ink hover:bg-canvas'}`}
-              >
-                {v === 'day' ? '日' : v === 'week' ? '週' : '月'}表示
-              </button>
-            ))}
-            <button onClick={() => toast('この操作は現在準備中です')} className="ml-1 rounded p-1 text-ink-soft hover:bg-canvas" title="全画面表示"><Maximize2 size={15} /></button>
-            <button onClick={() => setView('week')} className="rounded p-1 text-ink-soft hover:bg-canvas" title="縮小"><ZoomOut size={15} /></button>
-            <button onClick={() => setView('day')} className="rounded p-1 text-ink-soft hover:bg-canvas" title="拡大"><ZoomIn size={15} /></button>
-            </div>
+            {/* 表示単位は横断工程と同じ共通部品。3時間も直接選べる */}
+            <ScaleSelector scale={scale} onChange={setScale} />
+            <button onClick={() => toast('この操作は現在準備中です')} className="rounded border border-line bg-white p-1.5 text-ink-soft hover:bg-canvas" title="全画面表示"><Maximize2 size={15} /></button>
           </div>
         }
       />
@@ -346,6 +354,12 @@ export default function Schedule() {
         )}
       </div>
 
+      {range.narrowed && (
+        <div className="mb-2 rounded border border-line bg-white px-3 py-1.5 text-[12px] text-ink-soft">
+          3時間表示は1日が8列になるため、現在日を中心とした期間だけを表示しています。
+          全期間を確認するときは「日」以上の表示単位に切り替えてください。
+        </div>
+      )}
       {/* エラー時は固定ダミーへ切り替えず、状態を明示する */}
       {tasksError && (
         <div className="mb-2 rounded border border-red-200 bg-red-50 px-4 py-3 text-center text-[13px] text-ng">

@@ -167,10 +167,16 @@ export function snapStepOf(precision: SchedulePrecision): number {
   return precision === 'half_day' ? 0.5 : 1
 }
 
-/** ピクセルの移動量を、粒度の刻みに合わせた日数へ丸める。 */
-export function snapDelta(dx: number, slotWidth: number, precision: SchedulePrecision): number {
+/**
+ * ピクセルの移動量を、粒度の刻みに合わせた日数へ丸める。
+ *
+ * 第2引数は「1日あたりのピクセル数」（`Timeline.pxPerDay`）であって列幅ではない。
+ * 3時間表示では1列=3時間、週表示では1列=1週のように列幅と1日の長さは一致しないため、
+ * 列幅を渡すと移動日数が単位ごとにずれる。
+ */
+export function snapDelta(dx: number, pxPerDay: number, precision: SchedulePrecision): number {
   const step = snapStepOf(precision)
-  return Math.round(dx / slotWidth / step) * step
+  return Math.round(dx / pxPerDay / step) * step
 }
 
 /**
@@ -286,6 +292,11 @@ export interface Timeline {
   /** 表示範囲の終了（最後の列の終了・含まない） */
   end: Date
   totalWidth: number
+  /**
+   * 1日あたりのピクセル数。列幅とは別物で、3時間表示なら列幅×8、
+   * 週表示なら列幅÷7 になる。ドラッグの移動日数を求めるのに使う。
+   */
+  pxPerDay: number
   /** 日時 → x座標(px)。範囲外は端にクランプする。 */
   xOf(value: DateInput): number
   /**
@@ -369,7 +380,12 @@ export function createTimeline(options: TimelineOptions): Timeline {
 
   const currentX = now.getTime() >= start.getTime() && now.getTime() < end.getTime() ? xOfJst(now) : null
 
-  return { scale, slotWidth, slots, start, end, totalWidth, xOf, spanOf, todayX: currentX }
+  // 表示範囲全体の「幅 ÷ 日数」。月・年のように長さが一定でない単位でも、
+  // ドラッグの移動日数を求めるうえで十分な精度になる。
+  const spanDays = (end.getTime() - start.getTime()) / 86_400_000
+  const pxPerDay = spanDays > 0 ? totalWidth / spanDays : slotWidth
+
+  return { scale, slotWidth, slots, start, end, totalWidth, pxPerDay, xOf, spanOf, todayX: currentX }
 }
 
 export interface SlotGroup {
@@ -426,5 +442,77 @@ export function rangeFromPeriods(
   return {
     from: toJstIsoString(addDays(startOfDay(new Date(min)), -pad)),
     to: toJstIsoString(addDays(startOfDay(new Date(max)), pad)),
+  }
+}
+
+/**
+ * 3時間表示で一度に描く日数。
+ * 1日=8列のため、これを超えると列が数千になり操作できなくなる。
+ */
+export const HOUR3_WINDOW_DAYS = { before: 3, after: 10 } as const
+
+/**
+ * 表示単位に応じた表示範囲を返す。
+ *
+ * 3時間表示は1日が8列になるため、工程の全期間をそのまま描くと列数が膨大になる。
+ * その場合だけ「現在日を中心とした期間」へ狭める（工程が現在日から離れていれば
+ * 工程の開始日を基準にする）。固定日付は持たず、必ず実データか現在日から求める。
+ *
+ * 画面ごとに別の計算を作らないよう、案件工程・横断工程の両方がこの関数を使う。
+ */
+export function rangeForScale(
+  scale: TimeScale,
+  periods: readonly { start?: string | null; end?: string | null }[],
+  options?: { now?: DateInput; explicit?: { from?: string; to?: string } },
+): { from: string; to: string; narrowed: boolean } {
+  // 利用者が「表示期間」を指定していれば、それを時間軸としてそのまま使う。
+  // 指定した期間と違う範囲が描かれると、絞り込みの結果と目盛りが食い違う。
+  const ex = options?.explicit
+  if (ex?.from && ex?.to) {
+    return {
+      from: `${ex.from}T00:00:00+09:00`,
+      // 終了日は「その日を含む」指定なので、翌日0:00までを描く（半開区間）
+      to: toJstIsoString(addDays(toJst(ex.to), 1)),
+      narrowed: false,
+    }
+  }
+
+  const base = rangeFromPeriods(periods, { now: options?.now })
+  if (scale !== 'hour3') return { ...base, narrowed: false }
+
+  // 片側だけ指定されていれば、そこを3時間表示の基準にする
+  if (ex?.from || ex?.to) {
+    const edge = toJst(`${ex.from ?? ex.to}T00:00:00+09:00`)
+    return {
+      from: toJstIsoString(addDays(startOfDay(edge), ex.from ? 0 : -HOUR3_WINDOW_DAYS.after)),
+      to: toJstIsoString(addDays(startOfDay(edge), ex.from ? HOUR3_WINDOW_DAYS.after : 0)),
+      narrowed: true,
+    }
+  }
+
+  const now = options?.now ? toJst(options.now) : nowJst()
+  // 基準の判定には工程そのものの期間を使う。
+  // base は今日線を見せるため今日まで伸び、前後にも余白を足すため、これで
+  // 判定すると「工程から遠く離れた今日」まで範囲内になり、工程が1件も無い
+  // 期間を表示してしまう。余白を含まない実期間で判断する。
+  const times: number[] = []
+  for (const p of periods) {
+    if (p.start) times.push(toJst(p.start).getTime())
+    if (p.end) times.push(toJst(p.end).getTime())
+  }
+  if (!times.length) return { ...base, narrowed: false }
+
+  const dataFrom = Math.min(...times)
+  const dataTo = Math.max(...times)
+  const windowDays = HOUR3_WINDOW_DAYS.before + HOUR3_WINDOW_DAYS.after
+  if ((dataTo - dataFrom) / 86_400_000 <= windowDays) return { ...base, narrowed: false }
+
+  // 現在日が工程の期間に含まれていればそこを、外れていれば工程の開始日を基準にする
+  const inRange = now.getTime() >= dataFrom && now.getTime() <= dataTo
+  const anchor = inRange ? now : new Date(dataFrom)
+  return {
+    from: toJstIsoString(addDays(startOfDay(anchor), -HOUR3_WINDOW_DAYS.before)),
+    to: toJstIsoString(addDays(startOfDay(anchor), HOUR3_WINDOW_DAYS.after)),
+    narrowed: true,
   }
 }

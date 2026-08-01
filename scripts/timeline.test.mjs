@@ -11,7 +11,7 @@
 import {
   createTimeline, groupSlots, toJst, rangeFromPeriods, MIN_BAR_WIDTH,
   startAtOf, endAtOf, splitStartAt, splitEndAt, durationInDays, isHalfDayPeriod, formatPeriod,
-  shiftDays, snapDelta, snapStepOf,
+  shiftDays, snapDelta, snapStepOf, rangeForScale, DEFAULT_SLOT_WIDTH,
 } from '../node_modules/.cache/timeline.test.mjs'
 let pass = 0, fail = 0
 const ok = (cond, name, extra='') => { if (cond) { pass++; console.log(`  PASS ${name}`) } else { fail++; console.log(`  FAIL ${name} ${extra}`) } }
@@ -171,6 +171,76 @@ ok((feb.end - feb.start) / 86400000 === 29, 'うるう年の2月は29日', (feb.
 const halfLeap = tlLeap.spanOf(startAtOf('2028-02-10','AM'), endAtOf('2028-02-10','AM'))
 const dayLeap = tlLeap.spanOf(startAtOf('2028-02-10','AM'), endAtOf('2028-02-10','PM'))
 ok(near(halfLeap.width / dayLeap.width, 0.5, 0.02), '月表示でも0.5日は1日の半分', `${halfLeap.width}/${dayLeap.width}`)
+
+console.log('== 15. pxPerDay（ドラッグの換算基準）==')
+// 列幅と「1日あたりのピクセル数」は単位ごとに一致しない。
+// ここを取り違えると、日表示以外でドラッグの移動日数がずれる。
+for (const [scale, from, to, expectPxPerDay] of [
+  ['hour3', '2026-06-01', '2026-06-04T23:59:59+09:00', 18 * 8],
+  ['day',   '2026-06-01', '2026-06-30', 34],
+  ['week',  '2026-06-01', '2026-06-28', 60 / 7],
+  ['year',  '2026-01-01', '2026-12-31', 120 / 365],
+]) {
+  const t = createTimeline({ scale, from, to, now: '2026-06-10T03:00:00Z' })
+  ok(near(t.pxPerDay, expectPxPerDay, Math.max(0.01, expectPxPerDay * 0.02)),
+     `${scale} の pxPerDay = ${expectPxPerDay.toFixed(2)}`, t.pxPerDay.toFixed(2))
+  ok(t.slotWidth === DEFAULT_SLOT_WIDTH[scale], `${scale} の列幅は既定値`, t.slotWidth)
+}
+// 3時間表示で 1日分ドラッグしたら 1日動く（列幅で割ると 8日になってしまう）
+const tlH3 = createTimeline({ scale:'hour3', from:'2026-06-01', to:'2026-06-04T23:59:59+09:00' })
+ok(snapDelta(tlH3.pxPerDay, tlH3.pxPerDay, 'day') === 1, '3時間表示: 1日分の移動 = 1日', snapDelta(tlH3.pxPerDay, tlH3.pxPerDay, 'day'))
+ok(snapDelta(tlH3.pxPerDay / 2, tlH3.pxPerDay, 'half_day') === 0.5, '3時間表示: 半日分の移動 = 0.5日')
+// 週表示でも同じ
+const tlW = createTimeline({ scale:'week', from:'2026-06-01', to:'2026-07-31' })
+ok(snapDelta(tlW.pxPerDay, tlW.pxPerDay, 'day') === 1, '週表示: 1日分の移動 = 1日')
+ok(snapDelta(tlW.slotWidth, tlW.pxPerDay, 'day') === 7, '週表示: 1列分の移動 = 7日', snapDelta(tlW.slotWidth, tlW.pxPerDay, 'day'))
+
+console.log('== 16. 3時間表示でも予定/実績/0.5日の座標基準が一致する ==')
+const h3 = createTimeline({ scale:'hour3', from:'2026-06-01', to:'2026-06-03T23:59:59+09:00', now:'2026-06-02T03:00:00Z' })
+ok(h3.slots.length === 24, '3日 × 8列 = 24列', h3.slots.length)
+const h3Day = h3.spanOf(startAtOf('2026-06-02','AM'), endAtOf('2026-06-02','PM'))
+const h3Am = h3.spanOf(startAtOf('2026-06-02','AM'), endAtOf('2026-06-02','AM'))
+const h3Pm = h3.spanOf(startAtOf('2026-06-02','PM'), endAtOf('2026-06-02','PM'))
+ok(near(h3Day.width, 8 * 18), '1日工程は8列分の幅', h3Day.width)
+ok(near(h3Am.width, 4 * 18), '0.5日(午前)は4列分の幅', h3Am.width)
+ok(h3Day.width / h3Am.width === 2, '1日と0.5日の幅の比は 2:1')
+ok(near(h3Am.left, h3Day.left), '午前は1日工程と同じ位置から始まる')
+ok(near(h3Pm.left - h3Day.left, 4 * 18), '午後は日の中央（4列目）から始まる', h3Pm.left - h3Day.left)
+ok(near(h3Pm.left + h3Pm.width, h3Day.left + h3Day.width), '午後の終わりは1日工程の終わりと一致')
+// 今日線・実績も同じ xOf 基準
+ok(h3.todayX !== null && near(h3.todayX, h3.xOf('2026-06-02T03:00:00Z')), '今日線はバーと同じ座標関数を使う')
+
+console.log('== 17. rangeForScale（表示範囲の共通算出）==')
+const periods = [{ start: startAtOf('2026-06-01'), end: endAtOf('2026-08-10') }]
+const rDay = rangeForScale('day', periods, { now: '2026-07-01T00:00:00+09:00' })
+ok(rDay.narrowed === false, '日表示は工程の全期間を使う')
+const rH3 = rangeForScale('hour3', periods, { now: '2026-07-01T00:00:00+09:00' })
+ok(rH3.narrowed === true, '3時間表示は期間を狭める')
+const h3Span = (toJst(rH3.to) - toJst(rH3.from)) / 86400000
+ok(near(h3Span, 13, 0.01), '3時間表示の表示範囲は13日（前3日＋後10日）', h3Span)
+// 現在日が期間内なら現在日が基準
+ok(rH3.from.startsWith('2026-06-28'), '現在日の3日前から始まる', rH3.from)
+// 現在日が期間外なら工程の開始日を基準にする（余白ではなく実期間で判断する）
+const rOut = rangeForScale('hour3', periods, { now: '2027-01-01T00:00:00+09:00' })
+ok(rOut.narrowed === true && rOut.from.startsWith('2026-05-29'),
+   '現在日が範囲外なら工程の開始日(06-01)の3日前から', rOut.from)
+ok(toJst(rOut.from) <= toJst(periods[0].start), '工程の開始が表示範囲に入る', rOut.from)
+// 狭めた場合でも、対象工程が表示範囲に収まること（工程が画面から消えない）
+const shortPeriods = [{ start: startAtOf('2026-06-01'), end: endAtOf('2026-06-02') }]
+const shortR = rangeForScale('hour3', shortPeriods, { now: '2026-06-01T00:00:00+09:00' })
+ok(toJst(shortR.from) <= toJst(shortPeriods[0].start) && toJst(shortR.to) >= toJst(shortPeriods[0].end),
+   '狭めても対象工程は表示範囲に収まる', `${shortR.from} 〜 ${shortR.to}`)
+
+console.log('== 18. 表示期間の指定は時間軸をそのまま決める ==')
+for (const scale of ['hour3','day','week','month','year']) {
+  const r = rangeForScale(scale, periods, { now:'2026-07-01T00:00:00+09:00', explicit:{ from:'2026-06-15', to:'2026-06-25' } })
+  ok(r.from.startsWith('2026-06-15') && r.to.startsWith('2026-06-26'),
+     `${scale}: 指定した表示期間をそのまま使う（終了日を含む）`, `${r.from} 〜 ${r.to}`)
+  ok(r.narrowed === false, `${scale}: 指定があるときは勝手に狭めない`)
+}
+// 片側だけの指定でも、3時間表示はその日を基準にする
+const oneSide = rangeForScale('hour3', periods, { now:'2026-12-01T00:00:00+09:00', explicit:{ from:'2026-06-15' } })
+ok(oneSide.from.startsWith('2026-06-15'), '開始だけの指定はその日から', oneSide.from)
 
 console.log(`\n結果: ${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

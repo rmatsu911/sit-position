@@ -20,7 +20,7 @@ import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../auth/AuthContext'
 import { ApiError } from '../../lib/apiClient'
 import {
-  createTimeline, DEFAULT_SLOT_WIDTH, formatJst, formatPeriod, nowJst, rangeFromPeriods,
+  createTimeline, DEFAULT_SLOT_WIDTH, formatJst, formatPeriod, nowJst, rangeForScale,
   shiftDays, snapDelta, snapStepOf, toJstIsoString,
   type SchedulePrecision, type TimeScale, type Timeline,
 } from '../../lib/timeline'
@@ -34,7 +34,8 @@ import {
 } from '../../api/crossSchedule'
 import { ScheduleTabs } from './ScheduleTabs'
 import {
-  DependencyLines, edgeLabel, GanttGrid, GanttHeader, GanttLegend, GanttRow, ROW_H, TodayLine,
+  DependencyLines, edgeLabel, GanttGrid, GanttHeader, GanttLegend, GanttRow, ROW_H,
+  SCALE_OPTIONS, ScaleSelector, TodayLine,
 } from './GanttParts'
 
 type GroupKey = 'project' | 'manager' | 'company'
@@ -43,14 +44,6 @@ const GROUPS: { key: GroupKey; label: string }[] = [
   { key: 'project', label: '案件別' },
   { key: 'manager', label: '担当者別' },
   { key: 'company', label: '担当会社別' },
-]
-
-const SCALES: { key: TimeScale; label: string }[] = [
-  { key: 'hour3', label: '3時間' },
-  { key: 'day', label: '日' },
-  { key: 'week', label: '週' },
-  { key: 'month', label: '月' },
-  { key: 'year', label: '年' },
 ]
 
 /** 左一覧の列。sticky の3列は横スクロールしても常に見える主要列。 */
@@ -142,7 +135,9 @@ export default function CrossSchedule() {
 
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams])
   const group = (searchParams.get('group') as GroupKey) || 'project'
-  const scale = (searchParams.get('scale') as TimeScale) || 'day'
+  const scale: TimeScale = SCALE_OPTIONS.some((s) => s.key === searchParams.get('scale'))
+    ? (searchParams.get('scale') as TimeScale)
+    : 'day'
 
   const applyState = useCallback(
     (next: { filters?: CrossFilters; group?: GroupKey; scale?: TimeScale }) => {
@@ -191,17 +186,23 @@ export default function CrossSchedule() {
   const wbsById = useMemo(() => new Map(tasks.map((t) => [t.id, t.wbs_code ?? String(t.id)])), [tasks])
 
   // 時間軸は対象工程の実期間から決める（固定の表示期間・固定の「今日」は持たない）
-  const timeline: Timeline = useMemo(() => {
-    const periods = tasks.map((t) => ({ start: t.planned_start_at, end: t.planned_finish_at }))
-    let { from, to } = rangeFromPeriods(periods)
-    if (scale === 'hour3' && !filters.dateFrom && !filters.dateTo) {
-      // 3時間表示は列が非常に多くなるため、期間指定が無いときは現在日を基準に狭める
-      const today = toJstIsoString(nowJst())
-      from = shiftDays(today, -3)
-      to = shiftDays(today, 7)
-    }
-    return createTimeline({ scale, from, to, slotWidth: DEFAULT_SLOT_WIDTH[scale], holidays: JP_HOLIDAYS })
-  }, [tasks, scale, filters.dateFrom, filters.dateTo])
+  // 表示範囲の決め方は案件工程と同じ rangeForScale を使い、画面ごとに別計算を作らない
+  const range = useMemo(
+    () => rangeForScale(
+      scale,
+      tasks.map((t) => ({ start: t.planned_start_at, end: t.planned_finish_at })),
+      // 「表示期間」を指定していれば時間軸もその期間に合わせる
+      { explicit: { from: filters.dateFrom || undefined, to: filters.dateTo || undefined } },
+    ),
+    [scale, tasks, filters.dateFrom, filters.dateTo],
+  )
+  const timeline: Timeline = useMemo(
+    () => createTimeline({
+      scale, from: range.from, to: range.to,
+      slotWidth: DEFAULT_SLOT_WIDTH[scale], holidays: JP_HOLIDAYS,
+    }),
+    [scale, range],
+  )
 
   // ===== グループ化（同名でも別レコードなら別グループ。必ずIDで判定する） =====
   const groups = useMemo(() => {
@@ -318,7 +319,8 @@ export default function CrossSchedule() {
     function onMove(ev: PointerEvent) {
       const d = dragRef.current
       if (!d) return
-      const delta = snapDelta(ev.clientX - d.startX, timeline.slotWidth, d.precision)
+      // 列幅ではなく「1日あたりのピクセル数」で換算する（3時間・週・月表示でもずれない）
+      const delta = snapDelta(ev.clientX - d.startX, timeline.pxPerDay, d.precision)
       setPreview(d.mode === 'move'
         ? { taskId: d.taskId, ds: delta, de: delta }
         : { taskId: d.taskId, ds: 0, de: delta })
@@ -352,7 +354,7 @@ export default function CrossSchedule() {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
-  }, [preview, timeline.slotWidth, taskById, toast, updateTask])
+  }, [preview, timeline.pxPerDay, taskById, toast, updateTask])
 
   function startDrag(e: React.PointerEvent, bar: WbsTask) {
     e.stopPropagation()
@@ -435,17 +437,8 @@ export default function CrossSchedule() {
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-0.5 rounded border border-line bg-white p-0.5">
-              {SCALES.map((s) => (
-                <button
-                  key={s.key}
-                  onClick={() => applyState({ scale: s.key })}
-                  className={`rounded px-2 py-1 text-xs font-medium ${scale === s.key ? 'bg-sysken-500 text-white' : 'text-ink hover:bg-canvas'}`}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
+            {/* 表示単位は案件工程と同じ共通部品。3時間も直接選べる */}
+            <ScaleSelector scale={scale} onChange={(s) => applyState({ scale: s })} />
           </div>
         }
       />
@@ -515,6 +508,12 @@ export default function CrossSchedule() {
         </div>
       )}
 
+      {range.narrowed && (
+        <div data-print="hide" className="mb-2 rounded border border-line bg-white px-3 py-1.5 text-[12px] text-ink-soft">
+          3時間表示は1日が8列になるため、現在日を中心とした期間だけを表示しています。
+          全期間を確認するときは「日」以上の表示単位に切り替えてください。
+        </div>
+      )}
       {!!detections.length && (
         <div data-print="hide">
           <DetectionPanel detections={detections} />
