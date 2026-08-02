@@ -772,6 +772,15 @@ class MilestoneOut(BaseModel):
     status: str
     responsible_id: int | None = None
     responsible: str | None = None
+    # 担当会社。担当者の所属からの導出ではなく独立した正データ
+    company_id: int | None = None
+    company: str | None = None
+    # 関連工程。関連付けが無い場合は工程との関係を推測しない
+    related_task_id: int | None = None
+    related_task_wbs: str | None = None
+    related_task_name: str | None = None
+    # 入力粒度（day / half_day）。AM/PM専用列は持たず、日時とこの列だけで表す
+    schedule_precision: str = "day"
     notes: str | None = None
     # 確定計算による判定（推論ではない）
     is_delayed: bool = False       # 実績が予定より後 / 未完了のまま予定日を過ぎた
@@ -787,6 +796,9 @@ class MilestoneCreate(BaseModel):
     actual_at: datetime | None = None
     status: str = "予定"
     responsible_id: int | None = None
+    company_id: int | None = None
+    related_task_id: int | None = None
+    schedule_precision: str = "day"
     notes: str | None = None
 
 
@@ -797,5 +809,8 @@ class MilestoneUpdate(BaseModel):
     actual_at: datetime | None = None
     status: str | None = None
     responsible_id: int | None = None
+    company_id: int | None = None
+    related_task_id: int | None = None
+    schedule_precision: str | None = None
     notes: str | None = None
     change_reason: str | None = None

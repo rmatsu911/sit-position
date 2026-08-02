@@ -1,3 +1,5 @@
+import pytest
+
 from tests.conftest import token
 
 
@@ -552,3 +554,158 @@ def test_milestone_supports_multiple_types_per_project(client):
         # 実績未入力は未入力のまま（固定値で埋めない）
         assert all(r.actual_at is None for r in rows)
         assert all(r.status == "予定" for r in rows)
+
+
+# --- Ver.0.3 Phase 3 (P3-1補足): 担当会社 / 関連工程 / 入力粒度 ---------------
+def _mk_milestone(session, **kw):
+    from app.models import Milestone, MilestoneType
+
+    mt = session.query(MilestoneType).first()
+    if mt is None:
+        mt = MilestoneType(code="ms-sup", name="引き渡し", sort_order=0)
+        session.add(mt)
+        session.flush()
+    base = dict(project_id=1, milestone_type_id=mt.id, name="補足テスト", status="予定")
+    base.update(kw)
+    row = Milestone(**base)
+    session.add(row)
+    session.flush()
+    return row
+
+
+def test_milestone_company_is_independent_from_responsible(client):
+    """担当会社が担当者の所属からの導出ではなく、独立した正データとして保存・再取得できること。"""
+    from app.models import Company, Milestone, User
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        company = Company(name="マイルストーン担当会社", is_partner=True)
+        s.add(company)
+        s.flush()
+        # 担当者には別の所属会社を持たせ、導出されていないことを確かめる
+        other = Company(name="担当者の所属会社", is_partner=False)
+        s.add(other)
+        s.flush()
+        user = s.query(User).filter_by(email="pm@test.jp").one()
+        user.company_id = other.id
+        row = _mk_milestone(s, responsible_id=user.id, company_id=company.id)
+        s.commit()
+        # セッションを閉じた後に参照しないよう、IDを値として取り出しておく
+        mid, company_id, other_id, user_id = row.id, company.id, other.id, user.id
+
+    with TestingSessionLocal() as s:
+        got = s.get(Milestone, mid)
+        assert got.company_id == company_id, "担当会社がそのまま再取得できること"
+        assert got.company_id != other_id, "担当者の所属会社から導出していないこと"
+        assert got.responsible_id == user_id
+
+
+def test_milestone_related_task_roundtrip_and_validation(client):
+    """関連工程の保存・再取得と、不正な工程IDを拒否すること。"""
+    from fastapi import HTTPException
+
+    from app.models import Milestone, Task, User
+    from app.services.milestones import resolve_related_task
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        pm = s.query(User).filter_by(email="pm@test.jp").one()
+        partner = s.query(User).filter_by(email="partner@test.jp").one()
+
+        t1 = Task(project_id=1, wbs_code="ms-1", name="案件1の工程")
+        t2 = Task(project_id=2, wbs_code="ms-2", name="案件2の工程")
+        gone = Task(project_id=1, wbs_code="ms-3", name="削除済み工程")
+        s.add_all([t1, t2, gone])
+        s.flush()
+        from datetime import datetime, timezone as _tz
+        gone.deleted_at = datetime.now(_tz.utc)
+        s.flush()
+
+        # 同じ案件の工程は通る
+        assert resolve_related_task(s, pm, 1, t1.id) == t1.id
+        # 関連付けなしは推測せず None のまま
+        assert resolve_related_task(s, pm, 1, None) is None
+
+        # 別案件の工程IDは拒否
+        with pytest.raises(HTTPException) as e1:
+            resolve_related_task(s, pm, 1, t2.id)
+        assert e1.value.status_code == 422
+
+        # 存在しない工程IDは拒否
+        with pytest.raises(HTTPException) as e2:
+            resolve_related_task(s, pm, 1, 999999)
+        assert e2.value.status_code == 422
+
+        # 削除済み工程は拒否
+        with pytest.raises(HTTPException) as e3:
+            resolve_related_task(s, pm, 1, gone.id)
+        assert e3.value.status_code == 422
+
+        # 案件スコープ外の工程は拒否（協力会社ユーザーは案件1のみ）
+        with pytest.raises(HTTPException) as e4:
+            resolve_related_task(s, partner, 2, t2.id)
+        assert e4.value.status_code == 403
+
+        row = _mk_milestone(s, related_task_id=t1.id)
+        s.commit()
+        mid, tid = row.id, t1.id
+
+    with TestingSessionLocal() as s:
+        got = s.get(Milestone, mid)
+        assert got.related_task_id == tid, "関連工程がそのまま再取得できること"
+
+
+def test_milestone_precision_roundtrip_keeps_jst(client):
+    """day / half_day（午前・午後）が往復し、9時間ずれないこと。"""
+    from app.models import Milestone
+    from app.services.milestones import (
+        milestone_at, normalize_precision, split_milestone_at,
+    )
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        day = _mk_milestone(s, planned_at=milestone_at("2026-08-10", "day"), schedule_precision="day")
+        am = _mk_milestone(s, planned_at=milestone_at("2026-08-11", "half_day", "AM"),
+                           schedule_precision="half_day")
+        pm = _mk_milestone(s, planned_at=milestone_at("2026-08-12", "half_day", "PM"),
+                           schedule_precision="half_day")
+        s.commit()
+        ids = (day.id, am.id, pm.id)
+
+    with TestingSessionLocal() as s:
+        got_day, got_am, got_pm = (s.get(Milestone, i) for i in ids)
+
+        # day は JST 00:00
+        assert _jst_wall(got_day.planned_at.isoformat()).hour == 0
+        assert got_day.schedule_precision == "day"
+        assert split_milestone_at(got_day.planned_at) == ("2026-08-10", "AM")
+
+        # half_day 午前は JST 00:00
+        assert _jst_wall(got_am.planned_at.isoformat()).hour == 0
+        assert split_milestone_at(got_am.planned_at) == ("2026-08-11", "AM")
+
+        # half_day 午後は JST 12:00
+        assert _jst_wall(got_pm.planned_at.isoformat()).hour == 12, "午後は12:00で保存されること"
+        assert split_milestone_at(got_pm.planned_at) == ("2026-08-12", "PM")
+        assert got_pm.schedule_precision == "half_day"
+
+        # 日付が前後の日へずれていない（9時間ずれの検出）
+        for row, expect in ((got_day, "2026-08-10"), (got_am, "2026-08-11"), (got_pm, "2026-08-12")):
+            assert split_milestone_at(row.planned_at)[0] == expect, f"9時間ずれ: {row.planned_at}"
+
+    # 想定外の粒度は day として扱う
+    assert normalize_precision(None) == "day"
+    assert normalize_precision("time") == "day"
+    assert normalize_precision("half_day") == "half_day"
+
+
+def test_milestone_has_no_am_pm_flag_column(client):
+    """AM/PM専用の正データ列を作っていないこと（日時とフラグの二重管理をしない）。"""
+    from app.models import Milestone
+
+    names = {c.name for c in Milestone.__table__.columns}
+    forbidden = {"half", "half_day", "am_pm", "ampm", "is_pm", "is_afternoon", "period", "half_flag"}
+    assert not (names & forbidden), f"AM/PM専用列がある: {names & forbidden}"
+    # 粒度は schedule_precision の1列だけで表す
+    assert "schedule_precision" in names
+    assert {"planned_at", "actual_at", "company_id", "related_task_id"} <= names

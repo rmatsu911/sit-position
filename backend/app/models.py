@@ -648,6 +648,14 @@ class Milestone(Base, TimestampMixin, SoftDeleteMixin):
     # 予定 / 完了 / 中止。遅延は planned_at と actual_at の確定計算で求めるため列に持たない
     status: Mapped[str] = mapped_column(String(32), default="予定")
     responsible_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    # 担当会社。担当者の所属会社から導出せず、独立して設定できる正データとして持つ。
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), index=True)
+    # 関連工程。同じ案件の工程だけを指せる（検証はAPI側で行う）。
+    # 関連付けが無い場合に工程との関係を推測しない。
+    related_task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id"), index=True)
+    # 入力・表示の粒度。日時(planned_at/actual_at)が正であり、この列は粒度の判定だけに使う。
+    # day = その日 00:00 / half_day = 午前 00:00・午後 12:00（AM/PM専用列は持たない）
+    schedule_precision: Mapped[str] = mapped_column(String(16), default="day", server_default="day")
     notes: Mapped[str | None] = mapped_column(Text)
 
 

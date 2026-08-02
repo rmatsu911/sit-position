@@ -16,6 +16,7 @@ from sqlalchemy import select, text
 from app.core.config import settings
 from app.core.db import SessionLocal, engine
 from app.core.security import hash_password
+from app.services.milestones import milestone_at
 from app.models import (
     AiAnalysisJob,
     AiModel,
@@ -652,6 +653,8 @@ def run(reset_first: bool = False, allow_production: bool = False) -> None:
                 ("完工", finish + timedelta(days=5)),
             ]
 
+        # 関連工程は、その案件に実在する工程の中から選ぶ（存在しない工程を指さない）。
+        # 担当会社は担当者の所属から導出せず、案件の工程で使われている会社を割り当てる。
         ms_count = 0
         for pr in PROJECTS:
             p = projects[pr["code"]]
@@ -659,22 +662,50 @@ def run(reset_first: bool = False, allow_production: bool = False) -> None:
             if not start or not finish:
                 continue
             manager = users.get(pr["manager"])
-            for type_name, planned in _ms_offsets(start, finish):
+            own_tasks = s.execute(
+                select(Task)
+                .where(Task.project_id == p.id, Task.deleted_at.is_(None))
+                .order_by(Task.planned_start_at, Task.id)
+            ).scalars().all()
+            leaf_tasks = [t for t in own_tasks if (t.wbs_code or "").count(".") > 0] or own_tasks
+            # 案件の工程で実際に使われている担当会社（無ければ自社）
+            partner_of_project = next((t.company_id for t in leaf_tasks if t.company_id), comp_self.id)
+
+            for idx, (type_name, planned) in enumerate(_ms_offsets(start, finish)):
                 # 実績は「その日を過ぎていて、案件が進んでいる」ものだけ入れる。
                 # 未来の重要日に実績を作らない（実績未入力は未入力のまま扱う）。
                 done = planned <= SEED_TODAY and pr["ap"] > 0
+                # 検査・引き渡しは現地立会いのため午後開始（0.5日単位の往復を実データで確認できる）
+                precision = "half_day" if type_name in ("中間検査", "完成検査", "引き渡し") else "day"
+                half = "PM" if precision == "half_day" and type_name != "中間検査" else "AM"
+                # 着工・中間検査・引き渡しは対応する工程へ紐づける
+                related = None
+                if leaf_tasks:
+                    if type_name == "着工":
+                        related = leaf_tasks[0]
+                    elif type_name == "中間検査":
+                        related = leaf_tasks[len(leaf_tasks) // 2]
+                    elif type_name == "引き渡し":
+                        related = leaf_tasks[-1]
                 s.add(Milestone(
                     project_id=p.id,
                     milestone_type_id=mstypes[type_name].id,
                     name=f"{type_name}（{pr['name']}）",
-                    planned_at=_dt(planned.isoformat()),
+                    planned_at=milestone_at(planned.isoformat(), precision, half),
                     # 遅延案件は実績が予定より後ろへずれる（遅延は確定計算で判定する）
-                    actual_at=_dt((planned + timedelta(days=3 if pr["status"] == "遅延" else 0)).isoformat())
-                    if done else None,
+                    actual_at=milestone_at(
+                        (planned + timedelta(days=3 if pr["status"] == "遅延" else 0)).isoformat(),
+                        precision, half,
+                    ) if done else None,
                     status="完了" if done else "予定",
                     responsible_id=manager.id if manager else None,
+                    # 契約・完工は自社手続き、現地作業を伴う区分は工程の担当会社
+                    company_id=comp_self.id if type_name in ("契約", "完工") else partner_of_project,
+                    related_task_id=related.id if related else None,
+                    schedule_precision=precision,
                 ))
                 ms_count += 1
+                del idx
 
         # 工事台帳（projects基本＋台帳固有項目）
         billing = ["未請求", "請求済", "入金済", "一部入金", "未請求", "請求済", "未請求", "未請求"]
