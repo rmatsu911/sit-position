@@ -1,0 +1,27 @@
+# SYSKEN 施工写真 物体検出 データセット定義（YOLO形式）
+#
+# これがクラス体系の「正」。コード各所へハードコードせず、
+# ここ（Dataset/Model metadata）を参照する。
+# 学習時は datasets/dataset_vXXX/ に画像とラベルを配置し、この path を差し替える。
+
+path: datasets/dataset_v001
+train: images/train
+val: images/val
+test: images/test
+
+# クラス（index 順）。names は英語コード、display で日本語表示名を持つ。
+# YOLO標準の names に加え、SYSKEN表示名を display に定義する。
+nc: 5
+names:
+  0: utility_pole
+  1: optical_cable
+  2: closure
+  3: onu
+  4: optical_termination_box
+
+display:
+  utility_pole: 電柱
+  optical_cable: 光ケーブル
+  closure: クロージャ
+  onu: ONU
+  optical_termination_box: 光成端箱

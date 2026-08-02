@@ -1,8 +1,46 @@
-node_modules/
-.host-token
-seating-data.json
-line-config.json
-line-state.json
-localtunnel.log
-localtunnel.err.log
-xserver/line-secrets.php
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+*.tsbuildinfo
+
+# 環境変数（秘密情報はコミットしない）
+.env
+!.env.example
+
+# Backend (Python)
+backend/.venv/
+backend/**/__pycache__/
+backend/storage/
+storage/
+*.pyc
+
+# AI: 学習済みweights・実写真データセット・学習出力はコミットしない
+backend/models/weights/
+*.pt
+*.onnx
+backend/runs/
+backend/datasets/**/images/**
+backend/datasets/**/labels/**
+!backend/datasets/**/.gitkeep
+!backend/datasets/**/README.md
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
