@@ -1131,3 +1131,291 @@ def test_milestone_api_conflict_with_related_task(client):
     ids = {m["id"] for m in only["milestones"]}
     assert outside_id in ids and inside_id not in ids
     assert all(m["related_task_conflict"] for m in only["milestones"])
+
+
+# --- Ver.0.3 Phase 3 (P3-2補足): CRUD と Excel/PDF 出力 ---------------------
+def _auth(client, email):
+    return {"Authorization": f"Bearer {token(client, email)}"}
+
+
+def test_milestone_crud_lifecycle_and_audit(client):
+    """登録→取得→更新→再取得→論理削除と、監査ログの記録。"""
+    from app.models import AuditLog, Milestone, MilestoneType
+    from tests.conftest import TestingSessionLocal
+
+    h = _auth(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        mt = MilestoneType(code="crud-種別", name="CRUD種別", sort_order=500)
+        s.add(mt)
+        s.commit()
+        type_id = mt.id
+
+    created = client.post("/api/schedule/milestones", headers=h, json={
+        "project_id": 1, "milestone_type_id": type_id, "name": "CRUD対象",
+        "planned_at": "2026-09-10T00:00:00+09:00", "schedule_precision": "day", "status": "予定",
+    })
+    assert created.status_code == 201, created.text
+    mid = created.json()["id"]
+    assert created.json()["record_kind"] == "milestone"
+
+    got = client.get(f"/api/schedule/milestones/{mid}", headers=h)
+    assert got.status_code == 200 and got.json()["name"] == "CRUD対象"
+
+    updated = client.put(f"/api/schedule/milestones/{mid}", headers=h, json={
+        "name": "CRUD対象（更新後）", "status": "完了",
+        "actual_at": "2026-09-12T00:00:00+09:00", "change_reason": "テスト更新",
+    })
+    assert updated.status_code == 200, updated.text
+    body = updated.json()
+    assert body["name"] == "CRUD対象（更新後）"
+    assert body["is_completed"] and body["was_delayed"] and body["delay_days"] == 2
+
+    again = client.get(f"/api/schedule/milestones/{mid}", headers=h).json()
+    assert again["name"] == "CRUD対象（更新後）" and again["status"] == "完了"
+
+    assert client.delete(f"/api/schedule/milestones/{mid}?reason=テスト削除", headers=h).status_code == 204
+    assert client.get(f"/api/schedule/milestones/{mid}", headers=h).status_code == 404
+
+    with TestingSessionLocal() as s:
+        row = s.get(Milestone, mid)
+        assert row is not None, "物理削除ではなく論理削除であること"
+        assert row.deleted_at is not None and row.delete_reason == "テスト削除"
+        actions = {a.action for a in s.query(AuditLog).filter_by(entity_type="milestone",
+                                                                 entity_id=str(mid)).all()}
+        assert {"CREATE", "UPDATE", "DELETE"} <= actions, f"監査ログが足りない: {actions}"
+
+    # 一覧からも消える
+    assert all(m["id"] != mid for m in _ms_get(client, "pm@test.jp", "include_candidates=false&limit=5000")["milestones"])
+
+
+def test_milestone_create_from_candidate_removes_it(client):
+    """未設定候補から登録すると、その候補が消えること。"""
+    from app.models import MilestoneType
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        mt = MilestoneType(code="cand-登録元", name="候補から登録", sort_order=510)
+        s.add(mt)
+        s.commit()
+        type_id = mt.id
+
+    before = _ms_get(client, "pm@test.jp", "project_ids=1&limit=5000")
+    assert any(c["milestone_type_id"] == type_id for c in before["candidates"])
+
+    h = _auth(client, "pm@test.jp")
+    r = client.post("/api/schedule/milestones", headers=h, json={
+        "project_id": 1, "milestone_type_id": type_id, "name": "候補から作成",
+        "planned_at": "2026-10-01T00:00:00+09:00",
+    })
+    assert r.status_code == 201, r.text
+    # 候補は実レコードではないため、予定日・状態・担当者は入力値だけが入る
+    assert r.json()["responsible_id"] is None and r.json()["company_id"] is None
+
+    after = _ms_get(client, "pm@test.jp", "project_ids=1&limit=5000")
+    assert all(c["milestone_type_id"] != type_id for c in after["candidates"])
+    assert after["candidate_count"] == before["candidate_count"] - 1
+    assert after["registered_count"] == before["registered_count"] + 1
+
+
+def test_milestone_crud_reference_validation(client):
+    """存在しない/削除済み/別案件は422、スコープ外は403で拒否すること。"""
+    from datetime import datetime, timezone as _tz
+
+    from app.models import MilestoneType, Task
+    from tests.conftest import TestingSessionLocal
+
+    h = _auth(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        mt = MilestoneType(code="ref-種別", name="参照検証", sort_order=520)
+        inactive = MilestoneType(code="ref-非active", name="無効な区分", sort_order=521, active=False)
+        t_other = Task(project_id=2, wbs_code="ref-2", name="別案件の工程")
+        t_gone = Task(project_id=1, wbs_code="ref-del", name="削除済み工程")
+        s.add_all([mt, inactive, t_other, t_gone])
+        s.flush()
+        t_gone.deleted_at = datetime.now(_tz.utc)
+        s.commit()
+        type_id, inactive_id, other_task, gone_task = mt.id, inactive.id, t_other.id, t_gone.id
+
+    base = {"project_id": 1, "milestone_type_id": type_id, "name": "参照検証",
+            "planned_at": "2026-09-10T00:00:00+09:00"}
+
+    # 存在しない参照 → 422
+    for field, value in [("milestone_type_id", 999999), ("responsible_id", 999999),
+                         ("company_id", 999999), ("related_task_id", 999999)]:
+        r = client.post("/api/schedule/milestones", headers=h, json={**base, field: value})
+        assert r.status_code == 422, f"{field}: {r.status_code}"
+    # 別案件の工程 → 422 / 削除済みの工程 → 422
+    assert client.post("/api/schedule/milestones", headers=h,
+                       json={**base, "related_task_id": other_task}).status_code == 422
+    assert client.post("/api/schedule/milestones", headers=h,
+                       json={**base, "related_task_id": gone_task}).status_code == 422
+    # 非active の区分は新規登録に使えない
+    assert client.post("/api/schedule/milestones", headers=h,
+                       json={**base, "milestone_type_id": inactive_id}).status_code == 422
+    # 存在しない案件 → 422
+    assert client.post("/api/schedule/milestones", headers=h,
+                       json={**base, "project_id": 999999}).status_code == 422
+    # スコープ外の案件 → 403（協力会社ユーザーは案件1のみ）
+    hp = _auth(client, "partner@test.jp")
+    assert client.post("/api/schedule/milestones", headers=hp,
+                       json={**base, "project_id": 2}).status_code in (403, 404)
+
+    # 更新でも同じ検証が効く
+    ok = client.post("/api/schedule/milestones", headers=h, json=base)
+    assert ok.status_code == 201
+    mid = ok.json()["id"]
+    assert client.put(f"/api/schedule/milestones/{mid}", headers=h,
+                      json={"related_task_id": other_task}).status_code == 422
+    assert client.put(f"/api/schedule/milestones/{mid}", headers=h,
+                      json={"related_task_id": gone_task}).status_code == 422
+    # 既存レコードは非activeの区分でも更新できる（履歴を壊さない）
+    with TestingSessionLocal() as s:
+        s.get(__import__("app.models", fromlist=["Milestone"]).Milestone, mid).milestone_type_id = inactive_id
+        s.commit()
+    assert client.get(f"/api/schedule/milestones/{mid}", headers=h).status_code == 200
+    assert client.put(f"/api/schedule/milestones/{mid}", headers=h,
+                      json={"name": "非active区分のまま更新"}).status_code == 200
+
+
+def test_milestone_update_cannot_change_project(client):
+    """更新で案件を無断で変更できないこと。"""
+    from app.models import MilestoneType
+    from tests.conftest import TestingSessionLocal
+
+    h = _auth(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        mt = MilestoneType(code="proj-固定", name="案件固定", sort_order=530)
+        s.add(mt)
+        s.commit()
+        type_id = mt.id
+
+    mid = client.post("/api/schedule/milestones", headers=h, json={
+        "project_id": 1, "milestone_type_id": type_id, "name": "案件は変えない",
+        "planned_at": "2026-09-10T00:00:00+09:00"}).json()["id"]
+
+    # project_id は MilestoneUpdate に無いため、送っても無視される
+    r = client.put(f"/api/schedule/milestones/{mid}", headers=h, json={"project_id": 2, "name": "変更後"})
+    assert r.status_code == 200
+    assert r.json()["project_id"] == 1, "案件が変わってしまった"
+
+
+def test_milestone_crud_precision_roundtrip_via_api(client):
+    """API経由で day / half_day 午前・午後が往復し、9時間ずれないこと。"""
+    from app.models import MilestoneType
+    from tests.conftest import TestingSessionLocal
+
+    h = _auth(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        mt = MilestoneType(code="prec-api", name="粒度API", sort_order=540)
+        s.add(mt)
+        s.commit()
+        type_id = mt.id
+
+    cases = [
+        ("day", "2026-09-10T00:00:00+09:00", 0, "2026-09-10"),
+        ("half_day", "2026-09-11T00:00:00+09:00", 0, "2026-09-11"),
+        ("half_day", "2026-09-12T12:00:00+09:00", 12, "2026-09-12"),
+    ]
+    for precision, planned, hour, day in cases:
+        r = client.post("/api/schedule/milestones", headers=h, json={
+            "project_id": 1, "milestone_type_id": type_id, "name": f"{precision}-{hour}",
+            "planned_at": planned, "schedule_precision": precision})
+        assert r.status_code == 201, r.text
+        got = client.get(f"/api/schedule/milestones/{r.json()['id']}", headers=h).json()
+        assert got["schedule_precision"] == precision
+        w = _jst_wall(got["planned_at"])
+        assert w.hour == hour, f"{precision}/{hour}: {got['planned_at']}"
+        assert w.strftime("%Y-%m-%d") == day, f"9時間ずれ: {got['planned_at']}"
+
+
+def test_milestone_roles_can_write(client):
+    """作成・更新・削除の可否がロールで分かれること。"""
+    from app.core.security import hash_password
+    from app.models import MilestoneType, User
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        mt = MilestoneType(code="role-種別", name="権限確認", sort_order=550)
+        s.add(mt)
+        for email, role in [("qm2@test.jp", "QUALITY_MANAGER"), ("viewer2@test.jp", "VIEWER")]:
+            if s.query(User).filter_by(email=email).one_or_none() is None:
+                s.add(User(email=email, hashed_password=hash_password("pass"), name=role, role=role))
+        s.commit()
+        type_id = mt.id
+
+    body = {"project_id": 1, "milestone_type_id": type_id, "name": "権限確認",
+            "planned_at": "2026-09-10T00:00:00+09:00"}
+
+    # 作成できる（ADMIN は require_roles を常に通る）
+    for email in ("admin@test.jp", "pm@test.jp"):
+        r = client.post("/api/schedule/milestones", headers=_auth(client, email), json=body)
+        assert r.status_code == 201, f"{email}: {r.text}"
+        mid = r.json()["id"]
+        assert client.put(f"/api/schedule/milestones/{mid}", headers=_auth(client, email),
+                          json={"name": "更新"}).status_code == 200
+        assert client.delete(f"/api/schedule/milestones/{mid}", headers=_auth(client, email)).status_code == 204
+
+    # 参照専用のロールは書き込めない
+    for email in ("qm2@test.jp", "viewer2@test.jp", "partner@test.jp"):
+        assert client.post("/api/schedule/milestones", headers=_auth(client, email),
+                           json=body).status_code == 403, email
+
+
+def test_milestone_export_matches_screen(client):
+    """Excel/PDF が画面と同じ条件・同じ件数で生成され、スコープが効くこと。"""
+    h = _auth(client, "admin@test.jp")
+    qs = "actual=missing&include_candidates=true&limit=5000"
+    screen = _ms_get(client, "admin@test.jp", qs)
+
+    for fmt in ("xlsx", "pdf"):
+        r = client.get(f"/api/schedule/milestones/export?format={fmt}&{qs}", headers=h)
+        assert r.status_code == 200, r.text
+        assert len(r.content) > 500
+        assert "attachment;" in r.headers["content-disposition"]
+
+    # 出力は collect() を通すので、同じ条件なら件数が一致する
+    from app.api.milestones import MilestoneFilters, collect
+    from app.models import User as U
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        admin = s.query(U).filter_by(email="admin@test.jp").one()
+        partner = s.query(U).filter_by(email="partner@test.jp").one()
+        f = MilestoneFilters(actual="missing", include_candidates=True, limit=5000)
+        same = collect(s, admin, f)
+        assert same.registered_count == screen["registered_count"]
+        assert same.candidate_count == screen["candidate_count"]
+        assert [m.id for m in same.milestones] == [m["id"] for m in screen["milestones"]], "並び順も一致"
+
+        # 出力にも案件スコープが効く
+        scoped = collect(s, partner, MilestoneFilters(include_candidates=True, limit=5000))
+        assert {m.project_id for m in scoped.milestones} == {1}
+        assert all(c.project_id == 1 for c in scoped.candidates)
+
+
+def test_milestone_multiple_records_same_project_and_type(client):
+    """同一案件・同一区分が複数件あっても1件に潰れないこと。"""
+    from app.models import MilestoneType
+    from tests.conftest import TestingSessionLocal
+
+    h = _auth(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        mt = MilestoneType(code="dup-種別", name="重複可能な区分", sort_order=560)
+        s.add(mt)
+        s.commit()
+        type_id = mt.id
+
+    ids = []
+    for i, day in enumerate(("2026-09-20", "2026-09-21")):
+        r = client.post("/api/schedule/milestones", headers=h, json={
+            "project_id": 1, "milestone_type_id": type_id, "name": f"同一区分{i + 1}",
+            "planned_at": f"{day}T00:00:00+09:00"})
+        assert r.status_code == 201, r.text
+        ids.append(r.json()["id"])
+
+    data = _ms_get(client, "pm@test.jp", f"milestone_type_ids={type_id}&project_ids=1&limit=5000")
+    got = [m for m in data["milestones"] if m["id"] in ids]
+    assert len(got) == 2, "同一案件・同一区分の複数件が欠落した"
+    assert data["registered_count"] >= 2
+    # 登録済みがあるので、その区分は候補に出ない
+    assert all(c["milestone_type_id"] != type_id for c in data["candidates"])
