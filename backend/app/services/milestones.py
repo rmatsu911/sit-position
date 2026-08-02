@@ -95,3 +95,65 @@ def resolve_related_task(db: Session, user: User, project_id: int, task_id: int 
     if allowed is not None and task.project_id not in allowed:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "この案件へのアクセス権がありません")
     return task.id
+
+
+# ===== 確定計算（推論ではない。AI予測とは呼ばない） =====
+class MilestoneFacts:
+    """1件のマイルストーンについて、保存済みの日時から機械的に導ける事実。
+
+    基準日はサーバー側の Asia/Tokyo の日付。DBの status とは別物として扱い、
+    混同しないよう別々のフィールドで返す。
+    """
+
+    __slots__ = (
+        "is_completed", "is_overdue", "was_delayed", "delay_days",
+        "remaining_days", "is_due_soon", "actual_missing",
+    )
+
+    def __init__(
+        self,
+        planned_at: datetime | None,
+        actual_at: datetime | None,
+        today: datetime,
+        due_soon_days: int,
+    ) -> None:
+        planned = as_jst(planned_at)
+        actual = as_jst(actual_at)
+        planned_day = planned.replace(hour=0, minute=0, second=0, microsecond=0) if planned else None
+        actual_day = actual.replace(hour=0, minute=0, second=0, microsecond=0) if actual else None
+
+        # 完了は実績が入っているかどうかだけで決まる（DBのstatusには依存しない）
+        self.is_completed = actual is not None
+
+        if planned_day is None:
+            self.is_overdue = False
+            self.was_delayed = False
+            self.delay_days = 0
+            self.remaining_days = None
+            self.is_due_soon = False
+            self.actual_missing = False
+            return
+
+        diff_days = (planned_day - today).days  # 予定日までの残り日数（過去なら負）
+
+        if self.is_completed:
+            # 完了時の遅れ日数 = max(実績日 - 予定日, 0)
+            self.was_delayed = actual_day > planned_day
+            self.delay_days = max((actual_day - planned_day).days, 0)
+            self.is_overdue = False
+            self.remaining_days = None
+            self.is_due_soon = False
+            self.actual_missing = False
+        else:
+            # 期限超過 = 実績未入力かつ予定日が基準日より前（当日は超過にしない）
+            self.is_overdue = diff_days < 0
+            self.was_delayed = False
+            # 未完了時の遅れ日数 = 期限超過している日数
+            self.delay_days = -diff_days if self.is_overdue else 0
+            # 残日数は未来または当日の未完了マイルストーンについてのみ
+            self.remaining_days = diff_days if diff_days >= 0 else None
+            self.is_due_soon = 0 <= diff_days <= due_soon_days
+            self.actual_missing = self.is_overdue
+
+    def as_dict(self) -> dict:
+        return {k: getattr(self, k) for k in self.__slots__}

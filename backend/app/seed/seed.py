@@ -672,6 +672,9 @@ def run(reset_first: bool = False, allow_production: bool = False) -> None:
             partner_of_project = next((t.company_id for t in leaf_tasks if t.company_id), comp_self.id)
 
             for idx, (type_name, planned) in enumerate(_ms_offsets(start, finish)):
+                # 未着工の案件は完工の予定をまだ立てていない（未設定候補として扱われる）
+                if pr["status"] == "未着工" and type_name == "完工":
+                    continue
                 # 実績は「その日を過ぎていて、案件が進んでいる」ものだけ入れる。
                 # 未来の重要日に実績を作らない（実績未入力は未入力のまま扱う）。
                 done = planned <= SEED_TODAY and pr["ap"] > 0

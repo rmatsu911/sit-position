@@ -755,6 +755,8 @@ class MilestoneOut(BaseModel):
     工程は期間 [開始, 終了) を持つが、マイルストーンは「その日」を指す一点。
     遅延は planned_at と actual_at の確定計算で求め、状態としては持たない。
     """
+    # 登録済みレコードであることを示す（未設定候補は candidate）
+    record_kind: str = "milestone"
     id: int
     project_id: int
     project_name: str
@@ -782,10 +784,15 @@ class MilestoneOut(BaseModel):
     # 入力粒度（day / half_day）。AM/PM専用列は持たず、日時とこの列だけで表す
     schedule_precision: str = "day"
     notes: str | None = None
-    # 確定計算による判定（推論ではない）
-    is_delayed: bool = False       # 実績が予定より後 / 未完了のまま予定日を過ぎた
-    delay_days: int = 0            # 遅れ日数（遅延していないときは0）
-    is_actual_missing: bool = False  # 予定日を過ぎているのに実績が未入力
+    # ここから下は確定計算の結果（推論ではない）。DBの status とは別物。
+    is_completed: bool = False          # 実績が入っている
+    is_overdue: bool = False            # 実績未入力かつ予定日が基準日より前（当日は含めない）
+    was_delayed: bool = False           # 完了したが実績日が予定日より後だった
+    delay_days: int = 0                 # 完了時=実績日-予定日 / 未完了時=期限超過日数
+    remaining_days: int | None = None   # 未完了かつ当日以降のときの残日数
+    is_due_soon: bool = False           # 実績未入力かつ残日数が指定日数以内
+    actual_missing: bool = False        # 予定日を過ぎているのに実績が未入力
+    related_task_conflict: bool = False  # 関連工程の期間から外れている
 
 
 class MilestoneCreate(BaseModel):
@@ -814,3 +821,55 @@ class MilestoneUpdate(BaseModel):
     schedule_precision: str | None = None
     notes: str | None = None
     change_reason: str | None = None
+
+
+class MilestoneCandidateOut(BaseModel):
+    """まだ登録されていない標準種別（未設定候補）。
+
+    登録済みレコードと混同しないよう record_kind で区別し、実在するID・
+    予定日・実績日・状態・担当者・担当会社は一切設定しない。
+    """
+    record_kind: str = "candidate"
+    project_id: int
+    project_name: str
+    project_number: str
+    milestone_type_id: int
+    milestone_type: str
+    milestone_type_order: int = 0
+
+
+class MilestoneListOut(BaseModel):
+    milestones: list[MilestoneOut]
+    candidates: list[MilestoneCandidateOut]
+    registered_count: int   # 絞り込み後の登録済み件数
+    candidate_count: int    # 未設定候補の件数（登録済みとは別に数える）
+    total: int              # 上限適用前の件数
+    returned_count: int     # 実際に返した件数
+    truncated: bool
+    limit: int
+    calculated_at: date     # 確定計算の基準日（Asia/Tokyo）
+    due_soon_days: int
+
+
+class MilestoneProjectOption(BaseModel):
+    id: int
+    name: str
+    construction_number: str
+    status: str
+
+
+class MilestoneTaskOption(BaseModel):
+    id: int
+    wbs_code: str | None = None
+    name: str
+    project_id: int
+
+
+class MilestoneOptions(BaseModel):
+    projects: list[MilestoneProjectOption]
+    milestone_types: list[IdNameOut]
+    statuses: list[str]
+    responsibles: list[IdNameOut]
+    companies: list[IdNameOut]
+    related_tasks: list[MilestoneTaskOption]
+    calculated_at: date

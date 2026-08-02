@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import pytest
 
 from tests.conftest import token
@@ -709,3 +711,423 @@ def test_milestone_has_no_am_pm_flag_column(client):
     # 粒度は schedule_precision の1列だけで表す
     assert "schedule_precision" in names
     assert {"planned_at", "actual_at", "company_id", "related_task_id"} <= names
+
+
+# --- Ver.0.3 Phase 3 (P3-2): 横断マイルストーンの集約API ---------------------
+def _ms_fixture(session, *, project_id=1, type_name="引き渡し", order=4, **kw):
+    """テスト用のマイルストーンを1件作る（種別はIDで紐づける）。"""
+    from app.models import Milestone, MilestoneType
+
+    mt = session.query(MilestoneType).filter_by(code=f"p32-{type_name}-{order}").one_or_none()
+    if mt is None:
+        mt = MilestoneType(code=f"p32-{type_name}-{order}", name=type_name, sort_order=order)
+        session.add(mt)
+        session.flush()
+    base = dict(project_id=project_id, milestone_type_id=mt.id, name=f"{type_name}#{order}",
+                status="予定", schedule_precision="day")
+    base.update(kw)
+    row = Milestone(**base)
+    session.add(row)
+    session.flush()
+    return row, mt
+
+
+def _ms_get(client, email, qs=""):
+    t = token(client, email)
+    r = client.get(f"/api/schedule/milestones{('?' + qs) if qs else ''}",
+                   headers={"Authorization": f"Bearer {t}"})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_milestone_api_facts_use_jst_today(client):
+    """確定計算が JST の基準日で行われること（当日は期限超過にしない）。"""
+    from app.services.milestones import jst_today, milestone_at
+    from tests.conftest import TestingSessionLocal
+
+    today = jst_today()
+    with TestingSessionLocal() as s:
+        past, _ = _ms_fixture(s, order=90, type_name="期限超過",
+                              planned_at=milestone_at((today - timedelta(days=5)).strftime("%Y-%m-%d")))
+        same, _ = _ms_fixture(s, order=91, type_name="当日",
+                              planned_at=milestone_at(today.strftime("%Y-%m-%d")))
+        soon, _ = _ms_fixture(s, order=92, type_name="近日",
+                              planned_at=milestone_at((today + timedelta(days=3)).strftime("%Y-%m-%d")))
+        far, _ = _ms_fixture(s, order=93, type_name="先",
+                             planned_at=milestone_at((today + timedelta(days=60)).strftime("%Y-%m-%d")))
+        done, _ = _ms_fixture(
+            s, order=94, type_name="完了遅れ",
+            planned_at=milestone_at((today - timedelta(days=10)).strftime("%Y-%m-%d")),
+            actual_at=milestone_at((today - timedelta(days=6)).strftime("%Y-%m-%d")), status="完了")
+        s.commit()
+        ids = {"past": past.id, "same": same.id, "soon": soon.id, "far": far.id, "done": done.id}
+
+    data = _ms_get(client, "admin@test.jp", "due_soon_days=7&include_candidates=false&limit=5000")
+    by_id = {m["id"]: m for m in data["milestones"]}
+    assert data["calculated_at"] == today.date().isoformat(), "基準日はサーバー側のJSTの日付"
+
+    p = by_id[ids["past"]]
+    assert p["is_overdue"] and p["delay_days"] == 5 and p["remaining_days"] is None
+    assert p["actual_missing"] and not p["is_completed"]
+
+    sm = by_id[ids["same"]]
+    assert not sm["is_overdue"], "当日は期限超過にしない"
+    assert sm["remaining_days"] == 0 and sm["is_due_soon"]
+
+    so = by_id[ids["soon"]]
+    assert so["is_due_soon"] and so["remaining_days"] == 3 and so["delay_days"] == 0
+
+    fa = by_id[ids["far"]]
+    assert not fa["is_due_soon"] and fa["remaining_days"] == 60
+
+    dn = by_id[ids["done"]]
+    assert dn["is_completed"] and dn["was_delayed"] and dn["delay_days"] == 4
+    assert not dn["is_overdue"] and dn["remaining_days"] is None
+    # DBの status と確定計算を混同しない
+    assert dn["status"] == "完了" and "is_delayed" not in dn
+
+
+def test_milestone_api_filters_are_and_combined(client):
+    """複合フィルターがANDで適用されること。"""
+    from app.models import Company, User
+    from app.services.milestones import jst_today, milestone_at
+    from tests.conftest import TestingSessionLocal
+
+    today = jst_today()
+    with TestingSessionLocal() as s:
+        co = Company(name="MS絞り込み会社", is_partner=True)
+        s.add(co)
+        s.flush()
+        pm = s.query(User).filter_by(email="pm@test.jp").one()
+        hit, mt = _ms_fixture(
+            s, order=95, type_name="AND対象", name="AND対象マイルストーン",
+            planned_at=milestone_at((today + timedelta(days=2)).strftime("%Y-%m-%d")),
+            company_id=co.id, responsible_id=pm.id, status="予定")
+        # 会社だけ違う（AND なので落ちる）
+        _ms_fixture(s, order=95, type_name="AND対象", name="別会社",
+                    planned_at=milestone_at((today + timedelta(days=2)).strftime("%Y-%m-%d")),
+                    responsible_id=pm.id, status="予定")
+        s.commit()
+        hit_id, type_id, company_id, user_id = hit.id, mt.id, co.id, pm.id
+
+    qs = (f"milestone_type_ids={type_id}&company_ids={company_id}&responsible_ids={user_id}"
+          f"&statuses=予定&actual=missing&due_soon_only=true&q=AND対象"
+          f"&include_candidates=false&limit=5000")
+    data = _ms_get(client, "admin@test.jp", qs)
+    ids = [m["id"] for m in data["milestones"]]
+    assert ids == [hit_id], f"AND適用の結果が想定と違う: {ids}"
+    assert data["registered_count"] == 1
+
+    # 条件を1つでも外すと一致しない（ANDであることの裏取り）
+    other = _ms_get(client, "admin@test.jp", f"company_ids={company_id}&statuses=完了&include_candidates=false")
+    assert other["registered_count"] == 0
+
+
+def test_milestone_api_scope_and_invalid_ids(client):
+    """案件スコープの適用と、不正ID・スコープ外IDで検索範囲が広がらないこと。"""
+    from app.services.milestones import jst_today, milestone_at
+    from tests.conftest import TestingSessionLocal
+
+    today = jst_today()
+    with TestingSessionLocal() as s:
+        _ms_fixture(s, project_id=1, order=96, type_name="案件1のみ",
+                    planned_at=milestone_at(today.strftime("%Y-%m-%d")))
+        _ms_fixture(s, project_id=2, order=97, type_name="案件2のみ",
+                    planned_at=milestone_at(today.strftime("%Y-%m-%d")))
+        s.commit()
+
+    # 協力会社ユーザーは案件1のみ
+    partner = _ms_get(client, "partner@test.jp", "include_candidates=false&limit=5000")
+    assert {m["project_id"] for m in partner["milestones"]} == {1}
+
+    # スコープ外の案件IDを指定しても範囲は広がらない
+    filtered = _ms_get(client, "partner@test.jp", "project_ids=2&include_candidates=false")
+    assert filtered["registered_count"] == 0
+    assert filtered["milestones"] == []
+
+    # 単一案件表示はAPI側で拒否する
+    t = token(client, "partner@test.jp")
+    r = client.get("/api/schedule/milestones?project_id=2", headers={"Authorization": f"Bearer {t}"})
+    assert r.status_code == 403
+
+    # 存在しないIDを渡しても件数は増えない（無視されるだけ）
+    bogus = _ms_get(client, "partner@test.jp", "company_ids=999999&responsible_ids=999999&include_candidates=false")
+    assert bogus["registered_count"] == 0
+
+    # 選択肢にもスコープが効く
+    opts = client.get("/api/schedule/milestones/options",
+                      headers={"Authorization": f"Bearer {t}"}).json()
+    assert [p["construction_number"] for p in opts["projects"]] == ["T-001"]
+
+
+def test_milestone_api_excludes_soft_deleted(client):
+    """論理削除したマイルストーンと、削除済み関連工程を返さないこと。"""
+    from datetime import datetime, timezone as _tz
+
+    from app.models import Milestone, Task
+    from app.services.milestones import jst_today, milestone_at
+    from tests.conftest import TestingSessionLocal
+
+    today = jst_today()
+    with TestingSessionLocal() as s:
+        task = Task(project_id=1, wbs_code="ms-del", name="あとで削除する工程",
+                    planned_start_at=milestone_at(today.strftime("%Y-%m-%d")),
+                    planned_finish_at=milestone_at((today + timedelta(days=2)).strftime("%Y-%m-%d")))
+        s.add(task)
+        s.flush()
+        alive, _ = _ms_fixture(s, order=98, type_name="生存",
+                               planned_at=milestone_at(today.strftime("%Y-%m-%d")),
+                               related_task_id=task.id)
+        dead, _ = _ms_fixture(s, order=99, type_name="削除済み",
+                              planned_at=milestone_at(today.strftime("%Y-%m-%d")))
+        dead.deleted_at = datetime.now(_tz.utc)
+        s.commit()
+        alive_id, dead_id, task_id = alive.id, dead.id, task.id
+
+    data = _ms_get(client, "admin@test.jp", "include_candidates=false&limit=5000")
+    ids = {m["id"] for m in data["milestones"]}
+    assert alive_id in ids and dead_id not in ids, "論理削除したマイルストーンを除外すること"
+    got = next(m for m in data["milestones"] if m["id"] == alive_id)
+    assert got["related_task_id"] == task_id and got["related_task_name"] == "あとで削除する工程"
+
+    # 関連工程を論理削除すると、関連工程としては返さない
+    with TestingSessionLocal() as s:
+        s.get(Task, task_id).deleted_at = datetime.now(_tz.utc)
+        s.commit()
+    after = _ms_get(client, "admin@test.jp", "include_candidates=false&limit=5000")
+    got2 = next(m for m in after["milestones"] if m["id"] == alive_id)
+    assert got2["related_task_id"] is None and got2["related_task_name"] is None
+    opts = client.get("/api/schedule/milestones/options",
+                      headers={"Authorization": f"Bearer {token(client, 'admin@test.jp')}"}).json()
+    assert all(t["id"] != task_id for t in opts["related_tasks"]), "削除済み工程を選択肢に出さない"
+
+
+def test_milestone_api_candidates_are_separated(client):
+    """未設定候補が登録済みレコードと別配列で返り、架空の値を持たないこと。"""
+    from app.models import MilestoneType
+    from app.services.milestones import jst_today, milestone_at
+    from tests.conftest import TestingSessionLocal
+
+    today = jst_today()
+    with TestingSessionLocal() as s:
+        registered = MilestoneType(code="cand-登録済み", name="登録済み種別", sort_order=200)
+        missing = MilestoneType(code="cand-未設定", name="未設定種別", sort_order=201)
+        inactive = MilestoneType(code="cand-非active", name="非active種別", sort_order=202, active=False)
+        s.add_all([registered, missing, inactive])
+        s.flush()
+        from app.models import Milestone
+        s.add(Milestone(project_id=1, milestone_type_id=registered.id, name="登録済み",
+                        planned_at=milestone_at(today.strftime("%Y-%m-%d")), status="予定"))
+        s.commit()
+        reg_id, miss_id, inact_id = registered.id, missing.id, inactive.id
+
+    data = _ms_get(client, "admin@test.jp", "project_ids=1&limit=5000")
+    cand_type_ids = {c["milestone_type_id"] for c in data["candidates"]}
+    ms_type_ids = {m["milestone_type_id"] for m in data["milestones"]}
+
+    assert reg_id in ms_type_ids, "登録済みは milestones 側に入る"
+    assert reg_id not in cand_type_ids, "登録済みを候補にしない（IDで比較）"
+    assert miss_id in cand_type_ids, "未登録の active 種別は候補になる"
+    assert inact_id not in cand_type_ids, "非active の種別を候補にしない"
+
+    for c in data["candidates"]:
+        assert c["record_kind"] == "candidate"
+        # 実在するID・架空の予定日・実績日・状態・担当者・担当会社を持たない
+        assert "id" not in c and "planned_at" not in c and "actual_at" not in c
+        assert "status" not in c and "responsible_id" not in c and "company_id" not in c
+    assert data["candidate_count"] == len(data["candidates"])
+    assert data["registered_count"] == len(data["milestones"])
+    assert data["candidate_count"] != data["registered_count"] or data["candidate_count"] == 0
+
+
+def test_milestone_api_limit_and_sort_are_stable(client):
+    """total / returned_count / truncated と、並び順が安定していること。"""
+    first = _ms_get(client, "admin@test.jp", "include_candidates=false&limit=3")
+    assert first["returned_count"] == len(first["milestones"]) == 3
+    assert first["total"] >= first["returned_count"]
+    assert first["truncated"] is (first["total"] > first["returned_count"])
+    # 絞り込み前件数と混同しない
+    assert first["registered_count"] == first["total"]
+
+    order1 = [m["id"] for m in _ms_get(client, "admin@test.jp", "include_candidates=false&limit=5000")["milestones"]]
+    order2 = [m["id"] for m in _ms_get(client, "admin@test.jp", "include_candidates=false&limit=5000")["milestones"]]
+    assert order1 == order2, "同じ条件なら常に同じ順序"
+    assert order1[:3] == [m["id"] for m in first["milestones"]], "上限をかけても先頭は同じ"
+
+
+def test_milestone_api_same_name_separated_by_id(client):
+    """同名のマイルストーンでもIDで分離されること。"""
+    from app.services.milestones import jst_today, milestone_at
+    from tests.conftest import TestingSessionLocal
+
+    today = jst_today()
+    with TestingSessionLocal() as s:
+        a, _ = _ms_fixture(s, project_id=1, order=210, type_name="同名", name="同じ名前の重要日",
+                           planned_at=milestone_at(today.strftime("%Y-%m-%d")))
+        b, _ = _ms_fixture(s, project_id=2, order=211, type_name="同名", name="同じ名前の重要日",
+                           planned_at=milestone_at(today.strftime("%Y-%m-%d")))
+        s.commit()
+        ids = {a.id, b.id}
+
+    data = _ms_get(client, "admin@test.jp", "q=同じ名前の重要日&include_candidates=false&limit=5000")
+    got = [m for m in data["milestones"] if m["id"] in ids]
+    assert len(got) == 2, "同名でも別レコードとして返る"
+    assert {m["project_id"] for m in got} == {1, 2}
+    assert len({m["id"] for m in got}) == 2
+
+
+def test_milestone_api_precision_and_related_task_project_match(client):
+    """day / half_day 午前・午後が返り、関連工程が同じ案件であること。"""
+    from app.models import Task
+    from app.services.milestones import jst_today, milestone_at
+    from tests.conftest import TestingSessionLocal
+
+    today = jst_today()
+    key = today.strftime("%Y-%m-%d")
+    with TestingSessionLocal() as s:
+        task = Task(project_id=1, wbs_code="ms-rel", name="関連工程",
+                    planned_start_at=milestone_at(key),
+                    planned_finish_at=milestone_at((today + timedelta(days=3)).strftime("%Y-%m-%d")))
+        s.add(task)
+        s.flush()
+        d, _ = _ms_fixture(s, order=220, type_name="日単位", planned_at=milestone_at(key, "day"),
+                           schedule_precision="day", related_task_id=task.id)
+        am, _ = _ms_fixture(s, order=221, type_name="午前", planned_at=milestone_at(key, "half_day", "AM"),
+                            schedule_precision="half_day")
+        pm, _ = _ms_fixture(s, order=222, type_name="午後", planned_at=milestone_at(key, "half_day", "PM"),
+                            schedule_precision="half_day")
+        s.commit()
+        ids = (d.id, am.id, pm.id, task.id)
+
+    data = _ms_get(client, "admin@test.jp", "include_candidates=false&limit=5000")
+    by_id = {m["id"]: m for m in data["milestones"]}
+
+    assert by_id[ids[0]]["schedule_precision"] == "day"
+    assert _jst_wall(by_id[ids[0]]["planned_at"]).hour == 0
+    assert by_id[ids[1]]["schedule_precision"] == "half_day"
+    assert _jst_wall(by_id[ids[1]]["planned_at"]).hour == 0
+    assert by_id[ids[2]]["schedule_precision"] == "half_day"
+    assert _jst_wall(by_id[ids[2]]["planned_at"]).hour == 12, "午後は12:00で返ること"
+    # 9時間ずれ（日付が前後の日へ動いていない）
+    for mid in ids[:3]:
+        assert _jst_wall(by_id[mid]["planned_at"]).strftime("%Y-%m-%d") == key
+
+    # 関連工程は同じ案件のもの
+    rel = by_id[ids[0]]
+    assert rel["related_task_id"] == ids[3]
+    assert rel["project_id"] == 1
+    # 関連付けが無いものは工程との関係を推測しない
+    assert by_id[ids[1]]["related_task_id"] is None
+    assert by_id[ids[1]]["related_task_conflict"] is False
+
+
+def test_milestone_api_has_no_n_plus_one(client):
+    """件数を増やしてもSQL発行回数が比例増加しないこと。"""
+    from sqlalchemy import event
+
+    from app.services.milestones import jst_today, milestone_at
+    from tests.conftest import TestingSessionLocal, engine
+
+    today = jst_today()
+
+    def count_queries(qs: str) -> int:
+        statements: list[str] = []
+
+        def before(conn, cursor, statement, params, context, executemany):
+            statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", before)
+        try:
+            _ms_get(client, "admin@test.jp", qs)
+        finally:
+            event.remove(engine, "before_cursor_execute", before)
+        return len(statements)
+
+    qs = "include_candidates=false&limit=5000"
+    before_rows = _ms_get(client, "admin@test.jp", qs)["registered_count"]
+    baseline = count_queries(qs)
+
+    # 30件追加しても発行回数は変わらないはず
+    with TestingSessionLocal() as s:
+        for i in range(30):
+            _ms_fixture(s, order=300 + i, type_name=f"N+1確認{i}",
+                        planned_at=milestone_at(today.strftime("%Y-%m-%d")))
+        s.commit()
+
+    after_rows = _ms_get(client, "admin@test.jp", qs)["registered_count"]
+    grown = count_queries(qs)
+
+    assert after_rows >= before_rows + 30, "件数が増えていること"
+    assert grown == baseline, f"件数を増やすとSQL発行回数が増えた: {baseline} → {grown}"
+
+
+def test_milestone_api_applies_all_five_roles(client):
+    """5権限それぞれで案件スコープが正しく効くこと。"""
+    from app.core.security import hash_password
+    from app.models import ProjectMember, User
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        for email, role in [("qm@test.jp", "QUALITY_MANAGER"), ("viewer@test.jp", "VIEWER"),
+                            ("fw@test.jp", "FIELD_WORKER")]:
+            if s.query(User).filter_by(email=email).one_or_none() is None:
+                s.add(User(email=email, hashed_password=hash_password("pass"), name=role, role=role))
+        s.flush()
+        # FIELD_WORKER は案件2だけに割り当てる
+        fw = s.query(User).filter_by(email="fw@test.jp").one()
+        if s.query(ProjectMember).filter_by(user_id=fw.id).one_or_none() is None:
+            s.add(ProjectMember(project_id=2, user_id=fw.id, role="FIELD_WORKER"))
+        s.commit()
+
+    # 内部ロールは全案件を見られる
+    for email in ("admin@test.jp", "pm@test.jp", "qm@test.jp", "viewer@test.jp"):
+        data = _ms_get(client, email, "include_candidates=false&limit=5000")
+        assert {m["project_id"] for m in data["milestones"]} == {1, 2}, f"{email} が全案件を見られない"
+
+    # 協力会社ロールは割当案件だけ
+    partner = _ms_get(client, "partner@test.jp", "include_candidates=false&limit=5000")
+    assert {m["project_id"] for m in partner["milestones"]} == {1}
+    fw_data = _ms_get(client, "fw@test.jp", "include_candidates=false&limit=5000")
+    assert {m["project_id"] for m in fw_data["milestones"]} == {2}
+
+    # 件数・選択肢・候補のすべてに同じスコープが効く
+    t = token(client, "fw@test.jp")
+    opts = client.get("/api/schedule/milestones/options", headers={"Authorization": f"Bearer {t}"}).json()
+    assert [p["construction_number"] for p in opts["projects"]] == ["T-002"]
+    with_cand = _ms_get(client, "fw@test.jp", "limit=5000")
+    assert all(c["project_id"] == 2 for c in with_cand["candidates"])
+    summary = client.get("/api/schedule/milestones/summary", headers={"Authorization": f"Bearer {t}"}).json()
+    assert summary["registered_count"] == fw_data["registered_count"]
+
+
+def test_milestone_api_conflict_with_related_task(client):
+    """関連工程との日程矛盾を確定計算で検知し、絞り込みできること。"""
+    from app.models import Task
+    from app.services.milestones import jst_today, milestone_at
+    from tests.conftest import TestingSessionLocal
+
+    today = jst_today()
+    with TestingSessionLocal() as s:
+        task = Task(project_id=1, wbs_code="ms-conf", name="矛盾確認の工程",
+                    planned_start_at=milestone_at(today.strftime("%Y-%m-%d")),
+                    planned_finish_at=milestone_at((today + timedelta(days=3)).strftime("%Y-%m-%d")))
+        s.add(task)
+        s.flush()
+        inside, _ = _ms_fixture(s, order=400, type_name="期間内",
+                                planned_at=milestone_at((today + timedelta(days=1)).strftime("%Y-%m-%d")),
+                                related_task_id=task.id)
+        outside, _ = _ms_fixture(s, order=401, type_name="期間外",
+                                 planned_at=milestone_at((today + timedelta(days=10)).strftime("%Y-%m-%d")),
+                                 related_task_id=task.id)
+        s.commit()
+        inside_id, outside_id = inside.id, outside.id
+
+    data = _ms_get(client, "admin@test.jp", "include_candidates=false&limit=5000")
+    by_id = {m["id"]: m for m in data["milestones"]}
+    assert by_id[inside_id]["related_task_conflict"] is False
+    assert by_id[outside_id]["related_task_conflict"] is True
+
+    only = _ms_get(client, "admin@test.jp", "conflict_only=true&include_candidates=false&limit=5000")
+    ids = {m["id"] for m in only["milestones"]}
+    assert outside_id in ids and inside_id not in ids
+    assert all(m["related_task_conflict"] for m in only["milestones"])
