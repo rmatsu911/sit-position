@@ -113,6 +113,30 @@ AI Worker（別プロセス）: `python -m ai_worker.worker [--once]`。実weigh
 | GET | `/reports/types` | 対応帳票・形式の列挙 |
 | GET | `/reports/{report_type}?project_id=&format=pdf\|xlsx` | 帳票を生成しダウンロード（施工管理表＝tasksから生成、PDF/Excel、監査） |
 
+## 工程管理の横断表示（Ver.0.3 Phase 2・3）
+
+すべて既存の案件スコープ・権限を通す。集約は1本のJOINで行い、行数に比例した
+追加クエリ（N+1）を発行しない。
+
+| メソッド | パス | 説明 |
+| --- | --- | --- |
+| GET | `/schedule/cross?project_id=&project_ids=&q=&date_from=&date_to=&construction_type_ids=&department_ids=&statuses=&manager_ids=&company_ids=&delayed_only=&unassigned_only=&limit=` | 横断工程表。WBS親子を維持したまま複数案件の工程を返す（`truncated` で打ち切りを明示） |
+| GET | `/schedule/cross/options` | 絞り込みの選択肢（同名でもIDで区別できるよう id+name で返す） |
+| GET | `/schedule/cross/export?format=xlsx\|pdf` | 画面と同じ条件・並び順で Excel / PDF を生成 |
+| GET/POST/PUT/DELETE | `/schedule/saved-searches?screen=` | 保存検索条件（`screen` で画面ごとに使い分け。横断工程=`cross_schedule`、横断マイルストーン=`cross_milestones`） |
+| GET | `/schedule/milestones?project_id=&project_ids=&milestone_type_ids=&q=&statuses=&responsible_ids=&company_ids=&related_task_ids=&date_from=&date_to=&actual=&overdue_only=&due_soon_only=&conflict_only=&due_soon_days=&group=&include_candidates=&limit=` | 横断マイルストーン。登録済み（`record_kind='milestone'`）と未設定候補（`record_kind='candidate'`）を別配列で返す |
+| GET | `/schedule/milestones/summary` | 一覧と同じ条件での確定計算（登録済み/未設定候補/完了/期限超過/近日予定/遅延完了/関連工程との日程矛盾）。画面はこの値をそのまま表示する |
+| GET | `/schedule/milestones/options` | 案件・区分・状態・担当者・担当会社・関連工程の選択肢 |
+| GET | `/schedule/milestones/export?format=xlsx\|pdf` | 一覧と同じ `collect()` を使うため、画面と件数・条件・並び順が必ず一致 |
+| GET/POST/PUT/DELETE | `/schedule/milestones[/{id}]` | 1件取得・登録・更新・論理削除（監査記録つき） |
+
+- **確定計算**：基準日はサーバー側の JST。完了=実績日あり、期限超過=実績未入力かつ予定日<基準日（当日は含めない）、
+  近日予定=残日数が0以上かつ指定日数以内、遅れ日数=完了時 max(実績-予定,0)／未完了時は超過日数。
+  「AI予測」ではなく**システム検知（確定計算）**として扱い、DBの `status` とは別の項目で返す。
+- **未設定候補**：`active=true` の標準種別と登録済みを**IDで**突き合わせた結果。実在IDや予定日・状態・担当者は持たない。
+- **関連工程**：`resolve_related_task()` を登録・更新の両方で使う。存在しない/削除済み/別案件=422、スコープ外=403。
+- **入力粒度**：`schedule_precision` は `day`（JST 00:00）と `half_day`（午前=00:00 / 午後=12:00）。AM/PM 専用列は持たない。
+
 ## 監査ログ
 
 写真登録/編集/削除・品質状態変更/承認/差戻し・日報作成/提出/差戻し/承認・工程実績反映・台帳更新・図面登録/更新/削除を、`audit_logs`（user/action/entity_type/entity_id/before/after）へ記録。

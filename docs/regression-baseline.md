@@ -11,10 +11,12 @@
 | ESLint | `npm run lint` | **エラー 0**（警告は Badge.tsx の HMR 警告 1件のみ） |
 | production build | `npm run build` | 成功（bundle 500kB超の警告は既知） |
 | 時間軸エンジン | `npm run test:timeline` | **113 passed / 0 failed** |
-| Backend テスト | `cd backend && python -m pytest` | **56 passed**（Phase 2 で +11） |
+| Backend テスト | `cd backend && python -m pytest` | **81 passed**（Phase 3 で +25） |
 | 横断工程の座標実測 | `PW_CHROME=<chrome> node scripts/cross-schedule-measure.mjs` | **25 passed / 0 failed** |
 | 横断工程の完了確認 | `PW_CHROME=<chrome> node scripts/cross-schedule-final.mjs` | **39 passed / 0 failed** |
 | 表示単位の検証 | `PW_CHROME=<chrome> node scripts/scale-selector-verify.mjs` | **50 passed / 0 failed** |
+| 横断マイルストーンの画面検証 | `PW_CHROME=<chrome> node scripts/cross-milestones-verify.mjs` | **127 passed / 0 failed** |
+| 横断マイルストーンの出力一致 | `backend/.venv/bin/python scripts/milestone-export-check.py` | **130 passed / 0 failed** |
 
 ## 2. 画面の回帰確認（実ブラウザ）
 
@@ -230,3 +232,46 @@ PW_CHROME=<chromeのパス> node scripts/e2e-regression.mjs --out /tmp/after
 | ドラッグの移動日数が単位ごとにずれる | `snapDelta` に列幅を渡していたが、列幅と「1日あたりのピクセル数」は日表示以外で一致しない（週表示は1列=7日、3時間表示は1列=3時間） | `Timeline.pxPerDay` を追加し、`snapDelta` はこれを使う |
 | 3時間表示で工程が画面外になる | 表示範囲を「今日」中心に固定していたため、工程が今日から離れていると1件も表示されなかった | `rangeForScale` を追加し、今日が工程期間内ならそこを、外れていれば工程の開始日を基準にする |
 | 表示期間の指定が時間軸に反映されない | 「表示期間」で絞り込んでも軸は工程の全期間のままで、絞り込み結果と目盛りが食い違っていた | 指定があれば全単位でその期間をそのまま時間軸にする |
+
+## 9. 横断マイルストーンの検証（Phase 3 P3-3）
+
+`scripts/cross-milestones-verify.mjs`（実ブラウザ）と
+`scripts/milestone-export-check.py`（画面API / Excel / PDF の突き合わせ）で確認する。
+5権限のうち VIEWER はシードにいないため、両スクリプトが
+`scripts/verify-fixtures.py` で検証中だけ用意し、終了時に監査ログごと削除する。
+
+### 実測結果
+
+| 検証 | 実測値 |
+|---|---|
+| 横断ルート `/schedule/milestones` | 8案件 × 6区分。登録済み 47 件 / 未設定候補 1 件 |
+| 案件詳細ルート `/projects/1/schedule/milestones` | 対象案件のみ 6 件。`?projects=2` を足しても 0 件（範囲が広がらない） |
+| 表示方式 | 比較表 / 時間軸。`view=` をURLに保存し、再読込・戻る・進むで復元 |
+| 表示の切替 | 案件別（8行×7列）／種別別（6行×9列）で転置。件数はAPIのグループ条件と一致 |
+| 表示単位 | 3時間18px / 日34px / 週60px / 月90px / 年120px。`scale=` をURLに保存 |
+| day のマーカー | 日の先頭（オフセット 0px） |
+| half_day 午前 | 日の先頭（0px） |
+| half_day 午後 | 日の中央（日表示 17px = 34px の半分、3時間表示 72px = 144px の半分） |
+| 予定日 / 実績日 | `data-milestone-marker="plan|actual"` で別の形。72 マーカーすべてに詳細ラベル |
+| 複合フィルター | 9通りのAND条件すべてで画面の件数＝APIの件数 |
+| 保存検索 | 保存・呼び出し（`view`/`scale` ごとURL復元）・上書き・削除。案件詳細ルートでは範囲が広がらない |
+| 未設定候補から登録 | 案件IDと区分IDだけが初期値。予定日・状態・担当者は自動生成しない |
+| 同一案件・同一区分 | 2件を積み重ねて表示（1件に潰さない）。片方の編集がもう一方に波及しない |
+| 同名・別ID | 同じ名称でもAPI上は別ID（例 53 / 54）。表示も別レコード |
+| 編集と論理削除 | 保存失敗時はモーダルを閉じず日本語で理由表示。削除は対象名を含む確認のうえ論理削除 |
+| システム検知 | 期限超過 2 / 近日予定 2 / 遅延完了 6 / 関連工程と不整合 15。セルのバッジ数が `/summary` と一致 |
+| 空状態 | 登録済み0件＋候補あり／両方0件／truncated（該当47件のうち先頭5件）を別状態で表示 |
+| 5権限 | ADMIN 47・PROJECT_MANAGER 47・QUALITY_MANAGER 47・VIEWER 47・FIELD_WORKER（割当あり）6・（割当なし）0。更新系UIは ADMIN / PROJECT_MANAGER のみ |
+| 画面 / 印刷 / Excel / PDF | 10通りの条件すべてで件数・並び順・条件表記が一致。PDFにも出力日時・出力者・計算基準日・件数・条件を記載 |
+| 印刷 | サイドバー・アプリヘッダー・操作ボタン・モーダルを除外。高さ制限と sticky を解除して全行を出す |
+| 縦スクロール | 比較表を 320px スクロールして左固定列と右セルの移動量が一致。時間軸は縦スクロール枠が1つだけ |
+| コンソールエラー / 失敗リクエスト | **0 / 0** |
+
+### この画面実装で見つけて直した不具合
+
+| 不具合 | 内容 | 対処 |
+|---|---|---|
+| half_day の午前を午後と誤判定 | 画面独自の UTC 計算（`getUTCHours() >= 3`）では JST 00:00（UTC 15:00）も午後になっていた。セル表示・ツールチップ・編集時の初期値がすべてずれる | Phase 1 の共通変換 `splitStartAt()` に置き換えた |
+| 表示範囲外のマーカーが左端に積み上がる | `xOf` は範囲外を端へ寄せるため、3時間表示のように窓を絞る単位で、期間外のマーカーが左端（x=0）に並んでいた | 表示範囲に含まれるマーカーだけを描く |
+| 時間軸の印刷で行がずれる | 印刷CSSが `[data-print='sheet']` の子要素を一律 `width:100%` かつ `display:block` にしていたため、左の一覧と右のガントが縦積みになっていた | 幅指定を表と `data-print="wide"` に限定し、`display` は上書きしない |
+| 印刷にモーダルが写る | `Modal` / `ConfirmDialog` に印刷除外の指定が無かった | どちらも `data-print="hide"` を付けた |

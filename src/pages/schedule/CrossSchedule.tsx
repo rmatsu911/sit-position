@@ -530,7 +530,9 @@ export default function CrossSchedule() {
       */}
       <Panel className="overflow-hidden" bodyClassName="p-0">
         <div data-print="sheet" className="thin-scroll flex max-h-[calc(100vh-380px)] items-start overflow-y-auto">
-          <div className="thin-scroll shrink-0 overflow-x-auto border-r border-line" style={{ width: LEFT_PANE_W }}>
+          {/* 印刷はこの工程一覧が本体なので、紙面いっぱいまで広げる（data-print="wide"） */}
+          <div data-print="wide" className="thin-scroll shrink-0 overflow-x-auto border-r border-line"
+               style={{ width: LEFT_PANE_W }}>
             <table className="grid-table text-[12.5px]">
               <thead className="sticky top-0 z-20 bg-canvas">
                 <tr>

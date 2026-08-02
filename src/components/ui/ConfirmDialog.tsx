@@ -5,7 +5,7 @@ export function ConfirmDialog() {
   const { confirmState, resolveConfirm } = useApp()
   if (!confirmState) return null
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center">
+    <div data-print="hide" className="fixed inset-0 z-[70] flex items-center justify-center">
       <div className="absolute inset-0 bg-ink/40" onClick={() => resolveConfirm(false)} />
       <div className="relative z-10 w-[420px] rounded bg-white shadow-pop">
         <div className="flex items-start gap-3 p-5">

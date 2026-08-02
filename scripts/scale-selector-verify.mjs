@@ -178,11 +178,13 @@ console.log('== 5. 3時間表示でドラッグ→保存→再読込しても位
 for (const [label, path] of [['横断工程', '/schedule/cross?scale=hour3&projects=1'],
                              ['案件工程', '/projects/1/schedule?scale=hour3']]) {
   await open(path)
-  // 3時間表示の範囲内に実際に描かれているバーを対象にする。
+  // 3時間表示の範囲内に「まるごと」描かれているバーを対象にする。
+  // 表示範囲の手前から続く工程は左端で切り詰められ、left が 0 に張り付いたまま
+  // 動かないため、移動量を測る対象にはできない（left > 0 の工程を選ぶ）。
   // ドラッグすると title の日付が変わるため、工程名の前方一致で選ぶ。
   const targetName = await page.evaluate(() => {
     const el = [...document.querySelectorAll('[title*="｜ 予定 "]')]
-      .find((e) => parseFloat(e.style.width) > 20)
+      .find((e) => parseFloat(e.style.width) > 20 && parseFloat(e.style.left) > 0)
     return el ? el.getAttribute('title').split(' ｜ ')[0] : null
   })
   if (!targetName) { ok(false, `${label}: 表示範囲内のバーが見つからない`); continue }

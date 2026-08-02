@@ -25,7 +25,8 @@ export function Modal({
 }) {
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    // 印刷は帳票レイアウトにするため、開いているモーダルは紙面へ出さない
+    <div data-print="hide" className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-ink/40" onClick={onClose} />
       <div
         className={`relative z-10 max-h-[88vh] ${sizeClass[size]} overflow-hidden rounded bg-white shadow-pop`}

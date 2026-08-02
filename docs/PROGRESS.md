@@ -256,8 +256,9 @@ AI Worker(分離)＋YOLO推論IF(交換可)＋正規化bbox＋既存UIへの実�
 
 ## 次回作業（1〜3項目）
 
-1. **Phase 3**：`milestones` テーブル新設＋横断マイルストーン（Excel出力は既存 `reports.py` を再利用）と
-   共通カレンダーイベントAPI
+1. **Phase 3 P3-4**：`name === '引き渡し'` など工程名の文字列判定に残っている箇所を
+   `milestones` 由来へ置き換える（P3-3 では既存判定を変更していない）
+2. **Phase 3 の残り**：共通カレンダーイベントAPI とカレンダータブ
 3. **Phase 4以降**：個人設定（表示設定・職種と権限の分離・カレンダー購読）、報告強化、現場連絡、AI高度化
 
 ## 変更ログ（差分のみ追記）
@@ -276,3 +277,8 @@ AI Worker(分離)＋YOLO推論IF(交換可)＋正規化bbox＋既存UIへの実�
 - 2026-07-31 Ver.0.3 Phase 2 完了（横断工程表：tasks.company_id と saved_searches を追加[migration b3e5a71c2d40]、GET /schedule/cross 集約API[複合フィルタ・N+1回避・権限と案件スコープをAPI側で適用・WBS親子を維持]、cross/options と cross/export[Excel/PDF]、保存検索条件CRUD、横断工程画面[案件別/担当者別/担当会社別・3時間〜年・列表示設定・URLクエリ連動・縦スクロール同期]、編集操作[進捗/担当者/担当会社/0.5日スナップドラッグ/右クリック・楽観更新のロールバック]、確定計算のシステム検知[AI予測とは表示しない]、ガント共通部品を GanttParts.tsx へ抽出して案件工程と共有、MIN_BAR_WIDTH 3→1 と左一覧の独立スクロールを是正。pytest56/timeline75/lint0/build/18ルート回帰エラー0/実ブラウザ実測25件一致）
 - 2026-07-31 Ver.0.3 Phase 2 完了処理（既存「案件工程」の縦スクロールずれを items-start で是正[レイアウト非変更・左右とも320px一致を実測]、横断工程表の印刷を実装[@media print と data-print でサイドバー/ツールバー/ガント等を除外し、出力日時・出力者・表示の切替・対象工程数・適用条件つきの帳票に。印刷行数=API返却件数を実測で一致確認]、最終回帰スクリプト cross-schedule-final.mjs を追加。pytest56/timeline75/lint0/build/18ルート回帰エラー0/座標実測25件/完了確認39件すべて一致）
 - 2026-08-01 Ver.0.3 Phase 2 補足（表示単位の統一：案件工程に3時間・年が無く「日/週/月」も実体は列幅ズームだったため、共通の ScaleSelector と rangeForScale へ統一し3画面すべてで3時間〜年を直接選択可能に[aria-pressed で現在単位を明示・URLクエリで復元]、Timeline.pxPerDay を追加してドラッグの移動日数が単位ごとにずれる不具合を是正、3時間表示の表示範囲が工程から離れると空になる不具合と表示期間指定が時間軸に反映されない不具合を修正。timeline113/pytest56/lint0/build/18ルート回帰0/座標実測25/完了確認39/表示単位検証50 すべて一致）
+- 2026-08-02 Ver.0.3 Phase 3 P3-1（マイルストーンのDB化：`milestone_types` / `milestones` を工程とは別の正データとして新設[migration c4f2a86b1e73]、日付は案件工期から導出、工程名の文字列一致に依存しないテストを追加）
+- 2026-08-02 Ver.0.3 Phase 3 P3-1 補足（`milestones` に `company_id`（担当者の所属から導出しない）／`related_task_id`（nullable+index・案件一致とスコープを検証）／`schedule_precision`（day=JST 00:00、half_day午前=00:00・午後=12:00、AM/PM専用列は作らない）を追加[migration d5a91c3e07b2]。既存 migration は書き換えず補足で追加）
+- 2026-08-02 Ver.0.3 Phase 3 P3-2（横断マイルストーンの集約API：`GET /schedule/milestones` と `/options` `/summary`、複合フィルタのAND適用、案件スコープと5権限、1本のJOINでN+1回避、確定計算[完了/期限超過/近日予定/遅延完了/関連工程との日程矛盾]を `MilestoneFacts` に集約、未設定候補を**IDで**突き合わせて別配列で返却、件数上限と `truncated`）
+- 2026-08-02 Ver.0.3 Phase 3 P3-2 補足（CRUD と出力：1件取得/登録/更新/論理削除、`resolve_related_task()` を登録・更新の両方で使用[存在しない・削除済み・別案件=422、スコープ外=403]、計算項目はリクエストから保存しない、監査記録、Excel/PDF を一覧と同じ `collect()` で生成し登録済みと未設定候補を区別）
+- 2026-08-02 Ver.0.3 Phase 3 P3-3 完了（横断マイルストーン画面：`/schedule/milestones` と `/projects/:id/schedule/milestones` の ComingSoon を実画面へ置換。比較表[案件×区分・セル内に複数件を積み重ね・未設定は「未設定」＋登録ボタン]と時間軸[Phase 1・2の共通部品を再利用・3時間〜年・予定/実績を別形状・half_day午後は日の中央]を `view=`/`scale=`/絞り込み条件つきでURLへ1対1保存、件数はすべて `/summary` の確定計算を表示、保存検索は `screen='cross_milestones'` で既存機構を再利用、登録・編集・論理削除UI[保存失敗でモーダルを閉じない]、印刷/Excel/PDF の件数・条件一致。実測で half_day 午前の誤判定・表示範囲外マーカーの左端集中・時間軸印刷の行ずれ・モーダルの印刷混入を検出して是正。timeline113/pytest81/lint0/build/18ルート回帰0/座標実測25/完了確認39/表示単位50/マイルストーン画面127/出力一致130 すべて一致）

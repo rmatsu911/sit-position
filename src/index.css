@@ -138,16 +138,20 @@ body {
     display: block !important;
   }
 
-  /* スクロール枠の高さ制限を外し、全行を紙に流す */
+  /* スクロール枠の高さ制限を外し、全行を紙に流す。
+     時間軸は「左の一覧＋右のガント」を横並びのまま出す必要があるため、
+     display は上書きせず、幅の指定も表だけに限る（縦積みになると行がずれる）。 */
   [data-print='sheet'] {
     max-height: none !important;
     overflow: visible !important;
-    display: block !important;
   }
   [data-print='sheet'] > * {
+    overflow: visible !important;
+  }
+  [data-print='sheet'] > table,
+  [data-print='wide'] {
     width: 100% !important;
     max-width: 100% !important;
-    overflow: visible !important;
   }
 
   /* sticky は紙面では効かないうえ重なりの原因になるため解除する */
