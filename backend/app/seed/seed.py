@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import select, text
 
@@ -34,6 +34,8 @@ from app.models import (
     Document,
     DocumentVersion,
     Material,
+    Milestone,
+    MilestoneType,
     Notification,
     PhotoType,
     Photo,
@@ -120,6 +122,12 @@ PROCESS_TYPES = [
     "切替作業", "通信試験", "施工写真整理", "品質確認", "完成図書作成", "顧客確認", "完成検査", "引き渡し",
     "地中管路敷設",
 ]
+# Seed 実行日（JST）。固定日付を置かず、実際の現在日を基準に
+# 「実績が入っているか」を決める。未来の重要日に実績は作らない。
+SEED_TODAY = datetime.now(timezone(timedelta(hours=9))).date()
+
+# マイルストーンの区分（工程名の文字列一致ではなく、区分マスタとして持つ）
+MILESTONE_TYPES = ["契約", "着工", "中間検査", "完成検査", "引き渡し", "完工"]
 ASSET_TYPES = ["光ケーブル", "クロージャ", "電柱", "ONU", "光成端箱", "スプライス", "融着", "ハンドホール", "高所作業車", "接続試験", "配線", "完成状態"]
 PHOTO_TYPES = ["着手前", "施工中", "完成", "使用材料", "品質記録"]
 QUALITY_RULE_TYPES = ["出来形", "品質", "写真", "安全"]
@@ -321,7 +329,8 @@ def reset(session):
     tables = [
         "audit_logs", "ai_feedback", "ai_predictions", "ai_analysis_jobs", "ai_threshold_settings", "ai_models",
         "quality_checks", "daily_report_tasks", "daily_reports", "task_change_history", "task_dependencies",
-        "photos", "tasks", "assets", "sites", "project_members", "projects", "saved_searches",
+        "photos", "tasks", "milestones", "milestone_types", "assets", "sites",
+        "project_members", "projects", "saved_searches",
         "quality_rules", "work_types", "process_types", "asset_types", "photo_types", "quality_rule_types",
         "construction_types", "users", "departments", "branches", "companies",
     ]
@@ -375,6 +384,7 @@ def run(reset_first: bool = False, allow_production: bool = False) -> None:
         ptypes = seed_master(ProcessType, PROCESS_TYPES)
         atypes = seed_master(AssetType, ASSET_TYPES)
         photypes = seed_master(PhotoType, PHOTO_TYPES)
+        mstypes = seed_master(MilestoneType, MILESTONE_TYPES)
         seed_master(QualityRuleType, QUALITY_RULE_TYPES)
 
         # 案件
@@ -627,6 +637,45 @@ def run(reset_first: bool = False, allow_production: bool = False) -> None:
                 if prev.wbs_code.split(".")[0] == cur.wbs_code.split(".")[0]:
                     s.add(TaskDependency(task_id=cur.id, depends_on_task_id=prev.id))
 
+        # マイルストーン（案件の重要日）
+        # 固定の日付表を持たず、各案件の実際の工期から導出する。
+        # 契約=着工の14日前 / 着工=開始予定 / 中間検査=工期の中間 /
+        # 完成検査=終了予定の3日前 / 引き渡し=終了予定 / 完工=終了予定の5日後
+        def _ms_offsets(start: date, finish: date) -> list[tuple[str, date]]:
+            span = (finish - start).days
+            return [
+                ("契約", start - timedelta(days=14)),
+                ("着工", start),
+                ("中間検査", start + timedelta(days=span // 2)),
+                ("完成検査", finish - timedelta(days=3)),
+                ("引き渡し", finish),
+                ("完工", finish + timedelta(days=5)),
+            ]
+
+        ms_count = 0
+        for pr in PROJECTS:
+            p = projects[pr["code"]]
+            start, finish = _d(pr["start"]), _d(pr["due"])
+            if not start or not finish:
+                continue
+            manager = users.get(pr["manager"])
+            for type_name, planned in _ms_offsets(start, finish):
+                # 実績は「その日を過ぎていて、案件が進んでいる」ものだけ入れる。
+                # 未来の重要日に実績を作らない（実績未入力は未入力のまま扱う）。
+                done = planned <= SEED_TODAY and pr["ap"] > 0
+                s.add(Milestone(
+                    project_id=p.id,
+                    milestone_type_id=mstypes[type_name].id,
+                    name=f"{type_name}（{pr['name']}）",
+                    planned_at=_dt(planned.isoformat()),
+                    # 遅延案件は実績が予定より後ろへずれる（遅延は確定計算で判定する）
+                    actual_at=_dt((planned + timedelta(days=3 if pr["status"] == "遅延" else 0)).isoformat())
+                    if done else None,
+                    status="完了" if done else "予定",
+                    responsible_id=manager.id if manager else None,
+                ))
+                ms_count += 1
+
         # 工事台帳（projects基本＋台帳固有項目）
         billing = ["未請求", "請求済", "入金済", "一部入金", "未請求", "請求済", "未請求", "未請求"]
         docs_status = ["作成中", "完了", "完了", "未着手", "確認中", "作成中", "未着手", "未着手"]
@@ -723,7 +772,7 @@ def run(reset_first: bool = False, allow_production: bool = False) -> None:
         print(f"  ユーザー {len(users)}名 / 案件 {len(projects)}件 / 工程 {len(TASKS) + cross_count}件"
               f"（うち他案件 {cross_count}件）/ 写真 27枚 / 品質 7 / 日報 3")
         print(f"  要員 {len(WORKERS)} / 図面 {len(DRAWINGS)} / 通知 {len(NOTIFS)} / 台帳 {len(PROJECTS)}")
-        print(f"  資材 {len(MATERIALS)} / 試験記録 {len(TESTS)}")
+        print(f"  資材 {len(MATERIALS)} / 試験記録 {len(TESTS)} / マイルストーン {ms_count}")
         print(f"  fixture={SEED_FIXTURE_VERSION} / APP_ENV={settings.app_env}")
         print(f"  管理者ログイン: {settings.seed_admin_email} / {settings.seed_admin_password}")
 

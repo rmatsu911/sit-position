@@ -487,3 +487,68 @@ def test_cross_schedule_update_uses_ids(client):
                         headers={"Authorization": f"Bearer {token(client, 'partner@test.jp')}"},
                         json={"actual_progress": 50})
     assert denied.status_code == 403
+
+
+# --- Ver.0.3 Phase 3 (P3-1): マイルストーンのデータ構造 ---------------------
+def test_milestone_is_stored_as_record_not_task_name(client):
+    """マイルストーンが工程名の文字列一致ではなく、実レコードとして保持されること。"""
+    from app.models import Milestone, MilestoneType, Project
+    from tests.conftest import TestingSessionLocal
+    from datetime import datetime, timedelta
+
+    with TestingSessionLocal() as s:
+        mt = MilestoneType(code="ms-引き渡し", name="引き渡し", sort_order=4)
+        s.add(mt)
+        s.flush()
+        project = s.query(Project).filter_by(construction_number="T-001").one()
+        s.add(Milestone(
+            project_id=project.id, milestone_type_id=mt.id, name="引き渡し（テスト案件1）",
+            planned_at=datetime.fromisoformat("2026-08-10T00:00:00+09:00"),
+            actual_at=datetime.fromisoformat("2026-08-13T00:00:00+09:00"),
+            status="完了",
+        ))
+        s.commit()
+
+        row = s.query(Milestone).filter_by(name="引き渡し（テスト案件1）").one()
+        assert row.milestone_type_id == mt.id, "区分がIDで紐づくこと（工程名に依存しない）"
+        assert row.project_id == project.id
+        # 予定・実績はどちらも JST のその日 00:00 として保持する
+        assert _jst_wall(row.planned_at.isoformat()).hour == 0
+        assert _jst_wall(row.actual_at.isoformat()).hour == 0
+        # 遅延は列ではなく確定計算で求める（列を持たないことの確認）
+        assert not hasattr(row, "is_delayed")
+        delay = _jst_wall(row.actual_at.isoformat()) - _jst_wall(row.planned_at.isoformat())
+        assert delay == timedelta(days=3), f"遅れ日数が計算できること: {delay}"
+
+
+def test_milestone_supports_multiple_types_per_project(client):
+    """1案件に複数区分の重要日を持てること（引き渡し以外も扱える）。"""
+    from app.models import Milestone, MilestoneType, Project
+    from tests.conftest import TestingSessionLocal
+    from datetime import datetime
+
+    with TestingSessionLocal() as s:
+        project = s.query(Project).filter_by(construction_number="T-002").one()
+        made = []
+        for i, name in enumerate(["契約", "着工", "中間検査", "完成検査", "完工"]):
+            mt = MilestoneType(code=f"ms2-{name}", name=name, sort_order=i)
+            s.add(mt)
+            s.flush()
+            made.append(mt)
+            s.add(Milestone(
+                project_id=project.id, milestone_type_id=mt.id, name=f"{name}（テスト案件2）",
+                planned_at=datetime.fromisoformat(f"2026-09-{10 + i:02d}T00:00:00+09:00"),
+                status="予定",
+            ))
+        s.commit()
+
+        rows = (
+            s.query(Milestone)
+            .filter(Milestone.project_id == project.id, Milestone.deleted_at.is_(None))
+            .all()
+        )
+        assert len(rows) == 5, "区分ごとに複数の重要日を持てること"
+        assert len({r.milestone_type_id for r in rows}) == 5, "区分がそれぞれ別レコードであること"
+        # 実績未入力は未入力のまま（固定値で埋めない）
+        assert all(r.actual_at is None for r in rows)
+        assert all(r.status == "予定" for r in rows)

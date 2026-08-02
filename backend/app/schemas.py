@@ -746,3 +746,56 @@ class SavedSearchCreate(BaseModel):
 class SavedSearchUpdate(BaseModel):
     name: str | None = None
     conditions: dict | None = None
+
+
+# ===== マイルストーン（案件の重要日）=====
+class MilestoneOut(BaseModel):
+    """工程(tasks)とは別レコードの重要日。
+
+    工程は期間 [開始, 終了) を持つが、マイルストーンは「その日」を指す一点。
+    遅延は planned_at と actual_at の確定計算で求め、状態としては持たない。
+    """
+    id: int
+    project_id: int
+    project_name: str
+    project_number: str
+    construction_type_id: int | None = None
+    construction_type: str | None = None
+    department_id: int | None = None
+    department: str | None = None
+    milestone_type_id: int | None = None
+    milestone_type: str | None = None
+    milestone_type_order: int = 0
+    name: str
+    planned_at: datetime | None = None
+    actual_at: datetime | None = None
+    status: str
+    responsible_id: int | None = None
+    responsible: str | None = None
+    notes: str | None = None
+    # 確定計算による判定（推論ではない）
+    is_delayed: bool = False       # 実績が予定より後 / 未完了のまま予定日を過ぎた
+    delay_days: int = 0            # 遅れ日数（遅延していないときは0）
+    is_actual_missing: bool = False  # 予定日を過ぎているのに実績が未入力
+
+
+class MilestoneCreate(BaseModel):
+    project_id: int
+    milestone_type_id: int | None = None
+    name: str
+    planned_at: datetime | None = None
+    actual_at: datetime | None = None
+    status: str = "予定"
+    responsible_id: int | None = None
+    notes: str | None = None
+
+
+class MilestoneUpdate(BaseModel):
+    milestone_type_id: int | None = None
+    name: str | None = None
+    planned_at: datetime | None = None
+    actual_at: datetime | None = None
+    status: str | None = None
+    responsible_id: int | None = None
+    notes: str | None = None
+    change_reason: str | None = None

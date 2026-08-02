@@ -618,6 +618,39 @@ class SavedSearch(Base, TimestampMixin):
     conditions: Mapped[str] = mapped_column(Text)  # JSON文字列
 
 
+# ===== マイルストーン（案件の重要日）=====
+class MilestoneType(Base, _MasterBase):
+    """マイルストーンの区分（契約・着工・中間検査・完成検査・引き渡し・完工など）。
+
+    工程名の文字列一致で「引き渡し」を判定していた暫定処理を置き換えるため、
+    区分をマスタとして持つ。他のマスタと同じ code/name/sort_order/active で揃える。
+    """
+
+    __tablename__ = "milestone_types"
+
+
+class Milestone(Base, TimestampMixin, SoftDeleteMixin):
+    """案件の重要日。工程(tasks)とは別レコードとして持つ。
+
+    工程は期間 [開始, 終了) を持つが、マイルストーンは「その日」を指す一点。
+    日時は工程と同じく Asia/Tokyo のその日 00:00 として保存し、
+    表示・座標計算は src/lib/timeline.ts と同じ意味論で扱う。
+    """
+
+    __tablename__ = "milestones"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    milestone_type_id: Mapped[int | None] = mapped_column(ForeignKey("milestone_types.id"), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    planned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    actual_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 予定 / 完了 / 中止。遅延は planned_at と actual_at の確定計算で求めるため列に持たない
+    status: Mapped[str] = mapped_column(String(32), default="予定")
+    responsible_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     id: Mapped[int] = mapped_column(primary_key=True)
