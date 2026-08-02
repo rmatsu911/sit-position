@@ -68,7 +68,6 @@ export interface WbsTask {
   predecessors: string[] // 先行工程 WBS
   level: number // 0=親, 1=子
   isParent: boolean
-  isMilestone?: boolean
   critical?: boolean
 }
 

@@ -69,7 +69,6 @@ export function toWbsTasks(rows: ApiTask[]): WbsTask[] {
       predecessors,
       level: isParent ? 0 : 1,
       isParent,
-      isMilestone: t.name === '引き渡し',
       critical: CRITICAL_NAMES.has(t.name),
     }
   })

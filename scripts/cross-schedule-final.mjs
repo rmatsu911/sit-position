@@ -222,8 +222,10 @@ const consistency = await page.evaluate(async (apiBase) => {
   const api = await fetch(`${apiBase}/schedule/cross`, { headers: h }).then((r) => r.json())
   const xlsx = await fetch(`${apiBase}/schedule/cross/export?format=xlsx`, { headers: h })
   const pdf = await fetch(`${apiBase}/schedule/cross/export?format=pdf`, { headers: h })
-  // 印刷用見出しも table を使うため、工程一覧の tbody だけを対象にする
+  // 印刷用見出しも table を使うため、工程一覧の tbody だけを対象にする。
+  // 紙面に出ない行（data-print="hide" のマイルストーン帯など）は数えない。
   const sheetRows = [...document.querySelectorAll('[data-print="sheet"] tbody tr')]
+    .filter((tr) => getComputedStyle(tr).display !== 'none')
   const printedRows = sheetRows.filter((tr) => !tr.classList.contains('bg-sysken-50')).length
   const printedGroups = sheetRows.length - printedRows
   return {

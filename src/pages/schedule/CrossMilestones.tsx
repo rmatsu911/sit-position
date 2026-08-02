@@ -19,7 +19,7 @@ import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../auth/AuthContext'
 import { ApiError } from '../../lib/apiClient'
 import {
-  createTimeline, DEFAULT_SLOT_WIDTH, formatJst, nowJst, rangeForScale, splitStartAt, toJst,
+  createTimeline, DEFAULT_SLOT_WIDTH, formatJst, nowJst, rangeForScale, splitStartAt,
   toJstIsoString, type TimeScale, type Timeline,
 } from '../../lib/timeline'
 import { JP_HOLIDAYS } from '../../lib/holidays'
@@ -32,7 +32,9 @@ import {
   type MilestoneSummary,
 } from '../../api/crossMilestones'
 import { ScheduleTabs } from './ScheduleTabs'
-import { GanttGrid, GanttHeader, ROW_H, SCALE_OPTIONS, ScaleSelector, TodayLine } from './GanttParts'
+import {
+  GanttGrid, GanttHeader, MilestoneMarkers, ROW_H, SCALE_OPTIONS, ScaleSelector, TodayLine,
+} from './GanttParts'
 
 type ViewKind = 'table' | 'timeline'
 type GroupKind = 'project' | 'type'
@@ -643,53 +645,6 @@ function TimelineView({
           <span className="ml-auto">マーカーを選択すると詳細を編集できます</span>
         </div>
       </Panel>
-    </>
-  )
-}
-
-function MilestoneMarkers({
-  items, row, timeline, onOpen,
-}: { items: CrossMilestone[]; row: number; timeline: Timeline; onOpen: (m: CrossMilestone) => void }) {
-  const top = row * ROW_H
-  // xOf は範囲外を端へ寄せるため、表示範囲の外は描かない
-  // （3時間表示のように窓を絞る単位で、左端にマーカーが積み上がるのを防ぐ）
-  const inRange = (iso: string) => {
-    const d = toJst(iso)
-    return d >= timeline.start && d < timeline.end
-  }
-  const marks: { m: CrossMilestone; iso: string; kind: 'plan' | 'actual' }[] = []
-  for (const m of items) {
-    if (m.planned_at && inRange(m.planned_at)) marks.push({ m, iso: m.planned_at, kind: 'plan' })
-    if (m.actual_at && inRange(m.actual_at)) marks.push({ m, iso: m.actual_at, kind: 'actual' })
-  }
-  return (
-    <>
-      {marks.map(({ m, iso, kind }) => {
-        // 座標は共通の timeline から取る（half_day の午後は日の中央になる）
-        const x = timeline.xOf(iso)
-        const color = kind === 'actual'
-          ? 'border border-ok bg-white'
-          : m.is_overdue ? 'bg-ng' : m.related_task_conflict ? 'bg-wn' : 'bg-sysken-600'
-        const label = `${m.project_number} ${m.name}｜${kind === 'plan' ? '予定' : '実績'} ${formatJst(iso, 'yyyy/MM/dd')}`
-          + `${m.schedule_precision === 'half_day' ? (isAfternoon(iso) ? ' 午後' : ' 午前') : ''}`
-          + `｜状態 ${m.status}`
-          + `${m.is_overdue ? `｜期限超過 ${m.delay_days}日` : ''}`
-          + `${m.is_due_soon ? `｜近日予定 残${m.remaining_days}日` : ''}`
-          + `${m.was_delayed ? `｜遅延完了 ${m.delay_days}日` : ''}`
-          + `${m.related_task_conflict ? '｜関連工程と不整合' : ''}`
-        return (
-          <button
-            key={`${m.id}-${kind}`}
-            type="button"
-            onClick={() => onOpen(m)}
-            title={label}
-            aria-label={label}
-            data-milestone-marker={kind}
-            className={`absolute h-2.5 w-2.5 rotate-45 focus:outline-none focus:ring-2 focus:ring-sysken-400 ${color}`}
-            style={{ top: top + (kind === 'plan' ? 10 : 18), left: x - 5 }}
-          />
-        )
-      })}
     </>
   )
 }

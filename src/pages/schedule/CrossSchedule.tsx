@@ -34,8 +34,11 @@ import {
 } from '../../api/crossSchedule'
 import { ScheduleTabs } from './ScheduleTabs'
 import {
-  DependencyLines, edgeLabel, GanttGrid, GanttHeader, GanttLegend, GanttRow, ROW_H,
-  SCALE_OPTIONS, ScaleSelector, TodayLine,
+  EMPTY_MILESTONE_FILTERS, useCrossMilestones, type CrossMilestone,
+} from '../../api/crossMilestones'
+import {
+  DependencyLines, edgeLabel, GanttGrid, GanttHeader, GanttLegend, GanttRow, MilestoneMarkers,
+  milestoneRowsByProject, ROW_H, SCALE_OPTIONS, ScaleSelector, TodayLine,
 } from './GanttParts'
 
 type GroupKey = 'project' | 'manager' | 'company'
@@ -81,6 +84,8 @@ const LEFT_PANE_W = 560
 type Row =
   | { kind: 'group'; key: string; label: string; sub?: string; count: number }
   | { kind: 'task'; task: CrossTask; bar: WbsTask | null; depth: number; hasChildren: boolean }
+  // マイルストーンは工程とは別の正データ（milestones）。工程行の下へ別の帯として並べる。
+  | { kind: 'milestone'; key: string; label: string; sub: string; items: CrossMilestone[] }
 
 // ===== URLクエリ ⇔ 絞り込み条件（再読込しても条件が残る） =====
 function numsFrom(v: string | null): number[] {
@@ -152,6 +157,13 @@ export default function CrossSchedule() {
 
   const { data, isLoading, isError, error, isFetching } = useCrossSchedule(filters, scopedProjectId)
   const { data: options } = useCrossScheduleOptions()
+  // マイルストーンは milestones / milestone_types が正データ。工程名からは判定しない。
+  // 既存の案件スコープを保ったまま1回でまとめて取得する（行ごと・案件ごとには呼ばない）。
+  const milestoneFilters = useMemo(
+    () => ({ ...EMPTY_MILESTONE_FILTERS, projectIds: filters.projectIds }),
+    [filters.projectIds],
+  )
+  const { data: milestoneData } = useCrossMilestones(milestoneFilters, 'project', scopedProjectId)
   const updateTask = useUpdateCrossTask()
 
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
@@ -187,14 +199,21 @@ export default function CrossSchedule() {
 
   // 時間軸は対象工程の実期間から決める（固定の表示期間・固定の「今日」は持たない）
   // 表示範囲の決め方は案件工程と同じ rangeForScale を使い、画面ごとに別計算を作らない
+  // マイルストーンの予定日・実績日も範囲の根拠に入れる（描く対象を時間軸の外に置かない）
   const range = useMemo(
     () => rangeForScale(
       scale,
-      tasks.map((t) => ({ start: t.planned_start_at, end: t.planned_finish_at })),
+      [
+        ...tasks.map((t) => ({ start: t.planned_start_at, end: t.planned_finish_at })),
+        ...(milestoneData?.milestones ?? []).flatMap((m) => [
+          { start: m.planned_at, end: m.planned_at },
+          { start: m.actual_at, end: m.actual_at },
+        ]),
+      ],
       // 「表示期間」を指定していれば時間軸もその期間に合わせる
       { explicit: { from: filters.dateFrom || undefined, to: filters.dateTo || undefined } },
     ),
-    [scale, tasks, filters.dateFrom, filters.dateTo],
+    [scale, tasks, milestoneData, filters.dateFrom, filters.dateTo],
   )
   const timeline: Timeline = useMemo(
     () => createTimeline({
@@ -271,8 +290,13 @@ export default function CrossSchedule() {
         })
       }
     }
+    // 工程行のあとにマイルストーン帯を足す。先頭の行番号は変わらないため、
+    // 依存線・今日線・ドラッグの座標は工程だけで完結したまま。
+    for (const r of milestoneRowsByProject(milestoneData?.milestones ?? [])) {
+      out.push({ kind: 'milestone', key: `ms-${r.projectId}`, label: r.label, sub: r.sub, items: r.items })
+    }
     return out
-  }, [groups, collapsedGroups, isHiddenByParent, wbsById, parentIds])
+  }, [groups, collapsedGroups, isHiddenByParent, wbsById, parentIds, milestoneData])
 
   const rowIndexByTaskId = useMemo(() => {
     const m = new Map<number, number>()
@@ -359,7 +383,8 @@ export default function CrossSchedule() {
   function startDrag(e: React.PointerEvent, bar: WbsTask) {
     e.stopPropagation()
     const t = taskById.get(Number(bar.id))
-    if (!t || bar.isMilestone) return
+    // 工程は名前に関係なくドラッグできる（マイルストーンは工程行に含めない）
+    if (!t) return
     dragRef.current = {
       taskId: t.id, projectId: t.project_id, mode: 'move', startX: e.clientX,
       s: bar.planStartAt, e: bar.planEndAt, precision: bar.precision,
@@ -570,6 +595,22 @@ export default function CrossSchedule() {
                         </button>
                       </td>
                     </tr>
+                  ) : r.kind === 'milestone' ? (
+                    // 印刷はガントを載せない工程一覧の帳票なので、マーカーだけの
+                    // マイルストーン帯は紙面から外す（工程件数と混ざらないようにする）
+                    <tr key={r.key} data-print="hide" data-milestone-row={r.sub}
+                        style={{ height: ROW_H }} className="bg-sysken-50/60">
+                      <td colSpan={shownColumns.length} className="border-r border-line px-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-block h-2.5 w-2.5 shrink-0 rotate-45 bg-sysken-600" />
+                          <span className="truncate font-semibold text-ink">マイルストーン</span>
+                          <span className="shrink-0 text-[11px] text-ink-soft">{r.sub} {r.label}</span>
+                          <span className="ml-auto shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] text-ink-soft ring-1 ring-line">
+                            {r.items.length} 件
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
                   ) : (
                     <TaskRow
                       key={`t-${r.task.id}`}
@@ -603,11 +644,26 @@ export default function CrossSchedule() {
                 {rows.map((r, i) => (
                   <div
                     key={`row-${i}`}
-                    className={`absolute left-0 border-b border-line/60 ${r.kind === 'group' ? 'bg-sysken-50' : ''}`}
+                    className={`absolute left-0 border-b border-line/60 ${
+                      r.kind === 'group' ? 'bg-sysken-50' : r.kind === 'milestone' ? 'bg-sysken-50/60' : ''}`}
                     style={{ top: i * ROW_H, height: ROW_H, width: totalW }}
                   />
                 ))}
                 <DependencyLines lines={depLines} width={totalW} height={bodyH} />
+                {rows.map((r, i) =>
+                  r.kind === 'milestone' ? (
+                    <MilestoneMarkers
+                      key={r.key}
+                      items={r.items}
+                      row={i}
+                      timeline={timeline}
+                      onOpen={(m) => navigate(
+                        `/schedule/milestones?projects=${m.project_id}`
+                        + (m.milestone_type_id ? `&types=${m.milestone_type_id}` : ''),
+                      )}
+                    />
+                  ) : null,
+                )}
                 {rows.map((r, i) =>
                   r.kind === 'task' && r.bar ? (
                     <GanttRow

@@ -11,12 +11,14 @@
 | ESLint | `npm run lint` | **エラー 0**（警告は Badge.tsx の HMR 警告 1件のみ） |
 | production build | `npm run build` | 成功（bundle 500kB超の警告は既知） |
 | 時間軸エンジン | `npm run test:timeline` | **113 passed / 0 failed** |
-| Backend テスト | `cd backend && python -m pytest` | **81 passed**（Phase 3 で +25） |
+| Backend テスト | `cd backend && python -m pytest` | **91 passed**（Phase 3 で +35） |
 | 横断工程の座標実測 | `PW_CHROME=<chrome> node scripts/cross-schedule-measure.mjs` | **25 passed / 0 failed** |
 | 横断工程の完了確認 | `PW_CHROME=<chrome> node scripts/cross-schedule-final.mjs` | **39 passed / 0 failed** |
 | 表示単位の検証 | `PW_CHROME=<chrome> node scripts/scale-selector-verify.mjs` | **50 passed / 0 failed** |
 | 横断マイルストーンの画面検証 | `PW_CHROME=<chrome> node scripts/cross-milestones-verify.mjs` | **127 passed / 0 failed** |
 | 横断マイルストーンの出力一致 | `backend/.venv/bin/python scripts/milestone-export-check.py` | **130 passed / 0 failed** |
+| 工程画面へのマイルストーン統合 | `PW_CHROME=<chrome> node scripts/milestone-integration-verify.mjs` | **71 passed / 0 failed** |
+| 表示名依存の監査 | `node scripts/milestone-source-audit.mjs` | 業務判定に表示名依存 0 件 |
 
 ## 2. 画面の回帰確認（実ブラウザ）
 
@@ -275,3 +277,51 @@ PW_CHROME=<chromeのパス> node scripts/e2e-regression.mjs --out /tmp/after
 | 表示範囲外のマーカーが左端に積み上がる | `xOf` は範囲外を端へ寄せるため、3時間表示のように窓を絞る単位で、期間外のマーカーが左端（x=0）に並んでいた | 表示範囲に含まれるマーカーだけを描く |
 | 時間軸の印刷で行がずれる | 印刷CSSが `[data-print='sheet']` の子要素を一律 `width:100%` かつ `display:block` にしていたため、左の一覧と右のガントが縦積みになっていた | 幅指定を表と `data-print="wide"` に限定し、`display` は上書きしない |
 | 印刷にモーダルが写る | `Modal` / `ConfirmDialog` に印刷除外の指定が無かった | どちらも `data-print="hide"` を付けた |
+
+## 10. 工程画面のマイルストーン判定（Phase 3 P3-4）
+
+工程名の文字列一致（`name === '引き渡し'`）をやめ、`milestones` / `milestone_types`
+を正データにした。`scripts/milestone-source-audit.mjs` が業務判定の表示名依存を検査し、
+`scripts/milestone-integration-verify.mjs` が実ブラウザで描画・座標・操作を実測する。
+
+### 判定規則
+
+| 対象 | 判定に使うもの |
+|---|---|
+| マイルストーンかどうか | `/schedule/milestones` が返す `record_kind='milestone'`（＝`milestones` の実レコード） |
+| 区分 | `milestone_type_id` と `milestone_types`（名称からは推測しない） |
+| 未設定候補 | `record_kind='candidate'`。実レコードではないのでマーカーにしない |
+| 工程 | `tasks`。名前が「引き渡し」でも通常の期間バーで、ドラッグも通常どおり |
+
+### 実測結果
+
+| 検証 | 実測値 |
+|---|---|
+| 「引き渡し」という通常工程 | 案件工程・横断工程とも幅 34px の期間バー。`cursor: grab`（ドラッグ可） |
+| 通常工程のドラッグ | 1日ドラッグ→保存→再読込で 34.0px（＝1日）移動。元に戻して終了 |
+| 別名称の実マイルストーン | 案件1で 8 個（「引き渡し」以外の名称）がマーカーとして描画 |
+| 予定／実績マーカー | 予定 6・実績 3（APIの件数と一致）。予定＝塗り、実績＝白抜き |
+| 予定と実績が同日 | 縦位置 810 / 818 で区別（同じ行の中でずらす） |
+| ID単位の描画 | 6 ID / API 6 件。同名でも別マーカー |
+| 未設定候補 | マーカーとして描かない（マーカー数＝予定＋実績） |
+| 3時間 / 日 / 週 / 月 / 年 | 列幅 18 / 34 / 60 / 90 / 120px でマーカーを描画 |
+| day のマーカー | 日の先頭（オフセット 0px） |
+| half_day 午前 | 日の先頭 |
+| half_day 午後 | 日の中央（日表示 17px、3時間表示 72px） |
+| 今日線 / 依存線 | 案件工程 8 パス・横断工程 44 パス。今日線も従来どおり |
+| 折りたたみ | 26 → 22 行 |
+| 横スクロール / 固定列 | 250px スクロール可・sticky 継続 |
+| 縦スクロール同期 | 320px スクロールして左右とも 320px（スクロール枠は1つ） |
+| API 呼び出し | `/schedule/milestones` は1画面につき **1回**（行ごと・案件ごとの取得なし） |
+| 5権限 | ADMIN / PROJECT_MANAGER / QUALITY_MANAGER / VIEWER 47 件、FIELD_WORKER（割当あり）6 件。いずれも画面＝APIの件数 |
+| 横断マイルストーン画面 | 登録済み 47・未設定 1、時間軸 72 マーカー（P3-3 から回帰なし） |
+| コンソールエラー / 失敗リクエスト | **0 / 0** |
+
+### この置き換えで直した点
+
+| 内容 | 対処 |
+|---|---|
+| 工程名が「引き渡し」だとダイヤ形状になり、ドラッグもできなかった | `isMilestone` を廃止し、工程は常に期間バー。ドラッグ可否は権限だけで決める |
+| マイルストーンが画面に存在しなかった | `milestones` を1回取得し、工程行の下のマイルストーン帯にマーカーで描画 |
+| マイルストーンが時間軸の外に出て描かれない | 表示範囲（`rangeForScale`）の根拠に予定日・実績日も含める |
+| 印刷の工程件数にマイルストーン帯が混ざる | 帯を `data-print="hide"` にし、工程一覧の件数と混同しない |

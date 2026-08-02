@@ -7,9 +7,10 @@
  */
 import { ZoomIn, ZoomOut } from 'lucide-react'
 import {
-  formatJst, formatPeriod, groupSlots, nowJst, shiftDays, splitEndAt, splitStartAt, toJstIsoString,
-  type TimeScale, type Timeline,
+  formatJst, formatPeriod, groupSlots, nowJst, shiftDays, splitEndAt, splitStartAt, toJst,
+  toJstIsoString, type TimeScale, type Timeline,
 } from '../../lib/timeline'
+import type { CrossMilestone } from '../../api/crossMilestones'
 import type { WbsTask } from '../../types'
 import { weekdayLabel } from './ganttUtils'
 
@@ -187,7 +188,103 @@ export function TodayLine({ timeline, height }: { timeline: Timeline; height: nu
   )
 }
 
-/** 工程1件分のバー（予定・実績・基準工程・マイルストン・進捗塗り）。 */
+// ===========================================================================
+// マイルストーン（milestones / milestone_types が正データ）
+//
+// 工程名の文字列一致では判定しない。工程は期間バー、マイルストーンは
+// マーカーとして描き分ける。座標は工程と同じ timeline から取る。
+// ===========================================================================
+
+/** 行内のマーカーの縦位置。予定と実績が同日でも重ならないようずらす。 */
+export const MILESTONE_MARK_TOP = { plan: 10, actual: 18 } as const
+
+/** マイルストーン1件の説明文（ツールチップ／aria-label で同じ内容を使う）。 */
+export function milestoneLabel(m: CrossMilestone, iso: string, kind: 'plan' | 'actual'): string {
+  const half = m.schedule_precision === 'half_day'
+    ? (splitStartAt(iso).half === 'PM' ? ' 午後' : ' 午前')
+    : ''
+  return `${m.project_number} ${m.name}`
+    + `｜区分 ${m.milestone_type ?? '未指定'}（ID ${m.milestone_type_id ?? '—'}）`
+    + `｜${kind === 'plan' ? '予定' : '実績'} ${formatJst(iso, 'yyyy/MM/dd')}${half}`
+    + `｜状態 ${m.status}`
+    + `${m.is_overdue ? `｜期限超過 ${m.delay_days}日` : ''}`
+    + `${m.is_due_soon ? `｜近日予定 残${m.remaining_days}日` : ''}`
+    + `${m.was_delayed ? `｜遅延完了 ${m.delay_days}日` : ''}`
+    + `${m.related_task_conflict ? '｜関連工程と不整合' : ''}`
+}
+
+/**
+ * 1行分のマイルストーンマーカー。
+ *
+ * 予定＝塗りつぶし、実績＝白抜き。期限超過・関連工程との不整合は色で区別する
+ * （DBの status とは別の確定計算）。表示範囲の外は描かない（`xOf` は範囲外を
+ * 端へ寄せるため、そのまま描くと左端にマーカーが積み上がる）。
+ */
+export function MilestoneMarkers({
+  items, row, timeline, onOpen,
+}: {
+  items: CrossMilestone[]
+  row: number
+  timeline: Timeline
+  onOpen: (m: CrossMilestone) => void
+}) {
+  const top = row * ROW_H
+  const inRange = (iso: string) => {
+    const d = toJst(iso)
+    return d >= timeline.start && d < timeline.end
+  }
+  const marks: { m: CrossMilestone; iso: string; kind: 'plan' | 'actual' }[] = []
+  for (const m of items) {
+    if (m.planned_at && inRange(m.planned_at)) marks.push({ m, iso: m.planned_at, kind: 'plan' })
+    if (m.actual_at && inRange(m.actual_at)) marks.push({ m, iso: m.actual_at, kind: 'actual' })
+  }
+  return (
+    <>
+      {marks.map(({ m, iso, kind }) => {
+        const x = timeline.xOf(iso)
+        const color = kind === 'actual'
+          ? 'border border-ok bg-white'
+          : m.is_overdue ? 'bg-ng' : m.related_task_conflict ? 'bg-wn' : 'bg-sysken-600'
+        const label = milestoneLabel(m, iso, kind)
+        return (
+          <button
+            key={`${m.id}-${kind}`}
+            type="button"
+            onClick={() => onOpen(m)}
+            title={label}
+            aria-label={label}
+            data-milestone-marker={kind}
+            data-milestone-id={m.id}
+            data-milestone-type-id={m.milestone_type_id ?? ''}
+            className={`absolute h-2.5 w-2.5 rotate-45 focus:outline-none focus:ring-2 focus:ring-sysken-400 ${color}`}
+            style={{ top: top + MILESTONE_MARK_TOP[kind], left: x - 5 }}
+          />
+        )
+      })}
+    </>
+  )
+}
+
+/**
+ * マイルストーンを案件ごとの行にまとめる。
+ *
+ * 種別は `milestone_type_id` で扱い、名称からは推測しない。同一案件・同一区分に
+ * 複数件あっても1件へまとめない（すべて同じ行に別マーカーとして並ぶ）。
+ */
+export function milestoneRowsByProject(
+  milestones: readonly CrossMilestone[],
+): { projectId: number; label: string; sub: string; items: CrossMilestone[] }[] {
+  const byProject = new Map<number, { projectId: number; label: string; sub: string; items: CrossMilestone[] }>()
+  for (const m of milestones) {
+    const row = byProject.get(m.project_id)
+      ?? { projectId: m.project_id, label: m.project_name, sub: m.project_number, items: [] }
+    row.items.push(m)
+    byProject.set(m.project_id, row)
+  }
+  return [...byProject.values()].sort((a, b) => a.sub.localeCompare(b.sub))
+}
+
+/** 工程1件分のバー（予定・実績・基準工程・進捗塗り）。 */
 export function GanttRow({
   task: t, row, timeline, preview, onStartDrag, onContext, onSelect, onOpenProgress,
 }: {
@@ -200,7 +297,6 @@ export function GanttRow({
   onSelect: () => void
   onOpenProgress: () => void
 }) {
-  const dw = timeline.slotWidth
   const ds = preview?.ds ?? 0
   const de = preview?.de ?? 0
   // ドラッグ中はプレビュー分だけ日付をずらしてから座標化する（区分=午前/午後は保たれる）
@@ -209,14 +305,6 @@ export function GanttRow({
   const planLeft = planBar.left
   const planW = planBar.width
   const top = row * ROW_H
-
-  if (t.isMilestone) {
-    return (
-      <div className="absolute" style={{ top: top + 5, left: planLeft + dw / 2 - 7 }} onContextMenu={onContext} onClick={onSelect}>
-        <div className="h-3.5 w-3.5 rotate-45 bg-ng" title={`${t.name}（マイルストン）`} />
-      </div>
-    )
-  }
 
   const color = statusColor[t.status] ?? '#005bac'
 
@@ -302,7 +390,9 @@ export function GanttLegend({ note }: { note?: string }) {
       <LegendChip color="#005bac" label="予定バー" />
       <LegendChip color="#2e8b57" label="実績バー" />
       <span className="flex items-center gap-1"><span className="inline-block h-1 w-5 bg-slate-400" />基準工程</span>
-      <span className="flex items-center gap-1"><span className="text-ng">◆</span> マイルストン</span>
+      {/* マイルストーンは工程バーとは別の記号で示す（milestones が正データ） */}
+      <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rotate-45 bg-sysken-600" /> マイルストーン予定</span>
+      <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rotate-45 border border-ok bg-white" /> マイルストーン実績</span>
       <span className="flex items-center gap-1"><span className="inline-block h-3 w-0.5 bg-ng" /> 本日</span>
       <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 border border-ng bg-red-50" /> 遅延</span>
       <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 bg-slate-50 ring-1 ring-line" /> 土日・祝</span>

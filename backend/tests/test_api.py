@@ -1419,3 +1419,276 @@ def test_milestone_multiple_records_same_project_and_type(client):
     assert data["registered_count"] >= 2
     # 登録済みがあるので、その区分は候補に出ない
     assert all(c["milestone_type_id"] != type_id for c in data["candidates"])
+
+
+# --- Ver.0.3 Phase 3 (P3-4): 表示名依存の判定を milestones へ置き換え ---------
+def test_task_named_delivery_is_not_a_milestone(client):
+    """「引き渡し」という名前の通常工程は、マイルストーンとして扱われないこと。
+
+    工程名の文字列一致（name == '引き渡し'）をやめ、milestones を正データにした
+    ことの確認。工程はあくまで tasks 側にだけ存在する。
+    """
+    from datetime import datetime, timezone as _tz
+
+    from app.models import Task
+    from tests.conftest import TestingSessionLocal
+
+    h = _auth(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        task = Task(project_id=1, wbs_code="P34.1", name="引き渡し", status="未着手",
+                    planned_start_at=datetime(2026, 9, 1, tzinfo=_tz.utc),
+                    planned_finish_at=datetime(2026, 9, 2, tzinfo=_tz.utc))
+        s.add(task)
+        s.commit()
+        task_id = task.id
+
+    data = _ms_get(client, "pm@test.jp", "project_ids=1&limit=5000")
+    # 工程はマイルストーン一覧に現れない（IDが衝突しても別物として扱われる）
+    assert all(m["record_kind"] == "milestone" for m in data["milestones"])
+    assert not any(m["name"] == "引き渡し" and m["related_task_id"] is None
+                   and m["milestone_type_id"] is None for m in data["milestones"])
+
+    # 工程一覧側では通常の工程として返る（バー表示に必要な期間を持つ）
+    r = client.get("/api/projects/1/tasks", headers=h)
+    assert r.status_code == 200
+    hit = [t for t in r.json() if t["id"] == task_id]
+    assert len(hit) == 1
+    assert hit[0]["planned_start_at"] and hit[0]["planned_finish_at"]
+
+
+def test_task_named_delivery_can_be_moved(client):
+    """「引き渡し」という名前でも、工程の日程変更が名前を理由に拒否されないこと。"""
+    from datetime import datetime, timezone as _tz
+
+    from app.models import Task
+    from app.services.milestones import as_jst
+    from tests.conftest import TestingSessionLocal
+
+    h = _auth(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        task = Task(project_id=1, wbs_code="P34.2", name="引き渡し", status="未着手",
+                    planned_start_at=datetime(2026, 9, 10, tzinfo=_tz.utc),
+                    planned_finish_at=datetime(2026, 9, 11, tzinfo=_tz.utc))
+        s.add(task)
+        s.commit()
+        task_id = task.id
+
+    r = client.put(f"/api/tasks/{task_id}", headers=h, json={
+        "name": "引き渡し",
+        "planned_start_at": "2026-09-12T00:00:00+09:00",
+        "planned_finish_at": "2026-09-13T00:00:00+09:00",
+        "change_reason": "P3-4 ドラッグ相当の日程変更",
+    })
+    assert r.status_code == 200, r.text
+    # 保存後の値を JST へ直して確認する（テストDBは naive、本番は timezone 付き）
+    moved = as_jst(datetime.fromisoformat(r.json()["planned_start_at"]))
+    assert (moved.year, moved.month, moved.day, moved.hour) == (2026, 9, 12, 0)
+
+
+def test_milestone_kind_survives_rename(client):
+    """マイルストーン名を変えても、種別と record_kind が変わらないこと。"""
+    from app.models import MilestoneType
+    from tests.conftest import TestingSessionLocal
+
+    h = _auth(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        mt = MilestoneType(code="p34-rename", name="立会検査", sort_order=610)
+        s.add(mt)
+        s.commit()
+        type_id = mt.id
+
+    created = client.post("/api/schedule/milestones", headers=h, json={
+        "project_id": 1, "milestone_type_id": type_id, "name": "立会検査（初回）",
+        "planned_at": "2026-10-01T00:00:00+09:00"})
+    assert created.status_code == 201, created.text
+    ms_id = created.json()["id"]
+
+    renamed = client.put(f"/api/schedule/milestones/{ms_id}", headers=h,
+                         json={"name": "まったく違う名前"})
+    assert renamed.status_code == 200, renamed.text
+    body = renamed.json()
+    assert body["record_kind"] == "milestone"
+    assert body["milestone_type_id"] == type_id
+    assert body["milestone_type"] == "立会検査"
+
+    data = _ms_get(client, "pm@test.jp", f"milestone_type_ids={type_id}&limit=5000")
+    got = [m for m in data["milestones"] if m["id"] == ms_id]
+    assert len(got) == 1 and got[0]["milestone_type_id"] == type_id
+
+
+def test_milestone_candidates_are_never_returned_as_records(client):
+    """未設定候補が実マイルストーンとして返らないこと（描画の取り違えを防ぐ）。"""
+    data = _ms_get(client, "pm@test.jp", "limit=5000")
+    assert all(m["record_kind"] == "milestone" for m in data["milestones"])
+    assert all(c["record_kind"] == "candidate" for c in data["candidates"])
+    # 候補は実在IDも日付も持たない
+    for c in data["candidates"]:
+        assert "id" not in c and "planned_at" not in c and "actual_at" not in c
+    # 件数は登録済みと候補で別々に数える
+    assert data["registered_count"] == len(data["milestones"])
+    assert data["candidate_count"] == len(data["candidates"])
+
+
+def test_milestone_soft_deleted_is_not_drawn(client):
+    """論理削除したマイルストーンが一覧に出ないこと。"""
+    from app.models import MilestoneType
+    from tests.conftest import TestingSessionLocal
+
+    h = _auth(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        mt = MilestoneType(code="p34-deleted", name="削除確認", sort_order=620)
+        s.add(mt)
+        s.commit()
+        type_id = mt.id
+
+    created = client.post("/api/schedule/milestones", headers=h, json={
+        "project_id": 1, "milestone_type_id": type_id, "name": "消える予定",
+        "planned_at": "2026-10-05T00:00:00+09:00"})
+    ms_id = created.json()["id"]
+    assert any(m["id"] == ms_id for m in _ms_get(client, "pm@test.jp", "limit=5000")["milestones"])
+
+    assert client.delete(f"/api/schedule/milestones/{ms_id}", headers=h).status_code == 204
+    after = _ms_get(client, "pm@test.jp", "limit=5000")
+    assert all(m["id"] != ms_id for m in after["milestones"])
+
+
+def test_milestone_inactive_type_is_kept_as_history(client):
+    """非activeの区分を参照する既存レコードも、履歴として区分名つきで返ること。"""
+    from app.models import MilestoneType
+    from tests.conftest import TestingSessionLocal
+
+    h = _auth(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        mt = MilestoneType(code="p34-inactive", name="廃止された区分", sort_order=630)
+        s.add(mt)
+        s.commit()
+        type_id = mt.id
+
+    created = client.post("/api/schedule/milestones", headers=h, json={
+        "project_id": 1, "milestone_type_id": type_id, "name": "廃止区分の履歴",
+        "planned_at": "2026-10-08T00:00:00+09:00"})
+    assert created.status_code == 201, created.text
+    ms_id = created.json()["id"]
+
+    with TestingSessionLocal() as s:
+        s.query(MilestoneType).filter_by(id=type_id).one().active = False
+        s.commit()
+
+    data = _ms_get(client, "pm@test.jp", "limit=5000")
+    hit = [m for m in data["milestones"] if m["id"] == ms_id]
+    assert len(hit) == 1, "非active区分の既存レコードが消えた"
+    assert hit[0]["milestone_type_id"] == type_id
+    assert hit[0]["milestone_type"] == "廃止された区分"
+    # 非active区分は新規登録の候補には出さない
+    assert all(c["milestone_type_id"] != type_id for c in data["candidates"])
+
+
+def test_milestone_same_name_different_id_are_separated(client):
+    """同名でIDが異なるマイルストーンを取り違えないこと。"""
+    from app.models import MilestoneType
+    from tests.conftest import TestingSessionLocal
+
+    h = _auth(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        for code, order in (("p34-same-a", 640), ("p34-same-b", 641)):
+            if s.query(MilestoneType).filter_by(code=code).one_or_none() is None:
+                s.add(MilestoneType(code=code, name="同じ区分名", sort_order=order))
+        s.commit()
+        ids = [t.id for t in s.query(MilestoneType)
+               .filter(MilestoneType.code.in_(["p34-same-a", "p34-same-b"])).all()]
+
+    made = []
+    for type_id in ids:
+        r = client.post("/api/schedule/milestones", headers=h, json={
+            "project_id": 1, "milestone_type_id": type_id, "name": "同じ名前",
+            "planned_at": "2026-10-12T00:00:00+09:00"})
+        assert r.status_code == 201, r.text
+        made.append((r.json()["id"], type_id))
+
+    data = _ms_get(client, "pm@test.jp", "limit=5000")
+    by_id = {m["id"]: m for m in data["milestones"]}
+    for ms_id, type_id in made:
+        assert by_id[ms_id]["milestone_type_id"] == type_id, "同名の区分がIDで分離されていない"
+    assert len({i for i, _ in made}) == 2
+
+
+def test_milestone_plan_and_actual_are_separate_values(client):
+    """予定日と実績日が同日でも、それぞれ別の値として返ること。"""
+    from datetime import datetime
+
+    from app.models import MilestoneType
+    from app.services.milestones import as_jst
+    from tests.conftest import TestingSessionLocal
+
+    h = _auth(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        mt = MilestoneType(code="p34-both", name="予実同日", sort_order=650)
+        s.add(mt)
+        s.commit()
+        type_id = mt.id
+
+    r = client.post("/api/schedule/milestones", headers=h, json={
+        "project_id": 1, "milestone_type_id": type_id, "name": "同日の予実",
+        "schedule_precision": "half_day",
+        "planned_at": "2026-10-15T00:00:00+09:00",   # 午前
+        "actual_at": "2026-10-15T12:00:00+09:00"})   # 午後
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["planned_at"] != body["actual_at"]
+    assert as_jst(datetime.fromisoformat(body["planned_at"])).hour == 0
+    assert as_jst(datetime.fromisoformat(body["actual_at"])).hour == 12
+    assert body["is_completed"] is True
+
+
+def test_project_schedule_scope_excludes_other_projects(client):
+    """案件工程で使う project_id 指定に、別案件のマイルストーンが混ざらないこと。"""
+    from app.models import MilestoneType
+    from tests.conftest import TestingSessionLocal
+
+    h = _auth(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        mt = MilestoneType(code="p34-scope", name="スコープ確認", sort_order=660)
+        s.add(mt)
+        s.commit()
+        type_id = mt.id
+    for pid in (1, 2):
+        assert client.post("/api/schedule/milestones", headers=h, json={
+            "project_id": pid, "milestone_type_id": type_id, "name": f"案件{pid}の重要日",
+            "planned_at": "2026-10-20T00:00:00+09:00"}).status_code == 201
+
+    only1 = _ms_get(client, "pm@test.jp", "project_id=1&limit=5000")
+    assert {m["project_id"] for m in only1["milestones"]} == {1}
+    assert all(c["project_id"] == 1 for c in only1["candidates"])
+
+
+def test_milestone_query_count_does_not_grow_with_rows(client):
+    """行数が増えてもSQL発行回数が増えないこと（行ごと取得をしていない）。"""
+    from sqlalchemy import event
+
+    from app.models import MilestoneType
+    from tests.conftest import TestingSessionLocal, engine
+
+    h = _auth(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        mt = MilestoneType(code="p34-n1", name="N+1確認", sort_order=670)
+        s.add(mt)
+        s.commit()
+        type_id = mt.id
+
+    def count_queries(qs: str) -> int:
+        seen = []
+        listener = lambda *a, **k: seen.append(1)  # noqa: E731
+        event.listen(engine, "before_cursor_execute", listener)
+        try:
+            _ms_get(client, "pm@test.jp", qs)
+        finally:
+            event.remove(engine, "before_cursor_execute", listener)
+        return len(seen)
+
+    base = count_queries(f"milestone_type_ids={type_id}&limit=5000")
+    for i in range(12):
+        assert client.post("/api/schedule/milestones", headers=h, json={
+            "project_id": 1, "milestone_type_id": type_id, "name": f"N+1確認{i}",
+            "planned_at": "2026-10-25T00:00:00+09:00"}).status_code == 201
+    after = count_queries(f"milestone_type_ids={type_id}&limit=5000")
+    assert after == base, f"件数に比例してSQLが増えた（{base} → {after}）"

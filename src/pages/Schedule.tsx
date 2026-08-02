@@ -12,6 +12,7 @@ import { Modal } from '../components/ui/Modal'
 import { ContextMenu, type MenuItem } from '../components/ui/ContextMenu'
 import { useApp } from '../context/AppContext'
 import { useCreateTask, useDeleteTask, useProjectTasks, useUpdateTask, type TaskWriteInput } from '../api/tasks'
+import { EMPTY_MILESTONE_FILTERS, useCrossMilestones } from '../api/crossMilestones'
 import { useProject, useProjects } from '../api/projects'
 import { ApiError } from '../lib/apiClient'
 import type { WbsTask } from '../types'
@@ -24,8 +25,8 @@ import {
 import { JP_HOLIDAYS } from '../lib/holidays'
 import { ScheduleTabs } from './schedule/ScheduleTabs'
 import {
-  DependencyLines, edgeLabel, GanttGrid, GanttHeader, GanttLegend, GanttRow, ROW_H,
-  SCALE_OPTIONS, ScaleSelector, TodayLine,
+  DependencyLines, edgeLabel, GanttGrid, GanttHeader, GanttLegend, GanttRow, MilestoneMarkers,
+  milestoneRowsByProject, ROW_H, SCALE_OPTIONS, ScaleSelector, TodayLine,
 } from './schedule/GanttParts'
 
 const LEFT_COLS = [
@@ -56,6 +57,9 @@ export default function Schedule() {
   const projectId = Number.isFinite(requestedId) && requestedId > 0 ? requestedId : projects[0]?.id
   const { data: project } = useProject(projectId)
   const { data: apiTasks, isLoading: tasksLoading, isError: tasksError } = useProjectTasks(projectId)
+  // マイルストーンは milestones / milestone_types が正データ。工程名からは判定しない。
+  // 対象案件の project_id をサーバーへ渡し、1回の取得でまとめて受け取る（行ごとの取得はしない）。
+  const { data: milestoneData } = useCrossMilestones(EMPTY_MILESTONE_FILTERS, 'project', projectId)
   const createTaskMutation = useCreateTask(projectId ?? 0)
   const updateTaskMutation = useUpdateTask(projectId ?? 0)
   const deleteTaskMutation = useDeleteTask(projectId ?? 0)
@@ -90,9 +94,16 @@ export default function Schedule() {
   // 時間軸は工程の実期間から動的に決める（固定の表示期間・固定の「今日」は持たない）。
   // ヘッダーもバーもこの timeline を唯一の基準にするため、両者がずれない。
   // 表示範囲の決め方は横断工程と同じ rangeForScale を使い、画面ごとに別計算を作らない。
+  // マイルストーンの予定日・実績日も範囲の根拠に入れる（描く対象を時間軸の外に置かない）。
   const range = useMemo(
-    () => rangeForScale(scale, tasks.map((t) => ({ start: t.planStartAt, end: t.planEndAt }))),
-    [scale, tasks],
+    () => rangeForScale(scale, [
+      ...tasks.map((t) => ({ start: t.planStartAt, end: t.planEndAt })),
+      ...(milestoneData?.milestones ?? []).flatMap((m) => [
+        { start: m.planned_at, end: m.planned_at },
+        { start: m.actual_at, end: m.actual_at },
+      ]),
+    ]),
+    [scale, tasks, milestoneData],
   )
   const timeline: Timeline = useMemo(
     () => createTimeline({
@@ -166,7 +177,13 @@ export default function Schedule() {
   }, [visible])
 
   const totalW = timeline.totalWidth
-  const bodyH = visible.length * ROW_H
+  // マイルストーンは工程行の下に別の帯として並べる。工程行の番号は変わらないため
+  // 依存線・今日線・ドラッグの座標はそのまま。
+  const milestoneRows = useMemo(
+    () => milestoneRowsByProject(milestoneData?.milestones ?? []),
+    [milestoneData],
+  )
+  const bodyH = (visible.length + milestoneRows.length) * ROW_H
 
   function toggleCollapse(id: string) {
     setCollapsed((prev) => {
@@ -188,7 +205,7 @@ export default function Schedule() {
 
   function startDrag(e: React.PointerEvent, t: WbsTask, mode: 'move' | 'resize') {
     e.stopPropagation()
-    if (t.isMilestone) return
+    // 工程は名前に関係なくドラッグできる（マイルストーンはそもそも工程行に入らない）
     dragRef.current = { id: t.id, mode, startX: e.clientX, s: t.planStartAt, e: t.planEndAt, precision: t.precision }
   }
 
@@ -418,7 +435,7 @@ export default function Schedule() {
                           ) : (
                             <span className="inline-block w-3" />
                           )}
-                          <span className={`truncate ${isParent ? 'font-semibold text-ink' : 'text-ink'}`}>{t.isMilestone ? '◆ ' : ''}{t.name}</span>
+                          <span className={`truncate ${isParent ? 'font-semibold text-ink' : 'text-ink'}`}>{t.name}</span>
                         </div>
                       </td>
                       <td className="border-r border-line px-2 text-ink-soft" style={{ width: 72 }}>{t.workType}</td>
@@ -438,6 +455,24 @@ export default function Schedule() {
                   )
                 })}
               </tbody>
+              {/* マイルストーン帯（工程とは別の正データ。工程行の番号は変えない） */}
+              {milestoneRows.length > 0 && (
+                <tbody>
+                  {milestoneRows.map((r) => (
+                    <tr key={`ms-${r.projectId}`} data-milestone-row={r.sub}
+                        style={{ height: ROW_H }} className="bg-sysken-50/60">
+                      <td className="sticky left-0 z-10 border-r border-line px-2 text-center text-sysken-600"
+                          style={{ width: 46, background: '#eef5fb' }}>◆</td>
+                      <td className="sticky z-10 border-r border-line px-2" style={{ width: 176, left: 46, background: '#eef5fb' }}>
+                        <span className="truncate font-semibold text-ink">マイルストーン</span>
+                      </td>
+                      <td className="border-r border-line px-2 text-ink-soft" colSpan={LEFT_COLS.length - 2}>
+                        {r.items.length} 件（区分は種別マスタで識別）
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              )}
             </table>
           </div>
 
@@ -451,7 +486,7 @@ export default function Schedule() {
                 {/* 縦グリッド・週末/祝日 */}
                 <GanttGrid timeline={timeline} height={bodyH} />
                 {/* 行の下線 */}
-                {visible.map((_, i) => (
+                {[...visible, ...milestoneRows].map((_, i) => (
                   <div key={i} className="absolute left-0 border-b border-line/60" style={{ top: (i + 1) * ROW_H - 1, width: totalW }} />
                 ))}
                 {/* 依存線 */}
@@ -463,6 +498,19 @@ export default function Schedule() {
                     onContext={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, id: t.id }) }}
                     onSelect={() => setSelected(new Set([t.id]))}
                     onOpenProgress={() => { setProgressModal(t); setProgressVal(t.progress) }}
+                  />
+                ))}
+                {/* マイルストーン（工程バーとは別のマーカー。ドラッグ処理へは渡さない） */}
+                {milestoneRows.map((r, i) => (
+                  <MilestoneMarkers
+                    key={`ms-${r.projectId}`}
+                    items={r.items}
+                    row={visible.length + i}
+                    timeline={timeline}
+                    onOpen={(m) => navigate(
+                      `/projects/${m.project_id}/schedule/milestones`
+                      + (m.milestone_type_id ? `?types=${m.milestone_type_id}` : ''),
+                    )}
                   />
                 ))}
                 {/* 現在日時の縦線（表示範囲内のときのみ） */}

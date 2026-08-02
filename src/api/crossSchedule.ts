@@ -222,7 +222,6 @@ export function toWbsTask(t: CrossTask, wbsById: Map<number, string>, parentIds:
     level: t.parent_task_id ? 1 : 0,
     // 子工程を持つ工程だけを親として扱う（子の無い最上位工程は通常のバーで描く）
     isParent: parentIds.has(t.id),
-    isMilestone: t.name === '引き渡し',
     critical: false,
   }
 }
