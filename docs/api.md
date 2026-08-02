@@ -129,6 +129,8 @@ AI Worker（別プロセス）: `python -m ai_worker.worker [--once]`。実weigh
 | GET | `/schedule/milestones/options` | 案件・区分・状態・担当者・担当会社・関連工程の選択肢 |
 | GET | `/schedule/milestones/export?format=xlsx\|pdf` | 一覧と同じ `collect()` を使うため、画面と件数・条件・並び順が必ず一致 |
 | GET/POST/PUT/DELETE | `/schedule/milestones[/{id}]` | 1件取得・登録・更新・論理削除（監査記録つき） |
+| GET | `/schedule/calendar/events?date_from=&date_to=&project_id=&project_ids=&source_kinds=&statuses=&responsible_ids=&company_ids=&q=&limit=` | カレンダーの共通イベント。工程・マイルストーン・品質確認期限・現場日報・試験記録を1つの形へ揃えて返す |
+| GET | `/schedule/calendar/options` | カレンダーの絞り込み選択肢（案件・種別・状態・担当者・担当会社） |
 
 - **確定計算**：基準日はサーバー側の JST。完了=実績日あり、期限超過=実績未入力かつ予定日<基準日（当日は含めない）、
   近日予定=残日数が0以上かつ指定日数以内、遅れ日数=完了時 max(実績-予定,0)／未完了時は超過日数。
@@ -136,6 +138,27 @@ AI Worker（別プロセス）: `python -m ai_worker.worker [--once]`。実weigh
 - **未設定候補**：`active=true` の標準種別と登録済みを**IDで**突き合わせた結果。実在IDや予定日・状態・担当者は持たない。
 - **関連工程**：`resolve_related_task()` を登録・更新の両方で使う。存在しない/削除済み/別案件=422、スコープ外=403。
 - **入力粒度**：`schedule_precision` は `day`（JST 00:00）と `half_day`（午前=00:00 / 午後=12:00）。AM/PM 専用列は持たない。
+
+### カレンダーの共通イベント（Ver.0.3 Phase 3 P3-5）
+
+`GET /schedule/calendar/events` は**実在する元データだけ**を読み取り、カレンダー用の
+共通形式へ変換する。カレンダー専用テーブルは作らず、元データを二重保存しない。
+
+| source_kind | 元データ | 日時の根拠 | record_kind |
+|---|---|---|---|
+| `task` | `tasks` | `planned_start_at` 〜 `planned_finish_at` ／ `actual_start_at` 〜 `actual_finish_at` | `plan` / `actual` |
+| `milestone` | `milestones` | `planned_at` ／ `actual_at` | `plan` / `actual` |
+| `quality_check` | `quality_checks` | `due_date`（JST 00:00） | `due` |
+| `daily_report` | `daily_reports` | `report_date`（JST 00:00） | `actual` |
+| `test_record` | `test_records` | `measured_at` | `actual` |
+
+- **図面の提出期限は扱わない**：`documents` に期限日の列が無いため。推測して表示すると
+  架空の期限になる。追加するには列の新設（migration）と運用の決定が必要。
+- `event_id` は `種別:区分:元ID`。別テーブルの同じ数値IDを取り違えない。
+- 期間は Phase 1 と同じ半開区間。`date_to` は「その日を含む」指定として翌日0:00までを見る。
+- `end_at` が null のイベントは開始日だけの単日イベント（終了を推測しない）。
+- SQLは種別ごとに1本で、件数に比例して発行数が増えない。`total` / `displayed` / `truncated` を別々に返す。
+- 保存検索は既存の `saved_searches` を `screen='schedule_calendar'` で再利用する。
 
 ## 監査ログ
 

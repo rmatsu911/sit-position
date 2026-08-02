@@ -40,6 +40,10 @@ PostgreSQL 16 / SQLAlchemy 2.0 / Alembic。全業務テーブルは論理削除�
 - **入力粒度は1列**：`schedule_precision`（`day` / `half_day`）と `DateTime` の組で表す。AM/PM 専用列は作らない。
 - **同一案件・同一区分の複数件を許容**：DB制約で1件に縛らない（是正前後の検査など複数回あり得るため）。
 
+カレンダー（Ver.0.3 Phase 3 P3-5）は**専用テーブルを持たない**。`tasks` / `milestones` /
+`quality_checks` / `daily_reports` / `test_records` を読み取って表示用の形へ変換するだけで、
+元データを二重保存しない。`documents` には提出期限の列が無いため、図面提出期限は扱わない。
+
 Ver.0.1.1 migration: `93d342db7f58_ver0_1_1_photos_quality_daily_fields`（既存データ有りのため NOT NULL 列は server_default を付与して追加）。
 Ver.0.1.2 migration: `062aef7de195_ver0_1_2_task_assets_workers_docs_...`（新テーブル10・既存データ非破壊）→ 計40テーブル。
 Ver.0.1.3 migration: `6b1c1111572b_ver0_1_3_materials_test_records_report_...`（`materials`/`project_materials`/`test_records`/`report_exports`・既存非破壊）→ 計44テーブル。帳票生成に `openpyxl`/`reportlab`（日本語CIDフォント）を使用。

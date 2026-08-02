@@ -1692,3 +1692,246 @@ def test_milestone_query_count_does_not_grow_with_rows(client):
             "planned_at": "2026-10-25T00:00:00+09:00"}).status_code == 201
     after = count_queries(f"milestone_type_ids={type_id}&limit=5000")
     assert after == base, f"件数に比例してSQLが増えた（{base} → {after}）"
+
+
+# --- Ver.0.3 Phase 3 (P3-5): カレンダーの共通イベントAPI ---------------------
+def _cal(client, email, qs=""):
+    t = token(client, email)
+    r = client.get(f"/api/schedule/calendar/events?{qs}", headers={"Authorization": f"Bearer {t}"})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _cal_fixture(session):
+    """5種別すべての元データを1日ぶん用意する（カレンダー専用テーブルは作らない）。"""
+    from datetime import date as _date, datetime as _dt
+
+    from app.models import DailyReport, Milestone, MilestoneType, QualityCheck, Task, TestRecord
+    from app.services.milestones import JST, milestone_at
+
+    mt = session.query(MilestoneType).filter_by(code="p35-cal").one_or_none()
+    if mt is None:
+        mt = MilestoneType(code="p35-cal", name="カレンダー確認", sort_order=700)
+        session.add(mt)
+        session.flush()
+    # 日時はすべて JST で組み立てる（Phase 1 と同じ意味論）
+    task = Task(project_id=1, wbs_code="P35.1", name="カレンダー工程", status="施工中",
+                planned_start_at=_dt(2026, 11, 10, tzinfo=JST),
+                planned_finish_at=_dt(2026, 11, 12, tzinfo=JST),   # exclusive（11/11まで）
+                actual_start_at=_dt(2026, 11, 10, tzinfo=JST))
+    ms = Milestone(project_id=1, milestone_type_id=mt.id, name="カレンダー重要日",
+                   planned_at=milestone_at("2026-11-10", "half_day", "PM"),  # JST 12:00
+                   status="予定", schedule_precision="half_day")
+    qc = QualityCheck(project_id=1, inspect_item="カレンダー品質確認", status="確認待ち",
+                      due_date=_date(2026, 11, 10))
+    dr = DailyReport(project_id=1, report_date=_date(2026, 11, 10), status="DRAFT",
+                     place="カレンダー現場")
+    tr = TestRecord(project_id=1, test_type="カレンダー試験", judge="未判定",
+                    measured_at=_dt(2026, 11, 10, 10, 30, tzinfo=JST))
+    session.add_all([task, ms, qc, dr, tr])
+    session.commit()
+    return {"task": task.id, "milestone": ms.id, "quality_check": qc.id,
+            "daily_report": dr.id, "test_record": tr.id, "type_id": mt.id}
+
+
+def test_calendar_integrates_all_real_sources(client):
+    """実在する5種別だけを共通形式へ変換して返すこと。"""
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        ids = _cal_fixture(s)
+
+    data = _cal(client, "pm@test.jp", "date_from=2026-11-10&date_to=2026-11-10&project_ids=1")
+    kinds = {(e["source_kind"], e["record_kind"]) for e in data["events"]}
+    assert ("task", "plan") in kinds and ("task", "actual") in kinds
+    assert ("milestone", "plan") in kinds
+    assert ("quality_check", "due") in kinds
+    assert ("daily_report", "actual") in kinds
+    assert ("test_record", "actual") in kinds
+
+    by_kind = {e["source_kind"]: e for e in data["events"]}
+    # 元レコードへ戻れること
+    assert by_kind["task"]["source_url"] == "/projects/1/schedule"
+    assert by_kind["milestone"]["source_url"].startswith("/projects/1/schedule/milestones?types=")
+    assert by_kind["quality_check"]["source_url"] == "/quality"
+    assert by_kind["daily_report"]["source_url"] == "/daily-report"
+    # 元IDを保持している
+    assert by_kind["quality_check"]["source_id"] == ids["quality_check"]
+    assert data["total"] == data["displayed"] and data["truncated"] is False
+
+
+def test_calendar_event_id_never_collides_across_tables(client):
+    """別テーブルの同じ数値IDを1件に取り違えないこと。"""
+    data = _cal(client, "pm@test.jp", "date_from=2026-01-01&date_to=2026-12-31&limit=5000")
+    assert len({e["event_id"] for e in data["events"]}) == len(data["events"])
+    for e in data["events"]:
+        assert e["event_id"] == f"{e['source_kind']}:{e['record_kind']}:{e['source_id']}"
+    # 数値IDだけなら重複しうる組み合わせが、実際に別イベントとして残っている
+    numeric = [(e["source_id"], e["source_kind"]) for e in data["events"]]
+    dup_ids = {i for i, _ in numeric if sum(1 for j, _ in numeric if j == i) > 1}
+    assert dup_ids, "同じ数値IDを持つ別種別のデータが無く、この確認が成立していない"
+
+
+def test_calendar_jst_day_boundary(client):
+    """JSTの日付境界でずれないこと（9時間ずれの検出）。"""
+    from datetime import datetime
+
+    from app.services.milestones import as_jst
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        ids = _cal_fixture(s)
+
+    # JST 11/10 の1日だけを指定して、その日のイベントが取れる
+    same = _cal(client, "pm@test.jp", "date_from=2026-11-10&date_to=2026-11-10&project_ids=1")
+    assert any(e["source_id"] == ids["milestone"] and e["source_kind"] == "milestone"
+               for e in same["events"])
+    # 前日を指定すると入らない（UTC基準で判定していれば混入する）
+    before = _cal(client, "pm@test.jp", "date_from=2026-11-09&date_to=2026-11-09&project_ids=1")
+    assert not any(e["source_kind"] == "milestone" and e["source_id"] == ids["milestone"]
+                   for e in before["events"])
+    # half_day の午後は JST 12:00 のまま返る
+    ms = [e for e in same["events"] if e["source_kind"] == "milestone"][0]
+    assert as_jst(datetime.fromisoformat(ms["start_at"])).hour == 12
+    assert ms["schedule_precision"] == "half_day"
+
+
+def test_calendar_range_is_half_open(client):
+    """期間は Phase 1 と同じ [開始, 終了)。終了日は「その日を含む」指定。"""
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        ids = _cal_fixture(s)
+
+    # 工程の予定は JST 11/10 00:00 〜 11/12 00:00（＝11/11 まで）
+    inside = _cal(client, "pm@test.jp", "date_from=2026-11-11&date_to=2026-11-11&project_ids=1&source_kinds=task")
+    assert any(e["source_id"] == ids["task"] and e["record_kind"] == "plan" for e in inside["events"])
+    outside = _cal(client, "pm@test.jp", "date_from=2026-11-12&date_to=2026-11-12&project_ids=1&source_kinds=task")
+    assert not any(e["source_id"] == ids["task"] and e["record_kind"] == "plan"
+                   for e in outside["events"]), "終了日時（exclusive）の当日を含めてしまっている"
+
+
+def test_calendar_excludes_deleted_and_out_of_scope(client):
+    """論理削除済み・案件スコープ外を返さないこと。"""
+    from datetime import datetime, timezone as _tz
+
+    from app.models import Milestone
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        ids = _cal_fixture(s)
+
+    qs = "date_from=2026-11-10&date_to=2026-11-10"
+    assert any(e["source_kind"] == "milestone" and e["source_id"] == ids["milestone"]
+               for e in _cal(client, "pm@test.jp", qs)["events"])
+
+    with TestingSessionLocal() as s:
+        row = s.get(Milestone, ids["milestone"])
+        row.deleted_at = datetime.now(_tz.utc)
+        s.commit()
+    assert not any(e["source_kind"] == "milestone" and e["source_id"] == ids["milestone"]
+                   for e in _cal(client, "pm@test.jp", qs)["events"])
+
+    # 協力会社（割当は案件1のみ）は案件2のイベントを見られない
+    partner = _cal(client, "partner@test.jp", "date_from=2026-01-01&date_to=2026-12-31&limit=5000")
+    assert {e["project_id"] for e in partner["events"]} <= {1}
+
+
+def test_calendar_same_day_same_name_not_merged(client):
+    """同日・同名でもIDが違えば別イベントとして残ること。"""
+    from datetime import date as _date
+
+    from app.models import QualityCheck
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        s.add_all([
+            QualityCheck(project_id=1, inspect_item="同名の確認", status="確認待ち",
+                         due_date=_date(2026, 11, 20)),
+            QualityCheck(project_id=1, inspect_item="同名の確認", status="確認待ち",
+                         due_date=_date(2026, 11, 20)),
+        ])
+        s.commit()
+
+    data = _cal(client, "pm@test.jp", "date_from=2026-11-20&date_to=2026-11-20&project_ids=1")
+    same = [e for e in data["events"] if e["title"] == "同名の確認"]
+    assert len(same) == 2, "同名の別レコードが1件に潰れた"
+    assert same[0]["event_id"] != same[1]["event_id"]
+
+
+def test_calendar_filters_are_and(client):
+    """複合フィルターがANDで効くこと。"""
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        _cal_fixture(s)
+
+    base = "date_from=2026-11-01&date_to=2026-11-30&project_ids=1"
+    only_task = _cal(client, "pm@test.jp", f"{base}&source_kinds=task")
+    assert {e["source_kind"] for e in only_task["events"]} == {"task"}
+
+    with_q = _cal(client, "pm@test.jp", f"{base}&source_kinds=task&q=カレンダー")
+    assert all("カレンダー" in e["title"] for e in with_q["events"])
+    assert len(with_q["events"]) <= len(only_task["events"])
+
+    impossible = _cal(client, "pm@test.jp", f"{base}&source_kinds=task&statuses=存在しない状態")
+    assert impossible["events"] == [] and impossible["total"] == 0
+
+
+def test_calendar_truncates_with_limit(client):
+    """上限を超えたら truncated を立て、total と displayed を別に返すこと。"""
+    data = _cal(client, "pm@test.jp", "date_from=2026-01-01&date_to=2026-12-31&limit=3")
+    assert data["displayed"] == 3
+    assert data["total"] > 3
+    assert data["truncated"] is True
+    assert data["limit"] == 3
+
+
+def test_calendar_query_count_does_not_grow_with_rows(client):
+    """件数が増えてもSQL発行回数が増えないこと（種別ごとに1本）。"""
+    from datetime import date as _date
+
+    from sqlalchemy import event
+
+    from app.models import QualityCheck
+    from tests.conftest import TestingSessionLocal, engine
+
+    def count_queries(qs: str) -> int:
+        seen = []
+        listener = lambda *a, **k: seen.append(1)  # noqa: E731
+        event.listen(engine, "before_cursor_execute", listener)
+        try:
+            _cal(client, "pm@test.jp", qs)
+        finally:
+            event.remove(engine, "before_cursor_execute", listener)
+        return len(seen)
+
+    qs = "date_from=2026-12-01&date_to=2026-12-31&project_ids=1&limit=5000"
+    base = count_queries(qs)
+    with TestingSessionLocal() as s:
+        for i in range(15):
+            s.add(QualityCheck(project_id=1, inspect_item=f"N+1確認{i}", status="確認待ち",
+                               due_date=_date(2026, 12, 10)))
+        s.commit()
+    after = count_queries(qs)
+    assert after == base, f"件数に比例してSQLが増えた（{base} → {after}）"
+
+
+def test_calendar_options_use_ids(client):
+    """選択肢は同名でも区別できるよう id と name の組で返すこと。"""
+    t = token(client, "pm@test.jp")
+    r = client.get("/api/schedule/calendar/options", headers={"Authorization": f"Bearer {t}"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert {k["key"] for k in body["source_kinds"]} == {
+        "task", "milestone", "quality_check", "daily_report", "test_record"}
+    for key in ("projects", "responsibles", "companies"):
+        assert all("id" in v and "name" in v for v in body[key])
+
+
+def test_calendar_has_no_dedicated_table(client):
+    """カレンダー専用テーブルへ二重保存していないこと。"""
+    from app.core.db import Base
+
+    names = set(Base.metadata.tables)
+    assert not {n for n in names if "calendar" in n}, "カレンダー専用テーブルを作っている"

@@ -516,3 +516,68 @@ export function rangeForScale(
     narrowed: true,
   }
 }
+
+// ===========================================================================
+// カレンダー（月表示・週表示）のマス目
+//
+// 画面ごとに日付計算を書くと JST の日付境界がずれるため、ここへ集約する。
+// 週は工程表の週スケールと同じ「月曜始まり」。
+// ===========================================================================
+
+/** カレンダーの表示単位。 */
+export type CalendarView = 'month' | 'week'
+
+export interface CalendarGrid {
+  /** マスの並び（JSTの日付キー `yyyy-MM-dd`）。月表示は6週=42日、週表示は7日 */
+  days: string[]
+  /** 表示範囲の開始日（この日を含む） */
+  from: string
+  /** 表示範囲の終了日（この日を含む） */
+  to: string
+  /** 基準日が属する月（月表示で「当月かどうか」を判定するため） */
+  monthKey: string
+}
+
+/**
+ * 基準日から、カレンダーに並べる日付を作る。
+ *
+ * 月表示は「当月をすべて含む月曜始まりの6週」。週表示は基準日を含む1週間。
+ * 返すのは日付キーだけで、時刻は持たない（時刻は startAtOf で組み立てる）。
+ */
+export function calendarGrid(view: CalendarView, anchor: DateInput): CalendarGrid {
+  const base = startOfDay(toJst(anchor))
+  const start = view === 'month'
+    ? startOfWeek(startOfMonth(base), { weekStartsOn: 1 })
+    : startOfWeek(base, { weekStartsOn: 1 })
+  const count = view === 'month' ? 42 : 7
+  const days: string[] = []
+  for (let i = 0; i < count; i++) days.push(format(addDays(start, i), 'yyyy-MM-dd'))
+  return {
+    days,
+    from: days[0],
+    to: days[days.length - 1],
+    monthKey: format(startOfMonth(base), 'yyyy-MM'),
+  }
+}
+
+/** カレンダーの基準日を前後に動かす（月表示は1か月、週表示は1週間）。 */
+export function shiftCalendarAnchor(view: CalendarView, anchor: DateInput, delta: number): string {
+  const base = startOfDay(toJst(anchor))
+  const moved = view === 'month' ? addMonths(base, delta) : addWeeks(base, delta)
+  return format(moved, 'yyyy-MM-dd')
+}
+
+/**
+ * イベントがその日のマスに入るか。
+ *
+ * 期間は Phase 1 と同じ半開区間 `[開始, 終了)`。終了が無いイベント（単日）は
+ * 開始日のマスだけに入る。
+ */
+export function eventOnDay(dateKey: string, startAt: DateInput, endAt?: DateInput | null): boolean {
+  const dayStart = toJst(`${dateKey}T00:00:00+09:00`)
+  const dayEnd = addDays(dayStart, 1)
+  const start = toJst(startAt)
+  if (!endAt) return start >= dayStart && start < dayEnd
+  const end = toJst(endAt)
+  return start < dayEnd && end > dayStart
+}

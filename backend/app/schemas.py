@@ -873,3 +873,54 @@ class MilestoneOptions(BaseModel):
     companies: list[IdNameOut]
     related_tasks: list[MilestoneTaskOption]
     calculated_at: date
+
+
+# ===== カレンダーの共通イベント（Ver.0.3 Phase 3 P3-5） =====
+class CalendarEventOut(BaseModel):
+    """工程・マイルストーン・期限などを1つの形に揃えたカレンダー用イベント。
+
+    元データは各テーブルのまま。カレンダー専用の保存はしない。
+    `event_id` は「種別:区分:元ID」の組で、別テーブルの同じ数値IDを取り違えない。
+    """
+
+    event_id: str
+    source_kind: str          # task / milestone / quality_check / daily_report / test_record
+    source_id: int
+    project_id: int
+    project_code: str
+    project_name: str
+    title: str
+    start_at: datetime
+    end_at: datetime | None = None   # None は開始日だけの単日イベント
+    schedule_precision: str          # day / half_day
+    status: str
+    responsible_id: int | None = None
+    responsible_name: str | None = None
+    company_id: int | None = None
+    company_name: str | None = None
+    source_url: str
+    editable: bool = False
+    record_kind: str          # plan / actual / due
+
+
+class CalendarEventsOut(BaseModel):
+    events: list[CalendarEventOut]
+    total: int
+    displayed: int
+    truncated: bool
+    limit: int
+    range_from: datetime
+    range_to: datetime
+
+
+class CalendarSourceKind(BaseModel):
+    key: str
+    label: str
+
+
+class CalendarOptions(BaseModel):
+    projects: list[IdNameOut]
+    source_kinds: list[CalendarSourceKind]
+    statuses: list[str]
+    responsibles: list[IdNameOut]
+    companies: list[IdNameOut]

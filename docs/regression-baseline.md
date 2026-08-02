@@ -11,7 +11,7 @@
 | ESLint | `npm run lint` | **エラー 0**（警告は Badge.tsx の HMR 警告 1件のみ） |
 | production build | `npm run build` | 成功（bundle 500kB超の警告は既知） |
 | 時間軸エンジン | `npm run test:timeline` | **113 passed / 0 failed** |
-| Backend テスト | `cd backend && python -m pytest` | **91 passed**（Phase 3 で +35） |
+| Backend テスト | `cd backend && python -m pytest` | **102 passed**（Phase 3 で +46） |
 | 横断工程の座標実測 | `PW_CHROME=<chrome> node scripts/cross-schedule-measure.mjs` | **25 passed / 0 failed** |
 | 横断工程の完了確認 | `PW_CHROME=<chrome> node scripts/cross-schedule-final.mjs` | **39 passed / 0 failed** |
 | 表示単位の検証 | `PW_CHROME=<chrome> node scripts/scale-selector-verify.mjs` | **50 passed / 0 failed** |
@@ -19,6 +19,7 @@
 | 横断マイルストーンの出力一致 | `backend/.venv/bin/python scripts/milestone-export-check.py` | **130 passed / 0 failed** |
 | 工程画面へのマイルストーン統合 | `PW_CHROME=<chrome> node scripts/milestone-integration-verify.mjs` | **71 passed / 0 failed** |
 | 表示名依存の監査 | `node scripts/milestone-source-audit.mjs` | 業務判定に表示名依存 0 件 |
+| カレンダー | `PW_CHROME=<chrome> node scripts/calendar-verify.mjs` | **61 passed / 0 failed** |
 
 ## 2. 画面の回帰確認（実ブラウザ）
 
@@ -325,3 +326,46 @@ PW_CHROME=<chromeのパス> node scripts/e2e-regression.mjs --out /tmp/after
 | マイルストーンが画面に存在しなかった | `milestones` を1回取得し、工程行の下のマイルストーン帯にマーカーで描画 |
 | マイルストーンが時間軸の外に出て描かれない | 表示範囲（`rangeForScale`）の根拠に予定日・実績日も含める |
 | 印刷の工程件数にマイルストーン帯が混ざる | 帯を `data-print="hide"` にし、工程一覧の件数と混同しない |
+
+## 11. カレンダーと共通イベントAPI（Phase 3 P3-5）
+
+`GET /schedule/calendar/events` は実在する元データだけを共通形式へ変換する。
+カレンダー専用テーブルは持たず、日付計算は `src/lib/timeline.ts` の
+`calendarGrid` / `shiftCalendarAnchor` / `eventOnDay` に集約する。
+
+### 統合したイベント種別
+
+| source_kind | 元データ | record_kind | Seed の件数 |
+|---|---|---|---|
+| `task` | `tasks` | plan / actual | 80 件（予定80・実績あり33） |
+| `milestone` | `milestones` | plan / actual | 47 件 |
+| `quality_check` | `quality_checks.due_date` | due | 7 件 |
+| `daily_report` | `daily_reports.report_date` | actual | 3 件 |
+| `test_record` | `test_records.measured_at` | actual | 4 件 |
+
+**統合できなかった種別**：図面提出期限。`documents` に期限日の列が無く、
+推測すると架空の期限になるため扱わない（列の新設と運用の決定が必要）。
+
+### 実測結果
+
+| 検証 | 実測値 |
+|---|---|
+| 月表示 | 月曜始まりの6週＝42マス。2026年8月の先頭は 2026-07-27 |
+| 週表示 | 7マス。`view=week` をURLへ保存 |
+| 前／次／今日 | 月表示は1か月、週表示は1週間ずつ移動。基準日を `date=` でURLへ保存 |
+| 年跨ぎ | 2026年12月 → 2027年1月 → 2026年12月 で往復 |
+| URL復元 | 再読込・戻る・進むで表示方式・基準日・絞り込みを復元 |
+| イベント表示 | 5種別すべてを表示し、予定 / 実績 / 期限を区別 |
+| JSTの日付境界 | 単日イベントは `start_at` の日付のマスに一致（ずれ 0 件） |
+| half_day | 午前・午後をラベルへ表示 |
+| 期間イベント | 複数マスに並び、終了日時（exclusive）の当日は含めない |
+| 同日複数件 | 積み重ねて表示し、1件にまとめない |
+| 同名別ID | `event_id` が別なので混同しない |
+| 複合フィルター | 4通りすべてで画面の件数＝APIのAND結果 |
+| 保存検索 | 保存・呼び出し（URLごと復元）・削除 |
+| 0件 / truncated | 空状態を表示。APIは total / displayed / truncated を別々に返す |
+| 元データへの遷移 | マイルストーン→横断マイルストーン、工程→案件工程 |
+| リクエスト回数 | `/calendar/events` は1画面につき1回。1件ずつの取得なし |
+| 5権限 | ADMIN / PROJECT_MANAGER / QUALITY_MANAGER / VIEWER は全案件、FIELD_WORKER（割当あり）は1案件 |
+| 案件詳細ルート | 対象案件のみ。URLクエリで別案件を足しても広がらない |
+| コンソールエラー / 失敗リクエスト | **0 / 0** |

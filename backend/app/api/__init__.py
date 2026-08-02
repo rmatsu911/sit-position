@@ -4,6 +4,7 @@ from app.api import (
     ai,
     assets,
     auth,
+    calendar,
     daily_reports,
     dashboard,
     documents,
@@ -32,6 +33,7 @@ api_router.include_router(assets.router, prefix="/assets", tags=["assets"])
 api_router.include_router(tasks.router, tags=["tasks"])
 api_router.include_router(schedule.router, prefix="/schedule", tags=["schedule"])
 api_router.include_router(milestones.router, prefix="/schedule", tags=["milestones"])
+api_router.include_router(calendar.router, prefix="/schedule", tags=["calendar"])
 api_router.include_router(daily_reports.router, prefix="/daily-reports", tags=["daily-reports"])
 api_router.include_router(quality.router, prefix="/quality-checks", tags=["quality"])
 api_router.include_router(photos.router, prefix="/photos", tags=["photos"])
