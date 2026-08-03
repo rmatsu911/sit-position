@@ -1935,3 +1935,543 @@ def test_calendar_has_no_dedicated_table(client):
 
     names = set(Base.metadata.tables)
     assert not {n for n in names if "calendar" in n}, "カレンダー専用テーブルを作っている"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: 案件ライフサイクル（検索・登録・更新・権限）
+#
+# Seed の固定ID には依存せず、この節が自分で作った実データだけを対象にする。
+# 案件は工事番号・工事名の接頭辞で識別し、他テストの案件と混ざらないようにする。
+# ---------------------------------------------------------------------------
+
+P4_TAG = "P4LC"  # 絞り込み確認用の案件群
+P4_PERIOD_TAG = "P4PER"  # 期間検索の境界確認用の案件群
+
+_p4_seq = [0]
+
+
+def _p4_number(prefix: str = "P4NEW") -> str:
+    """テスト内で一意な工事番号。Seed の固定値を使い回さない。"""
+    _p4_seq[0] += 1
+    return f"{prefix}-{_p4_seq[0]:04d}"
+
+
+def _p4_head(client, email: str) -> dict:
+    return {"Authorization": f"Bearer {token(client, email)}"}
+
+
+def _p4_search(client, email: str, qs: str = "") -> dict:
+    r = client.get(f"/api/projects/search?{qs}", headers=_p4_head(client, email))
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _p4_ids(client, email: str, qs: str) -> list[int]:
+    return [p["id"] for p in _p4_search(client, email, qs)["items"]]
+
+
+def _p4_walk_pages(client, email: str, qs: str, per_page: int = 2):
+    """全ページを順に取得し、(通し順のID列, total, ページ数) を返す。"""
+    ids: list[int] = []
+    totals: set[int] = set()
+    page = 1
+    pages = 1
+    while True:
+        data = _p4_search(client, email, f"{qs}&per_page={per_page}&page={page}")
+        totals.add(data["total"])
+        pages = data["pages"]
+        ids += [p["id"] for p in data["items"]]
+        if page >= pages:
+            break
+        page += 1
+    assert len(totals) == 1, f"ページごとに total が変わっている: {totals}"
+    return ids, totals.pop(), pages
+
+
+@pytest.fixture(scope="module")
+def p4():
+    """Phase 4 のテストデータ。ダミーの固定IDは作らず、作成したIDを返す。"""
+    from datetime import date
+
+    from app.core.security import hash_password
+    from app.models import Company, Department, Project, ProjectMember, Task, User
+    from tests.conftest import TestingSessionLocal
+
+    env: dict = {}
+    with TestingSessionLocal() as s:
+        def user(email: str, role: str, name: str) -> User:
+            u = s.query(User).filter_by(email=email).one_or_none()
+            if u is None:
+                u = User(email=email, hashed_password=hash_password("pass"), name=name, role=role)
+                s.add(u)
+                s.flush()
+            return u
+
+        env["manager"] = user("p4mgr@test.jp", "PROJECT_MANAGER", "P4担当者A").id
+        env["manager2"] = user("p4mgr2@test.jp", "PROJECT_MANAGER", "P4担当者B").id
+        env["qm"] = user("p4qm@test.jp", "QUALITY_MANAGER", "P4品質").id
+        env["viewer"] = user("p4viewer@test.jp", "VIEWER", "P4閲覧").id
+        fw = user("p4fw@test.jp", "FIELD_WORKER", "P4現場")
+        env["fw"] = fw.id
+
+        dept = Department(name="P4部署")
+        company_a = Company(name="P4会社A", is_partner=True)
+        company_b = Company(name="P4会社B", is_partner=True)
+        s.add_all([dept, company_a, company_b])
+        s.flush()
+        env["dept"] = dept.id
+        env["company_a"] = company_a.id
+        env["company_b"] = company_b.id
+
+        def project(key: str, **over) -> None:
+            base = dict(
+                construction_number=f"{P4_TAG}-{key}",
+                name=f"{P4_TAG} {key}",
+                customer="P4顧客",
+                status="遅延",
+                area="P4エリア北",
+                department_id=dept.id,
+                manager_id=env["manager"],
+                start_planned_at=date(2026, 3, 1),
+                finish_planned_at=date(2026, 3, 31),
+            )
+            base.update(over)
+            p = Project(**base)
+            s.add(p)
+            s.flush()
+            env[key] = p.id
+
+        # hit だけが全条件に一致する。他はどれか1条件だけ外れている。
+        project("hit")
+        project("status_ng", status="施工中")
+        project("area_ng", area="P4エリア南")
+        project("mgr_ng", manager_id=env["manager2"])
+        project("dept_ng", department_id=None)
+        project("period_ng", start_planned_at=date(2026, 8, 1),
+                finish_planned_at=date(2026, 8, 31))
+        project("company_ng")
+        env["all"] = {env[k] for k in
+                      ("hit", "status_ng", "area_ng", "mgr_ng", "dept_ng", "period_ng",
+                       "company_ng")}
+
+        # 会社は案件ではなく「工程の担当会社」。hit は同じ会社の工程を2件持つ。
+        for key in ("hit", "status_ng", "area_ng", "mgr_ng", "dept_ng", "period_ng"):
+            s.add_all([
+                Task(project_id=env[key], name=f"{key} 工程1", company_id=company_a.id),
+                Task(project_id=env[key], name=f"{key} 工程2", company_id=company_a.id),
+            ])
+        s.add(Task(project_id=env["hit"], name="hit 工程3", company_id=company_b.id))
+        s.add(Task(project_id=env["company_ng"], name="company_ng 工程1",
+                   company_id=company_b.id))
+
+        # 期間検索の境界確認。片側だけ未設定の案件を必ず含める。
+        periods = {
+            "both": (date(2026, 5, 10), date(2026, 5, 20)),
+            "no_start": (None, date(2026, 5, 20)),
+            "no_finish": (date(2026, 5, 10), None),
+            "no_period": (None, None),
+            "before": (date(2026, 1, 1), date(2026, 1, 31)),
+            "after": (date(2026, 9, 1), date(2026, 9, 30)),
+        }
+        for key, (start, finish) in periods.items():
+            p = Project(construction_number=f"{P4_PERIOD_TAG}-{key}",
+                        name=f"{P4_PERIOD_TAG} {key}", status="施工中",
+                        start_planned_at=start, finish_planned_at=finish)
+            s.add(p)
+            s.flush()
+            env[f"per_{key}"] = p.id
+        env["periods"] = {env[f"per_{k}"] for k in periods}
+
+        # 協力会社ロールは hit だけに割り当てる（0件と403を区別するため）
+        if s.query(ProjectMember).filter_by(user_id=fw.id).one_or_none() is None:
+            s.add(ProjectMember(project_id=env["hit"], user_id=fw.id, role="FIELD_WORKER"))
+        s.commit()
+    return env
+
+
+def test_p4_project_lifecycle_create_list_detail_update(client, p4):
+    """CREATE → 一覧 → 詳細 → UPDATE → 再取得 が一続きで通ること。"""
+    head = _p4_head(client, "pm@test.jp")
+    number = _p4_number()
+    body = {
+        "construction_number": number,
+        "name": "ライフサイクル確認",
+        "customer": "P4顧客",
+        "status": "未着工",
+        "area": "P4エリア北",
+        "manager_id": p4["manager"],
+        "start_planned_at": "2026-04-01",
+        "finish_planned_at": "2026-04-30",
+    }
+    created = client.post("/api/projects", json=body, headers=head)
+    assert created.status_code == 201, created.text
+    new_id = created.json()["id"]
+
+    # 一覧（検索API）。既定の並び順は登録が新しい順なので1ページ目の先頭に出る。
+    listed = _p4_search(client, "pm@test.jp", "per_page=20&page=1")
+    assert listed["sort"] == "recent"
+    assert listed["items"][0]["id"] == new_id, "登録直後の案件が1ページ目の先頭に出ない"
+    assert listed["page"] == 1 and listed["per_page"] == 20
+
+    # 互換の一覧APIからも見える
+    legacy = client.get("/api/projects", headers=head)
+    assert new_id in [p["id"] for p in legacy.json()]
+
+    # 詳細
+    detail = client.get(f"/api/projects/{new_id}", headers=head)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["construction_number"] == number
+    assert detail.json()["manager"] == "P4担当者A"
+
+    # 更新
+    updated = client.put(
+        f"/api/projects/{new_id}",
+        json={"name": "ライフサイクル確認（更新後）", "status": "施工中",
+              "finish_planned_at": "2026-05-31", "actual_progress": 40},
+        headers=head,
+    )
+    assert updated.status_code == 200, updated.text
+
+    # 再取得で反映されている（画面の状態ではなく保存結果を確認する）
+    again = client.get(f"/api/projects/{new_id}", headers=head).json()
+    assert again["name"] == "ライフサイクル確認（更新後）"
+    assert again["status"] == "施工中"
+    assert again["finish_planned_at"] == "2026-05-31"
+    assert again["actual_progress"] == 40
+    assert again["start_planned_at"] == "2026-04-01", "更新していない項目が消えている"
+    searched = _p4_search(client, "pm@test.jp", f"q={number}")
+    assert [p["name"] for p in searched["items"]] == ["ライフサイクル確認（更新後）"]
+    assert searched["total"] == 1
+
+
+def test_p4_duplicate_construction_number_conflicts(client, p4):
+    """工事番号の重複は、作成時も更新時も 409 で拒否されること。"""
+    head = _p4_head(client, "pm@test.jp")
+    first = _p4_number()
+    r = client.post("/api/projects", json={"construction_number": first, "name": "重複元"},
+                    headers=head)
+    assert r.status_code == 201, r.text
+    kept_id = r.json()["id"]
+
+    dup = client.post("/api/projects", json={"construction_number": first, "name": "重複先"},
+                      headers=head)
+    assert dup.status_code == 409, dup.text
+    assert _p4_search(client, "pm@test.jp", f"q={first}")["total"] == 1, "重複が保存されている"
+
+    second = _p4_number()
+    other = client.post("/api/projects", json={"construction_number": second, "name": "別案件"},
+                        headers=head)
+    assert other.status_code == 201, other.text
+    other_id = other.json()["id"]
+
+    conflict = client.put(f"/api/projects/{other_id}", json={"construction_number": first},
+                          headers=head)
+    assert conflict.status_code == 409, conflict.text
+    assert client.get(f"/api/projects/{other_id}",
+                      headers=head).json()["construction_number"] == second
+
+    # 自分自身の工事番号での更新は重複扱いにしない
+    same = client.put(f"/api/projects/{other_id}",
+                      json={"construction_number": second, "name": "別案件（更新）"}, headers=head)
+    assert same.status_code == 200, same.text
+    assert client.get(f"/api/projects/{kept_id}", headers=head).status_code == 200
+
+
+def test_p4_period_validation_rejects_reversed_dates(client, p4):
+    """開始日が終了日より後なら 422。更新は保存後の値の組で判定すること。"""
+    head = _p4_head(client, "pm@test.jp")
+    bad = client.post(
+        "/api/projects",
+        json={"construction_number": _p4_number(), "name": "逆転期間",
+              "start_planned_at": "2026-06-30", "finish_planned_at": "2026-06-01"},
+        headers=head,
+    )
+    assert bad.status_code == 422, bad.text
+
+    number = _p4_number()
+    ok = client.post(
+        "/api/projects",
+        json={"construction_number": number, "name": "期間更新",
+              "start_planned_at": "2026-06-01", "finish_planned_at": "2026-06-30"},
+        headers=head,
+    )
+    assert ok.status_code == 201, ok.text
+    pid = ok.json()["id"]
+
+    # 片側だけ更新しても、保存済みのもう片方と突き合わせて判定される
+    late_start = client.put(f"/api/projects/{pid}", json={"start_planned_at": "2026-07-15"},
+                            headers=head)
+    assert late_start.status_code == 422, late_start.text
+    early_finish = client.put(f"/api/projects/{pid}", json={"finish_planned_at": "2026-05-01"},
+                              headers=head)
+    assert early_finish.status_code == 422, early_finish.text
+    kept = client.get(f"/api/projects/{pid}", headers=head).json()
+    assert kept["start_planned_at"] == "2026-06-01" and kept["finish_planned_at"] == "2026-06-30"
+
+    # 同日は許可（1日で終わる工事がある）
+    same_day = client.put(f"/api/projects/{pid}",
+                          json={"start_planned_at": "2026-06-30"}, headers=head)
+    assert same_day.status_code == 200, same_day.text
+
+
+def test_p4_unique_violation_maps_to_conflict(client, p4, monkeypatch):
+    """事前チェックをすり抜けても、DBの一意制約違反は 500 ではなく 409 になること。"""
+    head = _p4_head(client, "pm@test.jp")
+    number = _p4_number()
+    seed = client.post("/api/projects", json={"construction_number": number, "name": "一意制約元"},
+                       headers=head)
+    assert seed.status_code == 201, seed.text
+
+    other_number = _p4_number()
+    other = client.post("/api/projects",
+                        json={"construction_number": other_number, "name": "一意制約先"},
+                        headers=head)
+    assert other.status_code == 201, other.text
+    other_id = other.json()["id"]
+
+    # 事前チェックを無効化して IntegrityError の経路だけを通す
+    monkeypatch.setattr("app.api.projects._check_number_unique", lambda *a, **k: None)
+
+    dup = client.post("/api/projects", json={"construction_number": number, "name": "衝突"},
+                      headers=head)
+    assert dup.status_code == 409, dup.text
+
+    conflict = client.put(f"/api/projects/{other_id}", json={"construction_number": number},
+                          headers=head)
+    assert conflict.status_code == 409, conflict.text
+
+    monkeypatch.undo()
+    # ロールバックされ、既存データは壊れていない
+    assert client.get(f"/api/projects/{other_id}",
+                      headers=head).json()["construction_number"] == other_number
+    assert _p4_search(client, "pm@test.jp", f"q={number}")["total"] == 1
+
+
+def test_p4_search_combines_all_filters_with_and(client, p4):
+    """全条件を同時指定するとANDで効き、条件を1つ外すとその分だけ増えること。"""
+    base = {
+        "q": P4_TAG,
+        "statuses": "遅延",
+        "delayed_only": "true",
+        "manager_ids": str(p4["manager"]),
+        "department_ids": str(p4["dept"]),
+        "company_ids": str(p4["company_a"]),
+        "areas": "P4エリア北",
+        "date_from": "2026-03-01",
+        "date_to": "2026-03-31",
+        "per_page": "50",
+    }
+
+    def qs(*drop: str) -> str:
+        return "&".join(f"{k}={v}" for k, v in base.items() if k not in drop)
+
+    assert set(_p4_ids(client, "admin@test.jp", qs())) == {p4["hit"]}
+
+    # 条件を1つ外すと、その条件で落ちていた案件だけが戻る
+    assert set(_p4_ids(client, "admin@test.jp", qs("areas"))) == {p4["hit"], p4["area_ng"]}
+    assert set(_p4_ids(client, "admin@test.jp", qs("manager_ids"))) == {p4["hit"], p4["mgr_ng"]}
+    assert set(_p4_ids(client, "admin@test.jp", qs("department_ids"))) == {p4["hit"], p4["dept_ng"]}
+    assert set(_p4_ids(client, "admin@test.jp", qs("company_ids"))) == {p4["hit"], p4["company_ng"]}
+    assert set(_p4_ids(client, "admin@test.jp", qs("date_to"))) == {p4["hit"], p4["period_ng"]}
+    assert set(_p4_ids(client, "admin@test.jp", qs("statuses", "delayed_only"))) == {
+        p4["hit"], p4["status_ng"]}
+
+    # キーワードは工事名・工事番号・顧客・責任者名のいずれかに当たる
+    assert set(_p4_ids(client, "admin@test.jp", f"q={P4_TAG}&per_page=50")) == p4["all"]
+    assert set(_p4_ids(client, "admin@test.jp", "q=P4担当者B&per_page=50")) == {p4["mgr_ng"]}
+    assert _p4_search(client, "admin@test.jp", "q=該当しないキーワード")["total"] == 0
+
+
+def test_p4_search_by_task_company_without_duplicates(client, p4):
+    """会社は工程の担当会社で判定し、同じ会社の工程が複数でも案件が重複しないこと。"""
+    both = f"{p4['company_a']},{p4['company_b']}"
+    ids = _p4_ids(client, "admin@test.jp", f"q={P4_TAG}&company_ids={both}&per_page=50")
+    assert len(ids) == len(set(ids)), f"同じ案件が複数行で返っている: {ids}"
+    # hit は会社Aの工程を2件、会社Bの工程を1件持つが1件として数える
+    assert ids.count(p4["hit"]) == 1
+    assert set(ids) == p4["all"]
+    assert _p4_search(client, "admin@test.jp",
+                      f"q={P4_TAG}&company_ids={both}&per_page=50")["total"] == len(p4["all"])
+
+    only_b = _p4_ids(client, "admin@test.jp",
+                     f"q={P4_TAG}&company_ids={p4['company_b']}&per_page=50")
+    assert set(only_b) == {p4["hit"], p4["company_ng"]}
+    assert len(only_b) == 2
+
+
+def test_p4_search_period_treats_open_ended_as_overlapping(client, p4):
+    """期間は「予定期間が範囲と重なる案件」。片側未設定はその向きに制限しない。"""
+    tag = f"q={P4_PERIOD_TAG}&per_page=50"
+
+    def ids(extra: str) -> set:
+        return set(_p4_ids(client, "admin@test.jp", f"{tag}&{extra}"))
+
+    # 境界日ちょうどを含む（5/20 は both の完了予定日、no_start の完了予定日）
+    assert ids("date_from=2026-05-20&date_to=2026-05-20") == {
+        p4["per_both"], p4["per_no_start"], p4["per_no_finish"], p4["per_no_period"]}
+
+    # 1日ずらすと、終了予定日で外れる案件が落ちる
+    assert ids("date_from=2026-05-21&date_to=2026-05-21") == {
+        p4["per_no_finish"], p4["per_no_period"]}
+
+    # 開始予定日の境界。5/10 は both / no_finish の着工予定日
+    assert ids("date_to=2026-05-10&date_from=2026-05-10") == {
+        p4["per_both"], p4["per_no_start"], p4["per_no_finish"], p4["per_no_period"]}
+    assert ids("date_to=2026-05-09&date_from=2026-05-09") == {
+        p4["per_no_start"], p4["per_no_period"]}
+
+    # 片側だけの指定は、その向きだけ制限する
+    assert ids("date_from=2026-06-01") == {
+        p4["per_no_finish"], p4["per_no_period"], p4["per_after"]}
+    assert ids("date_to=2026-02-01") == {
+        p4["per_no_start"], p4["per_no_period"], p4["per_before"]}
+
+    # 期間未指定なら全件
+    assert ids("") == p4["periods"]
+
+
+def test_p4_total_is_counted_after_scope_and_pages_sum_to_total(client, p4):
+    """total は権限・条件を適用したあとの件数で、全ページの合計と一致すること。"""
+    qs = f"q={P4_TAG}"
+    admin_ids, admin_total, admin_pages = _p4_walk_pages(client, "admin@test.jp", qs, per_page=2)
+    assert admin_total == len(p4["all"])
+    assert len(admin_ids) == admin_total, "全ページの items 合計が total と一致しない"
+    assert len(set(admin_ids)) == admin_total, "ページ間で同じ案件が重複している"
+    assert set(admin_ids) == p4["all"]
+    assert admin_pages == (admin_total + 1) // 2
+
+    # 協力会社ロールは割当案件だけ。total もスコープ適用後の値になる。
+    fw_ids, fw_total, _ = _p4_walk_pages(client, "p4fw@test.jp", qs, per_page=2)
+    assert fw_ids == [p4["hit"]]
+    assert fw_total == 1, "権限適用前の件数を total に返している"
+    assert fw_total < admin_total
+
+    # 1ページに収めても total は変わらない
+    single = _p4_search(client, "admin@test.jp", f"{qs}&per_page=50")
+    assert single["total"] == admin_total and single["pages"] == 1
+    assert len(single["items"]) == admin_total
+
+
+def test_p4_filter_options_cover_whole_scope_not_current_page(client, p4):
+    """絞り込みの選択肢は表示中のページではなく、権限範囲の全案件から作ること。"""
+    head = _p4_head(client, "admin@test.jp")
+    page = _p4_search(client, "admin@test.jp", f"q={P4_TAG}&per_page=1&page=1")
+    assert len(page["items"]) == 1 and page["total"] > 1
+
+    r = client.get("/api/projects/filter-options", headers=head)
+    assert r.status_code == 200, r.text
+    opts = r.json()
+    areas = set(opts["areas"])
+    assert {"P4エリア北", "P4エリア南"} <= areas, "1ページ目に無いエリアが選択肢から落ちている"
+    assert {"P4担当者A", "P4担当者B"} <= {m["name"] for m in opts["managers"]}
+    assert {"P4会社A", "P4会社B"} <= {c["name"] for c in opts["companies"]}
+    assert "P4部署" in {d["name"] for d in opts["departments"]}
+    assert {"遅延", "施工中"} <= set(opts["statuses"])
+    assert len({d["id"] for d in opts["departments"]}) == len(opts["departments"])
+
+    # 権限範囲が狭ければ選択肢も狭まる（割当案件は hit のみ）
+    fw = client.get("/api/projects/filter-options",
+                    headers=_p4_head(client, "p4fw@test.jp")).json()
+    assert fw["areas"] == ["P4エリア北"]
+    assert [m["name"] for m in fw["managers"]] == ["P4担当者A"]
+    assert {c["name"] for c in fw["companies"]} == {"P4会社A", "P4会社B"}
+    assert fw["statuses"] == ["遅延"]
+
+
+def test_p4_static_routes_do_not_collide_with_project_id(client, p4):
+    """/search と /filter-options が /{project_id} に吸われていないこと。"""
+    head = _p4_head(client, "admin@test.jp")
+
+    search = client.get("/api/projects/search", headers=head)
+    assert search.status_code == 200, search.text
+    assert set(search.json()) >= {"items", "total", "page", "per_page", "pages", "sort"}
+    assert "construction_number" not in search.json(), "検索が案件詳細として解釈されている"
+
+    options = client.get("/api/projects/filter-options", headers=head)
+    assert options.status_code == 200, options.text
+    assert set(options.json()) >= {"statuses", "areas", "departments", "managers", "companies"}
+
+    detail = client.get(f"/api/projects/{p4['hit']}", headers=head)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["id"] == p4["hit"]
+
+    missing = client.get("/api/projects/99999999", headers=head)
+    assert missing.status_code == 404, missing.text
+
+    # 数値に変換できないパスは 422（= 動的ルートの側で弾かれる）
+    assert client.get("/api/projects/not-a-number", headers=head).status_code == 422
+
+
+def test_p4_update_allowed_for_admin_and_project_manager(client, p4):
+    """ADMIN と PROJECT_MANAGER は案件を更新できること。"""
+    for email, label in (("admin@test.jp", "管理者更新"), ("pm@test.jp", "PM更新")):
+        head = _p4_head(client, email)
+        created = client.post("/api/projects",
+                              json={"construction_number": _p4_number(), "name": "権限確認"},
+                              headers=head)
+        assert created.status_code == 201, created.text
+        pid = created.json()["id"]
+        r = client.put(f"/api/projects/{pid}", json={"name": label}, headers=head)
+        assert r.status_code == 200, r.text
+        assert client.get(f"/api/projects/{pid}", headers=head).json()["name"] == label
+
+
+def test_p4_update_forbidden_for_other_roles(client, p4):
+    """QUALITY_MANAGER・FIELD_WORKER・VIEWER は API 側で 403 になること。"""
+    admin = _p4_head(client, "admin@test.jp")
+    before = client.get(f"/api/projects/{p4['hit']}", headers=admin).json()["name"]
+
+    for email in ("p4qm@test.jp", "p4fw@test.jp", "p4viewer@test.jp"):
+        head = _p4_head(client, email)
+        upd = client.put(f"/api/projects/{p4['hit']}", json={"name": "権限外の更新"}, headers=head)
+        assert upd.status_code == 403, f"{email} の更新が通ってしまった: {upd.text}"
+        create = client.post("/api/projects",
+                             json={"construction_number": _p4_number(), "name": "権限外の登録"},
+                             headers=head)
+        assert create.status_code == 403, f"{email} の登録が通ってしまった: {create.text}"
+
+    assert client.get(f"/api/projects/{p4['hit']}", headers=admin).json()["name"] == before
+
+
+def test_p4_field_worker_cannot_reach_unassigned_project(client, p4):
+    """割当外の案件は、取得も更新もできないこと。"""
+    head = _p4_head(client, "p4fw@test.jp")
+    assert client.get(f"/api/projects/{p4['hit']}", headers=head).status_code == 200
+
+    unassigned = p4["area_ng"]
+    assert client.get(f"/api/projects/{unassigned}", headers=head).status_code == 403
+    assert client.put(f"/api/projects/{unassigned}", json={"name": "割当外の更新"},
+                      headers=head).status_code == 403
+    # 検索結果にも出ない
+    assert unassigned not in _p4_ids(client, "p4fw@test.jp", f"q={P4_TAG}&per_page=50")
+
+
+def test_p4_empty_result_is_distinguishable_from_forbidden(client, p4):
+    """0件（200 + total 0）と権限なし（403）を取り違えないこと。"""
+    empty = _p4_search(client, "p4fw@test.jp", "q=該当しないキーワード")
+    assert empty["total"] == 0 and empty["items"] == [] and empty["pages"] == 1
+
+    # 権限範囲は空ではない
+    assert _p4_search(client, "p4fw@test.jp", f"q={P4_TAG}")["total"] == 1
+
+    forbidden = client.get(f"/api/projects/{p4['area_ng']}",
+                           headers=_p4_head(client, "p4fw@test.jp"))
+    assert forbidden.status_code == 403
+
+    # 割当が1件も無い協力会社は、403 ではなく 0件の 200 になる
+    from app.core.security import hash_password
+    from app.models import User
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        if s.query(User).filter_by(email="p4fw0@test.jp").one_or_none() is None:
+            s.add(User(email="p4fw0@test.jp", hashed_password=hash_password("pass"),
+                       name="P4未割当", role="FIELD_WORKER"))
+            s.commit()
+    none_assigned = _p4_search(client, "p4fw0@test.jp", "per_page=50")
+    assert none_assigned["total"] == 0 and none_assigned["items"] == []
+    opts = client.get("/api/projects/filter-options",
+                      headers=_p4_head(client, "p4fw0@test.jp"))
+    assert opts.status_code == 200
+    assert opts.json() == {"statuses": [], "areas": [], "departments": [], "managers": [],
+                           "companies": []}
