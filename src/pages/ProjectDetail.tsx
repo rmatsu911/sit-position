@@ -8,6 +8,7 @@ import { Progress } from '../components/ui/Progress'
 import { Modal } from '../components/ui/Modal'
 import { PhotoImage } from '../components/ui/PhotoImage'
 import { manYen } from '../lib/format'
+import { useAuth } from '../auth/AuthContext'
 import { useProject, useUpdateProject, type ApiProject } from '../api/projects'
 import { usePhotos } from '../api/photos'
 import { useProjectMaterials, useCreateMaterial } from '../api/materials'
@@ -24,6 +25,7 @@ const routeByTab: Partial<Record<Tab, string>> = {
 export default function ProjectDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const pid = Number(id)
   const { data: p, isLoading, isError, error } = useProject(Number.isNaN(pid) ? undefined : pid)
   const [tab, setTab] = useState<Tab>('概要')
@@ -47,6 +49,8 @@ export default function ProjectDetail() {
   const client = p.customer ?? '—'
   const location = p.location ?? p.area ?? '—'
   const dash = (v: string | null | undefined) => v ?? '—'
+  // 更新できない権限には編集の入口を出さない（拒否はAPI側が最終判断）
+  const canEdit = user?.role === 'ADMIN' || user?.role === 'PROJECT_MANAGER'
 
   return (
     <div>
@@ -54,7 +58,7 @@ export default function ProjectDetail() {
         breadcrumb={[{ label: '案件一覧', to: '/projects' }, { label: p.name }]}
         title={p.name}
         description={`${code} ／ ${client} ／ ${location}`}
-        actions={<><StatusBadge status={p.status} /><button className="btn-default" onClick={() => setEditOpen(true)}>基本情報を編集</button><button className="btn-primary" onClick={() => navigate(`/projects/${p.id}/schedule`)}>工程管理を開く</button></>}
+        actions={<><StatusBadge status={p.status} />{canEdit && <button className="btn-default" data-edit-project onClick={() => setEditOpen(true)}>基本情報を編集</button>}<button className="btn-primary" onClick={() => navigate(`/projects/${p.id}/schedule`)}>工程管理を開く</button></>}
       />
 
       {/* 基本情報（API連携） */}

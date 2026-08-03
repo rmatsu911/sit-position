@@ -1,12 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { FileSpreadsheet, FileDown, FileText, Printer, Plus, Trash2, Eye, Filter } from 'lucide-react'
 import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
 import { Modal } from '../components/ui/Modal'
 import { StepRunner } from '../components/ui/StepRunner'
 import { useApp } from '../context/AppContext'
+import { useAuth } from '../auth/AuthContext'
 import { downloadReport } from '../api/reports'
-import { ProjectSelect, useSelectedProject } from '../components/ui/ProjectSelect'
+import { useProject } from '../api/projects'
+import { useProjectTasks } from '../api/tasks'
+import { formatPeriod, jstDateKey } from '../lib/timeline'
+import { ProjectSelect, useSelectedProject, NoProjectSelected } from '../components/ui/ProjectSelect'
 
 // バックエンドで実生成に対応した帳票（type表示名 → APIキー）
 const REPORT_KEY: Record<string, string> = { 施工管理表: 'construction-management' }
@@ -17,13 +21,7 @@ const reportTypes = [
 ]
 
 type Row = { process: string; plan: string; actual: string; people: string; progress: string; note: string }
-const initialRows: Row[] = [
-  { process: '光ケーブル敷設', plan: '06/22-07/04', actual: '06/22-07/05', people: '26', progress: '100%', note: '余長確認済' },
-  { process: 'クロージャ設置', plan: '07/06-07/11', actual: '07/07-07/11', people: '9', progress: '100%', note: '防水処理良好' },
-  { process: '光ファイバ融着', plan: '07/13-07/18', actual: '07/13-07/18', people: '12', progress: '100%', note: '損失基準内' },
-  { process: '接続損失測定', plan: '07/18-07/22', actual: '07/20-', people: '4', progress: '60%', note: '要員不足で遅延' },
-  { process: 'ONU設置', plan: '07/21-07/24', actual: '07/21-', people: '4', progress: '20%', note: '' },
-]
+const EMPTY_ROW: Row = { process: '', plan: '', actual: '', people: '', progress: '', note: '' }
 
 const COLS: { key: keyof Row; label: string; w: number }[] = [
   { key: 'process', label: '工程', w: 160 },
@@ -39,7 +37,27 @@ export default function Reports() {
   const [type, setType] = useState(reportTypes[0])
   // 帳票の対象案件は利用者が選ぶ（固定案件へ出力しない）
   const { projectId, setProjectId } = useSelectedProject()
-  const [rows, setRows] = useState<Row[]>(initialRows)
+  const { user } = useAuth()
+  const { data: project } = useProject(projectId)
+  const { data: tasks = [], isLoading: tasksLoading } = useProjectTasks(projectId)
+  // 帳票の初期値は選択した案件の工程（実データ）。編集したときだけ画面側で保持する。
+  const baseRows: Row[] = useMemo(
+    () => tasks.filter((t) => !t.isParent).map((t) => ({
+      process: t.name,
+      plan: formatPeriod(t.planStartAt, t.planEndAt, t.precision),
+      actual: t.actualStartAt ? formatPeriod(t.actualStartAt, t.actualEndAt ?? t.actualStartAt, t.precision) : '',
+      people: String(t.actualPeople || t.planPeople || ''),
+      progress: `${t.progress}%`,
+      note: '',
+    })),
+    [tasks],
+  )
+  const [edited, setEdited] = useState<Row[] | null>(null)
+  // 案件を切り替えたら、前の案件の編集内容を持ち越さない
+  useEffect(() => { setEdited(null) }, [projectId])
+  const rows = edited ?? baseRows
+  const setRows = (next: Row[] | ((prev: Row[]) => Row[])) =>
+    setEdited(typeof next === 'function' ? next(rows) : next)
   const [output, setOutput] = useState<null | string>(null)
   const [preview, setPreview] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -64,7 +82,7 @@ export default function Reports() {
     setRows((prev) => prev.map((r, i) => (i === ri ? { ...r, [key]: val } : r)))
   }
   function addRow() {
-    setRows((prev) => [...prev, { process: '', plan: '', actual: '', people: '', progress: '', note: '' }])
+    setRows((prev) => [...prev, { ...EMPTY_ROW }])
     toast('行を追加しました', 'ok')
   }
   async function delRow(ri: number) {
@@ -85,11 +103,7 @@ export default function Reports() {
           </div>
         }
       />
-      {!projectId && (
-        <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-ink">
-          帳票を出力するには、右上の「対象案件」から案件を選択してください。
-        </div>
-      )}
+      {!projectId && <NoProjectSelected what="その案件の工程から帳票の下書き" />}
       <div className="flex gap-4">
         {/* 左：報告書種類 */}
         <div className="w-56 shrink-0">
@@ -127,7 +141,11 @@ export default function Reports() {
           <Panel bodyClassName="p-0" className="overflow-hidden">
             <div className="border-b border-line bg-canvas px-4 py-2.5">
               <h2 className="text-sm font-bold text-ink">{type}</h2>
-              <p className="text-xs text-ink-soft">熊本中央局 光設備更改工事 ／ 作成日 2026/07/21 ／ 作成者 山田 太郎</p>
+              <p className="text-xs text-ink-soft">
+                {project ? `${project.construction_number} ${project.name}` : '対象案件が未選択です'}
+                {' ／ 作成日 '}{jstDateKey(new Date())}
+                {' ／ 作成者 '}{user?.name ?? '—'}
+              </p>
             </div>
             <div className="thin-scroll overflow-x-auto">
               <table className="text-[13px]" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
@@ -139,6 +157,15 @@ export default function Reports() {
                   </tr>
                 </thead>
                 <tbody>
+                  {rows.length === 0 && (
+                    <tr>
+                      <td colSpan={COLS.length + 2} className="border-b border-line px-3 py-6 text-center text-[13px] text-ink-soft">
+                        {!projectId ? '案件を選択すると、その案件の工程が下書きとして入ります。'
+                          : tasksLoading ? '工程を読み込んでいます...'
+                          : 'この案件には工程が登録されていません。「行追加」から入力できます。'}
+                      </td>
+                    </tr>
+                  )}
                   {rows.map((r, ri) => (
                     <tr key={ri} className={ri % 2 ? 'bg-white' : 'bg-slate-50/40'}>
                       <td className="border-b border-r border-line bg-slate-100 px-2 py-1 text-center text-ink-soft">{ri + 1}</td>
