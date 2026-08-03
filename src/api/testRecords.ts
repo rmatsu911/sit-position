@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/apiClient'
-import { DEMO_PROJECT_ID } from './photos'
 
 // バックエンド TestRecordOut に対応
 export interface TestRecord {
@@ -37,15 +36,16 @@ export interface TestRecordCreateInput {
   comment?: string
 }
 
-export function useTestRecords(projectId: number = DEMO_PROJECT_ID, filters?: { asset_id?: number; task_id?: number }) {
+export function useTestRecords(projectId: number | undefined, filters?: { asset_id?: number; task_id?: number }) {
   return useQuery({
-    queryKey: ['test-records', projectId, filters?.asset_id ?? null, filters?.task_id ?? null],
+    queryKey: ['test-records', projectId ?? null, filters?.asset_id ?? null, filters?.task_id ?? null],
     queryFn: () => {
       const qs = new URLSearchParams({ project_id: String(projectId) })
       if (filters?.asset_id) qs.set('asset_id', String(filters.asset_id))
       if (filters?.task_id) qs.set('task_id', String(filters.task_id))
       return api<TestRecord[]>(`/test-records?${qs.toString()}`)
     },
+    enabled: !!projectId,
   })
 }
 

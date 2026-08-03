@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/apiClient'
 import type { QualityItem, QualityJudge, QualityStatus } from '../types'
-import { DEMO_PROJECT_ID } from './photos'
 
 // バックエンド QualityCheckOut に対応
 export interface ApiQualityCheck {
@@ -51,10 +50,12 @@ export function toQualityItem(c: ApiQualityCheck): QualityItem {
   }
 }
 
-export function useQualityChecks(projectId: number = DEMO_PROJECT_ID) {
+/** 選択中の案件の品質確認。未選択のときは取得しない。 */
+export function useQualityChecks(projectId: number | undefined) {
   return useQuery({
-    queryKey: ['quality', projectId],
+    queryKey: ['quality', projectId ?? null],
     queryFn: async () => (await api<ApiQualityCheck[]>(`/quality-checks?project_id=${projectId}`)).map(toQualityItem),
+    enabled: !!projectId,
   })
 }
 

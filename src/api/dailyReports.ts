@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/apiClient'
 import type { DailyReport, ReportStatus } from '../types'
-import { DEMO_PROJECT_ID } from './photos'
 
 // DB(英語) ⇔ フロント(日本語) のステータス対応
 const TO_JP: Record<string, ReportStatus> = {
@@ -85,7 +84,7 @@ export function toDailyReport(r: ApiDailyReport): DailyReport {
 }
 
 // フロント DailyReport → API Upsert ボディ
-export function toUpsertBody(r: DailyReport, projectId: number = DEMO_PROJECT_ID) {
+export function toUpsertBody(r: DailyReport, projectId: number) {
   return {
     project_id: projectId,
     report_date: r.date,
@@ -112,17 +111,20 @@ export function toUpsertBody(r: DailyReport, projectId: number = DEMO_PROJECT_ID
   }
 }
 
-export function useDailyReports(projectId: number = DEMO_PROJECT_ID) {
+/** 選択中の案件の日報。未選択のときは取得しない。 */
+export function useDailyReports(projectId: number | undefined) {
   return useQuery({
-    queryKey: ['daily-reports', projectId],
+    queryKey: ['daily-reports', projectId ?? null],
     queryFn: async () => (await api<ApiDailyReport[]>(`/daily-reports?project_id=${projectId}`)).map(toDailyReport),
+    enabled: !!projectId,
   })
 }
 
 export function useSaveDailyReport() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (r: DailyReport) => api<ApiDailyReport>(`/daily-reports/${r.id}`, { method: 'PUT', body: toUpsertBody(r) }),
+    mutationFn: ({ report, projectId }: { report: DailyReport; projectId: number }) =>
+      api<ApiDailyReport>(`/daily-reports/${report.id}`, { method: 'PUT', body: toUpsertBody(report, projectId) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['daily-reports'] }),
   })
 }

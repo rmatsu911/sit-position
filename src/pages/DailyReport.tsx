@@ -6,21 +6,25 @@ import { StatusBadge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
 import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
 import { useApp } from '../context/AppContext'
-import { projectById } from '../data/projects'
 import {
   useDailyReports, useSaveDailyReport, useChangeDailyReportStatus, useCopyDailyReport, useCreateDailyReport,
   useSetDailyReportLinks, useReflectProgress, reflectProgress, toUpsertBody,
 } from '../api/dailyReports'
 import type { ReflectResult } from '../api/dailyReports'
 import { useTaskOptions } from '../api/tasks'
-import { usePhotos, DEMO_PROJECT_ID } from '../api/photos'
+import { useProject } from '../api/projects'
+import { usePhotos } from '../api/photos'
+import { NoProjectSelected, ProjectSelect, useSelectedProject } from '../components/ui/ProjectSelect'
 import type { DailyReport, ReportStatus } from '../types'
 
 export default function DailyReportPage() {
   const { toast, confirm } = useApp()
-  const { data: reports = [], isLoading, isError, refetch } = useDailyReports()
-  const { data: taskOpts = [] } = useTaskOptions(DEMO_PROJECT_ID)
-  const { data: photoOpts = [] } = usePhotos()
+  // 対象案件は利用者が選ぶ（固定案件へ寄せない）。選択状態はURLで復元する。
+  const { projectId, setProjectId } = useSelectedProject()
+  const { data: project } = useProject(projectId)
+  const { data: reports = [], isLoading, isError, refetch } = useDailyReports(projectId)
+  const { data: taskOpts = [] } = useTaskOptions(projectId)
+  const { data: photoOpts = [] } = usePhotos(projectId)
   const saveMut = useSaveDailyReport()
   const statusMut = useChangeDailyReportStatus()
   const copyMut = useCopyDailyReport()
@@ -48,7 +52,8 @@ export default function DailyReportPage() {
   function setStatus(status: ReportStatus, msg: string) {
     if (!draft) return
     // まず本文を保存してからステータス遷移
-    saveMut.mutate(draft, {
+    if (!projectId) return
+    saveMut.mutate({ report: draft, projectId }, {
       onSuccess: () => statusMut.mutate({ id: draft.id, status }, {
         onSuccess: () => toast(msg, 'ok'),
         onError: () => toast('ステータス変更に失敗しました', 'ng'),
@@ -57,8 +62,8 @@ export default function DailyReportPage() {
     })
   }
   function saveDraft(msg: string) {
-    if (!draft) return
-    saveMut.mutate(draft, {
+    if (!draft || !projectId) return
+    saveMut.mutate({ report: draft, projectId }, {
       onSuccess: () => {
         // 本文と合わせて 写真/工程 紐付けも保存
         linksMut.mutate(
@@ -103,9 +108,30 @@ export default function DailyReportPage() {
     })
   }
 
-  if (isLoading) return <div className="rounded border border-line bg-white px-4 py-16 text-center text-[13px] text-ink-soft">日報を読み込んでいます…</div>
-  if (isError) return <div className="rounded border border-red-200 bg-red-50 px-4 py-10 text-center text-[13px] text-ng">日報の取得に失敗しました。<button className="ml-2 underline" onClick={() => refetch()}>再試行</button></div>
-  if (!current) return <div className="rounded border border-line bg-white px-4 py-16 text-center text-[13px] text-ink-soft">日報がまだ登録されていません。「新規日報」から作成してください。</div>
+  // 案件を選ぶ手段は常に画面へ出す（未選択・読み込み中・エラーでも選び直せる）
+  const selector = (
+    <div className="mb-3 flex items-center gap-2 rounded border border-line bg-white px-3 py-2">
+      <span className="text-[12px] text-ink-soft">対象案件</span>
+      <ProjectSelect projectId={projectId} onChange={setProjectId} />
+    </div>
+  )
+  if (!projectId) return <div>{selector}<Panel><NoProjectSelected what="現場日報" /></Panel></div>
+  if (isLoading) return <div>{selector}<div className="rounded border border-line bg-white px-4 py-16 text-center text-[13px] text-ink-soft">日報を読み込んでいます…</div></div>
+  if (isError) return <div>{selector}<div className="rounded border border-red-200 bg-red-50 px-4 py-10 text-center text-[13px] text-ng">日報の取得に失敗しました。<button className="ml-2 underline" onClick={() => refetch()}>再試行</button></div></div>
+  if (!current) return (
+    <div>{selector}
+      <div className="rounded border border-line bg-white px-4 py-16 text-center text-[13px] text-ink-soft">
+        この案件の日報はまだ登録されていません。
+        <button className="ml-2 underline" onClick={() => {
+          const today = new Date().toISOString().slice(0, 10)
+          createMut.mutate(toUpsertBody({ ...blankReport(), date: today }, projectId), {
+            onSuccess: (created) => { setCurrentId(String(created.id)); toast('新規日報を作成しました', 'ok') },
+            onError: () => toast('作成に失敗しました', 'ng'),
+          })
+        }}>新規日報を作成</button>
+      </div>
+    </div>
+  )
 
   return (
     <div>
@@ -115,6 +141,8 @@ export default function DailyReportPage() {
         description="日々の作業実績・安全・品質の記録"
         actions={
           <>
+            <span className="text-[12px] text-ink-soft">対象案件</span>
+            <ProjectSelect projectId={projectId} onChange={setProjectId} />
             <button className="btn-default" onClick={() => {
               const prev = reports.filter((r) => r.date < current.date).sort((a, b) => b.date.localeCompare(a.date))[0]
               if (!prev) { toast('前日の日報がありません', 'warn'); return }
@@ -135,7 +163,6 @@ export default function DailyReportPage() {
           <Panel title="日報一覧" bodyClassName="p-0">
             <ul className="divide-y divide-line">
               {reports.map((r) => {
-                const p = projectById(r.projectId)
                 return (
                   <li key={r.id}>
                     <button onClick={() => setCurrentId(r.id)} className={`w-full px-3 py-2.5 text-left hover:bg-canvas ${currentId === r.id ? 'bg-sysken-50' : ''}`}>
@@ -143,7 +170,7 @@ export default function DailyReportPage() {
                         <span className="text-[13px] font-medium text-ink">{r.date}</span>
                         <StatusBadge status={r.status} />
                       </div>
-                      <p className="mt-0.5 truncate text-xs text-ink-soft">{p?.name}</p>
+                      <p className="mt-0.5 truncate text-xs text-ink-soft">{project?.name ?? ''}</p>
                       <p className="truncate text-[11px] text-slate-400">{r.crew} / {r.manager}</p>
                     </button>
                   </li>
@@ -153,7 +180,8 @@ export default function DailyReportPage() {
             <div className="border-t border-line p-2">
               <button className="btn-default w-full justify-center" onClick={() => {
                 const today = new Date().toISOString().slice(0, 10)
-                createMut.mutate(toUpsertBody({ ...blankReport(), date: today }), {
+                if (!projectId) { toast('対象案件を選択してください', 'ng'); return }
+                createMut.mutate(toUpsertBody({ ...blankReport(), date: today }, projectId), {
                   onSuccess: (created) => { setCurrentId(String(created.id)); toast('新規日報を作成しました', 'ok') },
                   onError: () => toast('作成に失敗しました', 'ng'),
                 })
@@ -167,7 +195,7 @@ export default function DailyReportPage() {
           <Panel>
             <div className="mb-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <h2 className="text-[15px] font-bold text-ink">{projectById(current.projectId)?.name}</h2>
+                <h2 className="text-[15px] font-bold text-ink">{project?.name ?? ''}</h2>
                 <StatusBadge status={current.status} />
               </div>
               <span className="text-xs text-ink-soft">作成者：{current.author}</span>

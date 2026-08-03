@@ -62,6 +62,8 @@ class ProjectCreate(ProjectBase):
 
 
 class ProjectUpdate(BaseModel):
+    # 工事番号も変更できる。ただし他案件との重複は 409 で拒否する。
+    construction_number: str | None = Field(default=None, min_length=1, max_length=64)
     name: str | None = None
     customer: str | None = None
     customer_type: str | None = None
@@ -923,4 +925,30 @@ class CalendarOptions(BaseModel):
     source_kinds: list[CalendarSourceKind]
     statuses: list[str]
     responsibles: list[IdNameOut]
+    companies: list[IdNameOut]
+
+
+# ===== 案件一覧の検索（Ver.0.3 Phase 4） =====
+class ProjectSearchOut(BaseModel):
+    """権限・案件スコープと全条件を適用したあとの1ページ分。
+
+    `total` は**ページネーション前**の全件数。画面はこの値をそのまま表示し、
+    表示中のページから数え直さない。
+    """
+
+    items: list[ProjectOut]
+    total: int
+    page: int
+    per_page: int
+    pages: int
+    sort: str
+
+
+class ProjectFilterOptions(BaseModel):
+    """案件一覧の絞り込み選択肢。表示中のページではなく、権限範囲の全案件から作る。"""
+
+    statuses: list[str]
+    areas: list[str]
+    departments: list[IdNameOut]
+    managers: list[IdNameOut]
     companies: list[IdNameOut]

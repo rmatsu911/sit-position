@@ -7,7 +7,8 @@ import { Modal } from '../components/ui/Modal'
 import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
 import { useApp } from '../context/AppContext'
 import { useQualityChecks, useUpdateQualityCheck } from '../api/quality'
-import { usePhotos, DEMO_PROJECT_ID } from '../api/photos'
+import { usePhotos } from '../api/photos'
+import { NoProjectSelected, ProjectSelect, useSelectedProject } from '../components/ui/ProjectSelect'
 import { useTestRecords, useCreateTestRecord } from '../api/testRecords'
 import { useAssets } from '../api/sites'
 import { useTaskOptions } from '../api/tasks'
@@ -17,8 +18,10 @@ const flow = ['写真登録', 'AI画像認識', '品質確認', 'コメント入
 
 export default function Quality() {
   const { toast } = useApp()
-  const { data: items = [], isLoading, isError, refetch } = useQualityChecks()
-  const { data: photos = [] } = usePhotos()
+  // 対象案件は利用者が選ぶ（固定案件へ寄せない）。選択状態はURLで復元する。
+  const { projectId, setProjectId } = useSelectedProject()
+  const { data: items = [], isLoading, isError, refetch } = useQualityChecks(projectId)
+  const { data: photos = [] } = usePhotos(projectId)
   const updateMut = useUpdateQualityCheck()
   const [detail, setDetail] = useState<QualityItem | null>(null)
   const [anomalyOpen, setAnomalyOpen] = useState(false)
@@ -60,8 +63,15 @@ export default function Quality() {
         breadcrumb={[{ label: '品質管理' }]}
         title="品質管理"
         description="施工写真・検査項目の確認と承認"
-        actions={<button className="btn-default" onClick={() => setAnomalyOpen(true)}><ScanSearch size={15} />AI品質チェック</button>}
+        actions={
+          <div className="flex items-center gap-2">
+            <span className="text-[12px] text-ink-soft">対象案件</span>
+            <ProjectSelect projectId={projectId} onChange={setProjectId} />
+            <button className="btn-default" onClick={() => setAnomalyOpen(true)}><ScanSearch size={15} />AI品質チェック</button>
+          </div>
+        }
       />
+      {!projectId && <Panel><NoProjectSelected what="品質確認と試験記録" /></Panel>}
 
       {/* 集計 */}
       <div className="mb-3 grid grid-cols-7 gap-2">
@@ -202,9 +212,10 @@ function KV({ label, value }: { label: string; value: React.ReactNode }) {
 
 function TestRecordsPanel() {
   const { toast } = useApp()
-  const { data: records = [], isLoading } = useTestRecords(DEMO_PROJECT_ID)
-  const { data: assets = [] } = useAssets(DEMO_PROJECT_ID, undefined)
-  const { data: tasks = [] } = useTaskOptions(DEMO_PROJECT_ID)
+  const { projectId } = useSelectedProject()
+  const { data: records = [], isLoading } = useTestRecords(projectId)
+  const { data: assets = [] } = useAssets(projectId, undefined)
+  const { data: tasks = [] } = useTaskOptions(projectId)
   const createMut = useCreateTestRecord()
   const [open, setOpen] = useState(false)
   const empty = { test_type: '光損失測定', asset_id: '', task_id: '', measured_value: '', unit: 'dB', standard_value: '≤0.5dB', judge: '合格', instrument: '', comment: '' }
@@ -212,7 +223,7 @@ function TestRecordsPanel() {
 
   function submit() {
     createMut.mutate({
-      project_id: DEMO_PROJECT_ID, test_type: form.test_type,
+      project_id: projectId as number, test_type: form.test_type,
       asset_id: form.asset_id ? Number(form.asset_id) : null, task_id: form.task_id ? Number(form.task_id) : null,
       measured_value: form.measured_value || undefined, unit: form.unit || undefined, standard_value: form.standard_value || undefined,
       judge: form.judge, instrument: form.instrument || undefined, comment: form.comment || undefined,

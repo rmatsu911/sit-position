@@ -3,9 +3,6 @@ import { api } from '../lib/apiClient'
 import type { Photo, PhotoConfirm } from '../types'
 import type { Detection, RecogBox, Recognition } from '../data/aiPreview'
 
-// 施工写真関連画面が既定で対象とする案件ID（熊本中央局 光設備更改工事）
-export const DEMO_PROJECT_ID = 1
-
 // バックエンド PhotoOut に対応
 export interface ApiPhoto {
   id: number
@@ -75,10 +72,12 @@ export function toPhoto(p: ApiPhoto): Photo {
   }
 }
 
-export function usePhotos(projectId: number = DEMO_PROJECT_ID) {
+/** 選択中の案件の施工写真。未選択のときは取得しない（固定案件へ寄せない）。 */
+export function usePhotos(projectId: number | undefined) {
   return useQuery({
-    queryKey: ['photos', projectId],
+    queryKey: ['photos', projectId ?? null],
     queryFn: async () => (await api<ApiPhoto[]>(`/photos?project_id=${projectId}`)).map(toPhoto),
+    enabled: !!projectId,
   })
 }
 
@@ -146,7 +145,7 @@ export function useReportMissed() {
   })
 }
 
-export function useUploadPhoto(projectId: number = DEMO_PROJECT_ID) {
+export function useUploadPhoto(projectId: number) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (input: { file: File; project_id?: number; site_id?: number; asset_id?: number; task_id?: number; photo_type_id?: number; place?: string; comment?: string }) => {

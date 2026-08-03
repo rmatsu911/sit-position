@@ -6,7 +6,7 @@ import { Modal } from '../components/ui/Modal'
 import { StepRunner } from '../components/ui/StepRunner'
 import { useApp } from '../context/AppContext'
 import { downloadReport } from '../api/reports'
-import { DEMO_PROJECT_ID } from '../api/photos'
+import { ProjectSelect, useSelectedProject } from '../components/ui/ProjectSelect'
 
 // バックエンドで実生成に対応した帳票（type表示名 → APIキー）
 const REPORT_KEY: Record<string, string> = { 施工管理表: 'construction-management' }
@@ -37,6 +37,8 @@ const COLS: { key: keyof Row; label: string; w: number }[] = [
 export default function Reports() {
   const { toast, confirm } = useApp()
   const [type, setType] = useState(reportTypes[0])
+  // 帳票の対象案件は利用者が選ぶ（固定案件へ出力しない）
+  const { projectId, setProjectId } = useSelectedProject()
   const [rows, setRows] = useState<Row[]>(initialRows)
   const [output, setOutput] = useState<null | string>(null)
   const [preview, setPreview] = useState(false)
@@ -46,9 +48,10 @@ export default function Reports() {
   async function exportReport(format: 'pdf' | 'xlsx', label: string) {
     const key = REPORT_KEY[type]
     if (!key) { setOutput(label); return }
+    if (!projectId) { toast('対象案件を選択してください', 'ng'); return }
     setExporting(true)
     try {
-      await downloadReport(key, DEMO_PROJECT_ID, format)
+      await downloadReport(key, projectId, format)
       toast(`${label}を出力しました`, 'ok')
     } catch {
       toast('帳票の生成に失敗しました', 'ng')
@@ -75,7 +78,18 @@ export default function Reports() {
         breadcrumb={[{ label: '報告書' }]}
         title="報告書"
         description="各種帳票の作成・出力（Excel風）"
+        actions={
+          <div className="flex items-center gap-2">
+            <span className="text-[12px] text-ink-soft">対象案件</span>
+            <ProjectSelect projectId={projectId} onChange={setProjectId} />
+          </div>
+        }
       />
+      {!projectId && (
+        <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-ink">
+          帳票を出力するには、右上の「対象案件」から案件を選択してください。
+        </div>
+      )}
       <div className="flex gap-4">
         {/* 左：報告書種類 */}
         <div className="w-56 shrink-0">

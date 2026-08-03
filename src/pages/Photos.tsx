@@ -13,10 +13,11 @@ import { useApp } from '../context/AppContext'
 import { qualityJudgeFor, boxColor, type Recognition } from '../data/aiPreview'
 import {
   usePhotos, usePhotoAi, useUploadPhoto, useUpdatePhoto, useConfirmPhoto, useDeletePhoto,
-  usePredictionFeedback, useReportMissed, DEMO_PROJECT_ID,
+  usePredictionFeedback, useReportMissed,
 } from '../api/photos'
 import { useProjects } from '../api/projects'
 import { useSites, useAssets } from '../api/sites'
+import { NoProjectSelected, ProjectSelect, useSelectedProject } from '../components/ui/ProjectSelect'
 import { useTaskOptions } from '../api/tasks'
 import type { Photo } from '../types'
 
@@ -24,8 +25,10 @@ type ViewMode = 'thumb' | 'list' | 'process' | 'date' | 'equip'
 
 export default function Photos() {
   const { toast, confirm } = useApp()
-  const { data: photoData, isLoading, isError, refetch } = usePhotos()
-  const uploadMut = useUploadPhoto()
+  // 対象案件は利用者が選ぶ（固定案件へ寄せない）。選択状態はURLで復元する。
+  const { projectId, setProjectId } = useSelectedProject()
+  const { data: photoData, isLoading, isError, refetch } = usePhotos(projectId)
+  const uploadMut = useUploadPhoto(projectId ?? 0)
   const updateMut = useUpdatePhoto()
   const confirmMut = useConfirmPhoto()
   const deleteMut = useDeletePhoto()
@@ -40,7 +43,7 @@ export default function Photos() {
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [uploadPlace, setUploadPlace] = useState('')
   // アップロード時の Project→Site→Asset→Task 連動選択
-  const [upProject, setUpProject] = useState<number>(DEMO_PROJECT_ID)
+  const [upProject, setUpProject] = useState<number>(0)
   const [upSite, setUpSite] = useState<number | ''>('')
   const [upAsset, setUpAsset] = useState<number | ''>('')
   const [upTask, setUpTask] = useState<number | ''>('')
@@ -99,7 +102,7 @@ export default function Photos() {
   function startUpload() {
     setUploadFile(null)
     setUploadPlace('')
-    setUpProject(DEMO_PROJECT_ID)
+    setUpProject(projectId ?? 0)
     setUpSite(''); setUpAsset(''); setUpTask('')
     setUploadOpen(true)
   }
@@ -145,17 +148,23 @@ export default function Photos() {
   return (
     <div>
       <PageHeader
-        breadcrumb={[{ label: '案件一覧', to: '/projects' }, { label: '熊本中央局 光設備更改工事', to: '/projects/p1' }, { label: '施工写真' }]}
+        breadcrumb={projectId
+          ? [{ label: '案件一覧', to: '/projects' }, { label: '対象案件', to: `/projects/${projectId}` }, { label: '施工写真' }]
+          : [{ label: '案件一覧', to: '/projects' }, { label: '施工写真' }]}
         title="施工写真"
         description={`全 ${stats.total} 枚 ／ 未確認 ${stats.unconfirmed} 枚 ／ 再撮影依頼 ${stats.recheck} 枚 ／ お気に入り ${stats.fav} 枚`}
         actions={
           <>
+            <span className="text-[12px] text-ink-soft">対象案件</span>
+            <ProjectSelect projectId={projectId} onChange={setProjectId} />
             <button className="btn-default" onClick={() => selected.size ? toast('一括タグ設定は現在準備中です', 'info') : toast('写真を選択してください')}><Tag size={15} />一括タグ</button>
             <button className="btn-default" onClick={() => toast('この操作は現在準備中です')}><Download size={15} />ダウンロード</button>
             <button className="btn-primary" onClick={startUpload}><Upload size={15} />写真追加</button>
           </>
         }
       />
+
+      {!projectId && <Panel><NoProjectSelected what="施工写真" /></Panel>}
 
       {/* ツールバー：表示切替＋フィルタ */}
       <div className="mb-3 flex flex-wrap items-center gap-2 rounded border border-line bg-white px-3 py-2">
