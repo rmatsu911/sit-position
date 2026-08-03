@@ -36,13 +36,31 @@ export default function DailyReportPage() {
   const [reflectPreview, setReflectPreview] = useState<ReflectResult | null>(null)
   const [reflecting, setReflecting] = useState(false)
 
+  // 案件が変わったら、案件に紐づく状態をレンダリング前に捨てる。
+  // useEffect で消すと1回だけ前の案件の日報が描画されてしまうため、描画前に初期化する。
+  const [draftProjectId, setDraftProjectId] = useState(projectId)
+  if (draftProjectId !== projectId) {
+    setDraftProjectId(projectId)
+    setCurrentId('')
+    setDraft(null)
+    setReflectPreview(null)
+    setReflecting(false)
+  }
+
   // 選択中の日報を編集用 draft へ複製
   useEffect(() => {
-    if (!reports.length) return
+    // 読み込み中・エラー時は前の案件の日報を復元しない（draft は null のまま）
+    if (isLoading || isError) return
+    if (!reports.length) {
+      // 日報0件の案件では、前の案件の draft を必ず捨てる
+      setCurrentId('')
+      setDraft(null)
+      return
+    }
     const id = reports.some((r) => r.id === currentId) ? currentId : reports[0].id
     if (id !== currentId) setCurrentId(id)
     setDraft({ ...reports.find((r) => r.id === id)! })
-  }, [reports, currentId])
+  }, [reports, currentId, isLoading, isError])
 
   const current = draft
 
@@ -165,7 +183,8 @@ export default function DailyReportPage() {
               {reports.map((r) => {
                 return (
                   <li key={r.id}>
-                    <button onClick={() => setCurrentId(r.id)} className={`w-full px-3 py-2.5 text-left hover:bg-canvas ${currentId === r.id ? 'bg-sysken-50' : ''}`}>
+                    <button onClick={() => setCurrentId(r.id)} data-report-item={r.id}
+                      className={`w-full px-3 py-2.5 text-left hover:bg-canvas ${currentId === r.id ? 'bg-sysken-50' : ''}`}>
                       <div className="flex items-center justify-between">
                         <span className="text-[13px] font-medium text-ink">{r.date}</span>
                         <StatusBadge status={r.status} />
@@ -193,7 +212,7 @@ export default function DailyReportPage() {
         {/* 右：入力フォーム */}
         <div className="min-w-0 flex-1">
           <Panel>
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex items-center justify-between" data-daily-report={current.id}>
               <div className="flex items-center gap-2">
                 <h2 className="text-[15px] font-bold text-ink">{project?.name ?? ''}</h2>
                 <StatusBadge status={current.status} />

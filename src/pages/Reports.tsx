@@ -3,7 +3,6 @@ import { FileSpreadsheet, FileDown, FileText, Printer, Plus, Trash2, Eye, Filter
 import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
 import { Modal } from '../components/ui/Modal'
-import { StepRunner } from '../components/ui/StepRunner'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../auth/AuthContext'
 import { downloadReport } from '../api/reports'
@@ -62,10 +61,11 @@ export default function Reports() {
   const [preview, setPreview] = useState(false)
   const [exporting, setExporting] = useState(false)
 
-  // 実ファイル生成（PostgreSQL→FastAPI→帳票→ダウンロード）。未対応帳票はデモ表示。
+  // 実ファイル生成（PostgreSQL→FastAPI→帳票→ダウンロード）。
+  // 実装のない帳票は、生成したように見せず「未対応」と伝える。
   async function exportReport(format: 'pdf' | 'xlsx', label: string) {
     const key = REPORT_KEY[type]
-    if (!key) { setOutput(label); return }
+    if (!key) { setOutput(`${type}の${label}`); return }
     if (!projectId) { toast('対象案件を選択してください', 'ng'); return }
     setExporting(true)
     try {
@@ -103,7 +103,9 @@ export default function Reports() {
           </div>
         }
       />
-      {!projectId && <NoProjectSelected what="その案件の工程から帳票の下書き" />}
+      {/* 案件未選択のときは空状態だけを出す。
+          行追加・編集・削除・プレビュー・PDF/Excel/CSV出力・印刷はいずれも描画しない。 */}
+      {!projectId ? <Panel><NoProjectSelected what="その案件の工程から帳票の下書き" /></Panel> : (
       <div className="flex gap-4">
         {/* 左：報告書種類 */}
         <div className="w-56 shrink-0">
@@ -133,7 +135,7 @@ export default function Reports() {
             <div className="ml-auto flex items-center gap-1">
               <button className="btn-default btn-xs" disabled={exporting} onClick={() => exportReport('pdf', 'PDF')}><FileText size={14} />PDF出力</button>
               <button className="btn-default btn-xs" disabled={exporting} onClick={() => exportReport('xlsx', 'Excel')}><FileSpreadsheet size={14} />Excel出力</button>
-              <button className="btn-default btn-xs" onClick={() => setOutput('CSV')}><FileDown size={14} />CSV出力</button>
+              <button className="btn-default btn-xs" onClick={() => setOutput(`${type}のCSV出力`)}><FileDown size={14} />CSV出力</button>
               <button className="btn-default btn-xs" onClick={() => toast('この操作は現在準備中です')}><Printer size={14} />印刷</button>
             </div>
           </div>
@@ -184,15 +186,27 @@ export default function Reports() {
           </Panel>
         </div>
       </div>
+      )}
 
-      {/* 出力ステップ */}
-      <StepRunner open={!!output} title={`${output ?? ''}出力`} steps={['データを集計しています', '帳票を生成しています', '出力準備が完了しました']} finalNote="デモ環境のため、実ファイルは生成されません。" onClose={() => setOutput(null)} />
+      {/* 未対応の出力。生成中の演出は出さず、対応範囲をそのまま伝える */}
+      <Modal open={!!output} onClose={() => setOutput(null)} title="この出力は未対応です"
+        footer={<button className="btn-primary" onClick={() => setOutput(null)}>閉じる</button>}>
+        <div className="space-y-2 px-1 py-2 text-[13px] text-ink">
+          <p>{output} は、まだ実ファイルを生成できません。</p>
+          <p className="text-ink-soft">
+            現在、実ファイルを生成できるのは「施工管理表」の PDF ／ Excel です。
+            対象案件を選んで、その2つのボタンから出力してください。
+          </p>
+        </div>
+      </Modal>
 
       {/* プレビュー */}
       <Modal open={preview} onClose={() => setPreview(false)} title={`${type} プレビュー`} size="lg" footer={<button className="btn-primary" onClick={() => setPreview(false)}>閉じる</button>}>
         <div className="rounded border border-line p-6">
           <h3 className="text-center text-base font-bold">{type}</h3>
-          <p className="mt-1 text-center text-xs text-ink-soft">熊本中央局 光設備更改工事</p>
+          <p className="mt-1 text-center text-xs text-ink-soft" data-preview-project>
+            {project ? `${project.construction_number} ${project.name}` : '対象案件が未選択です'}
+          </p>
           <table className="mt-4 w-full border border-line text-[12px]">
             <thead><tr className="bg-slate-100">{COLS.map((c) => <th key={c.key} className="border border-line px-2 py-1 text-left">{c.label}</th>)}</tr></thead>
             <tbody>{rows.map((r, i) => <tr key={i}>{COLS.map((c) => <td key={c.key} className="border border-line px-2 py-1">{r[c.key] || '—'}</td>)}</tr>)}</tbody>

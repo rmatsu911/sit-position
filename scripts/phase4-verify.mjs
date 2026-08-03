@@ -54,8 +54,13 @@ const failedRequests = []
 // 権限テストなど「拒否されるのが正しい」通信は、期待済みとして分けて数える
 let expecting = null
 const expectedFailures = []
+// storage/ は git 管理外で、シードが指す写真の実ファイルはこの環境に存在しない。
+// アプリの不具合ではないため、対象を限定して既知として分けて数える。
+const KNOWN_MISSING = /\/files\/photos\/seed\/P-\d+\.jpg/
+const knownMissing = []
 const track = (entry) => {
   if (expecting && expecting.test(entry)) expectedFailures.push(entry)
+  else if (KNOWN_MISSING.test(entry)) knownMissing.push(entry)
   else failedRequests.push(entry)
 }
 page.on('console', (m) => {
@@ -92,6 +97,25 @@ async function openProjects(query = '') {
   await page.waitForTimeout(300)
 }
 
+/**
+ * 案件を切り替え、切替直後から一定時間その画面に出た値を連続サンプリングする。
+ * 「読み込み中に前の案件のデータが一瞬でも描画されないこと」を見るために使う。
+ */
+async function switchProjectAndSample(id, selector, attr, ms = 1800) {
+  const seen = new Set()
+  await page.selectOption('[data-project-select]', id)
+  // URLが新しい案件になった時点から数える（切替前のDOMは対象にしない）
+  await page.waitForFunction(
+    (v) => new URLSearchParams(location.search).get('project_id') === (v || null), id, { timeout: 10000 })
+  const end = Date.now() + ms
+  while (Date.now() < end) {
+    const vals = await page.$$eval(selector, (els, a) => els.map((e) => e.getAttribute(a)), attr)
+      .catch(() => [])
+    for (const v of vals) seen.add(v)
+  }
+  return [...seen]
+}
+
 const modal = () => page.locator('div[data-print="hide"]').last()
 // モーダルの主ボタン（保存／登録／更新）。画面のツールバーにも同名のボタンがあるため必ずモーダル内から選ぶ。
 const modalSubmit = () => modal().locator('button.btn-primary')
@@ -104,7 +128,10 @@ section('前提：検証開始時点の件数')
 await login(page, EMAIL)
 await openProjects('?per_page=100')
 const before = await rowIds()
+// 件数は表示行数ではなくAPIの total で見る（1ページに収まらなくても成り立つように）
+const beforeTotal = Number((await countText()).match(/^(\d+)件中/)[1])
 ok(before.length >= 8, '登録前から案件が8件以上ある', `${before.length}件`)
+ok(beforeTotal === before.length, '前提の件数は total と一致', `${beforeTotal}件`)
 
 // =====================================================================
 section('Step 1-2: 新規登録 → 1ページ目で強調表示')
@@ -129,13 +156,14 @@ ok(Number.isFinite(NEW_ID) && NEW_ID > 0, 'URLに登録した案件のIDが入�
 ok(url1.searchParams.get('page') === null, '1ページ目に戻っている', url1.search)
 
 const afterIds = await rowIds()
-ok(afterIds.length === before.length + 1, `一覧が ${before.length} → ${afterIds.length} 件に増える`)
+const afterTotal = Number((await countText()).match(/^(\d+)件中/)[1])
+ok(afterTotal === beforeTotal + 1, `total が ${beforeTotal} → ${afterTotal} 件に増える`)
 ok(afterIds[0] === NEW_ID, '登録した案件が1ページ目の先頭に出る', `先頭=${afterIds[0]}`)
 const highlighted = await page.$$eval('[data-new="true"]', (r) => r.length)
 ok(highlighted === 1, '登録した案件だけが強調表示される', `${highlighted}行`)
 ok((await page.locator(`[data-project-row="${NEW_ID}"]`).innerText()).includes('新規'),
    '「新規」バッジが付く')
-ok((await countText()).startsWith(`${afterIds.length}件中`),
+ok((await countText()).startsWith(`${afterTotal}件中`),
    'total は画面集計ではなくAPIの値', await countText())
 
 // =====================================================================
@@ -385,6 +413,120 @@ for (const [label, path] of [
 }
 
 // =====================================================================
+section('案件切替時のデータ分離（前の案件のデータを残さない）')
+// 案件A = 写真・日報のある案件、案件B = 今回作った案件（写真も日報も0件）
+const PROJECT_A = 1
+
+// --- 施工写真: A → B → 未選択 ---
+await page.goto(`${BASE}/photos?project_id=${PROJECT_A}`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(1200)
+const photosA = await page.$$eval('[data-photo-id]', (els) => els.map((e) => e.getAttribute('data-photo-id')))
+ok(photosA.length > 0, '案件Aには写真がある', `${photosA.length}枚`)
+
+// 切替直後から連続サンプリングし、読み込み中も含めて案件Aの写真が出ないことを見る
+const duringSwitch = await switchProjectAndSample(String(NEW_ID), '[data-photo-id]', 'data-photo-id')
+ok(!duringSwitch.some((id) => photosA.includes(id)),
+   '切替直後（読み込み中）も案件Aの写真を描画しない', `途中で見えたID: ${duringSwitch.length}件`)
+const photosB = await page.$$eval('[data-photo-id]', (els) => els.map((e) => e.getAttribute('data-photo-id')))
+ok(photosB.length === 0, '写真0件の案件Bへ切り替えると案件Aの写真が残らない', `${photosB.length}枚`)
+ok(!photosA.some((id) => photosB.includes(id)), '案件Aの写真IDが案件Bに混ざらない')
+ok((await page.locator('body').innerText()).includes('写真がまだ登録されていません'),
+   '案件Bでは0件であることを明示する')
+
+await page.selectOption('[data-project-select]', '')
+await page.waitForTimeout(1200)
+ok((await page.locator('[data-photo-id]').count()) === 0, '未選択へ戻すと写真が1枚も残らない')
+ok((await page.locator('[data-no-project]').count()) === 1, '未選択では空状態だけを出す')
+ok((await page.locator('button:has-text("写真追加")').count()) === 0, '未選択ではアップロードの入口を出さない')
+ok((await page.locator('button:has-text("一括タグ")').count()) === 0, '未選択では一括操作の入口を出さない')
+ok(new URL(page.url()).searchParams.get('project_id') === null, '未選択がURLにも反映される')
+
+// A へ戻すと再び表示される（クリアが片道でないこと）
+await page.selectOption('[data-project-select]', String(PROJECT_A))
+await page.waitForTimeout(1400)
+ok((await page.locator('[data-photo-id]').count()) === photosA.length,
+   '案件Aへ戻すと元の枚数が表示される', `${photosA.length}枚`)
+
+// A から直接「未選択」へ戻す経路も確認する（0件の案件を経由しない）
+const duringClear = await switchProjectAndSample('', '[data-photo-id]', 'data-photo-id')
+ok(!duringClear.some((id) => photosA.includes(id)),
+   '案件Aから直接未選択へ戻しても案件Aの写真を描画しない', `途中で見えたID: ${duringClear.length}件`)
+ok((await page.locator('[data-photo-id]').count()) === 0, '直接未選択へ戻すと写真が1枚も残らない')
+
+// --- 現場日報: 日報のある案件A → 日報0件の案件B ---
+await page.goto(`${BASE}/daily-report?project_id=${PROJECT_A}`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(1400)
+const reportsA = await page.$$eval('[data-report-item]', (els) => els.map((e) => e.getAttribute('data-report-item')))
+ok(reportsA.length > 0, '案件Aには日報がある', `${reportsA.length}件`)
+ok((await page.locator('[data-daily-report]').count()) === 1, '案件Aの日報が編集フォームに開いている')
+
+// 切替直後から連続サンプリングし、読み込み中も含めて案件Aの日報が出ないことを見る
+const reportsDuring = await switchProjectAndSample(String(NEW_ID), '[data-daily-report]', 'data-daily-report')
+ok(reportsDuring.length === 0,
+   '切替直後（読み込み中）も案件Aの日報を描画しない', `途中で見えた日報: ${reportsDuring.length}件`)
+await page.waitForTimeout(600)
+ok((await page.locator('[data-report-item]').count()) === 0, '日報0件の案件Bで案件Aの日報一覧が残らない')
+ok((await page.locator('[data-daily-report]').count()) === 0, '日報0件の案件Bで案件Aの日報が編集フォームに残らない')
+ok((await page.locator('body').innerText()).includes('この案件の日報はまだ登録されていません'),
+   '案件Bでは0件であることを明示する')
+
+await page.selectOption('[data-project-select]', '')
+await page.waitForTimeout(1200)
+ok((await page.locator('[data-daily-report]').count()) === 0, '未選択に戻すと日報を保持・表示しない')
+ok((await page.locator('[data-no-project]').count()) === 1, '未選択では空状態だけを出す')
+
+// --- 品質管理: 未選択では操作させない ---
+await page.goto(`${BASE}/quality`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(1000)
+ok((await page.locator('[data-no-project]').count()) === 1, '品質管理: 未選択では空状態だけを出す')
+ok((await page.locator('[data-add-test-record]').count()) === 0, '品質管理: 未選択では試験記録を追加できない')
+ok(!(await page.locator('body').innerText()).includes('品質確認フロー'), '品質管理: 未選択では品質フローを出さない')
+ok((await page.locator('button:has-text("AI品質チェック")').count()) === 0,
+   '品質管理: 未選択ではAI品質チェックを操作できない')
+await page.selectOption('[data-project-select]', String(PROJECT_A))
+await page.waitForTimeout(1400)
+ok((await page.locator('[data-add-test-record]').count()) === 1, '品質管理: 案件を選ぶと試験記録を追加できる')
+const qProjectA = (await page.locator('[data-quality-project]').first().innerText().catch(() => '')).trim()
+ok(qProjectA !== '' && qProjectA !== '—', '品質管理: 一覧の案件名が実データで埋まる', qProjectA)
+// 案件セレクタで選ばれている案件の表示と一致するか（案件IDでの固定分岐なら一致しない）
+const selectedLabel = (await page.$eval('[data-project-select]',
+  (el) => el.options[el.selectedIndex].textContent.trim())).replace(/\s+/g, ' ')
+ok(qProjectA.replace(/\s+/g, ' ') === selectedLabel,
+   '品質管理: 案件名は固定判定ではなく選択中の案件と一致する', `${qProjectA} / ${selectedLabel}`)
+
+// --- 報告書: 未選択では編集・出力させない / プレビューは選択案件を出す ---
+await page.goto(`${BASE}/reports`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(1000)
+ok((await page.locator('[data-no-project]').count()) === 1, '報告書: 未選択では空状態だけを出す')
+for (const label of ['行追加', 'プレビュー', 'PDF出力', 'Excel出力', 'CSV出力', '印刷']) {
+  ok((await page.locator(`button:has-text("${label}")`).count()) === 0,
+     `報告書: 未選択では「${label}」を操作できない`)
+}
+await page.selectOption('[data-project-select]', String(NEW_ID))
+await page.waitForTimeout(1400)
+ok((await page.locator('button:has-text("プレビュー")').count()) === 1, '報告書: 案件を選ぶと操作できる')
+await page.click('button:has-text("プレビュー")')
+await page.waitForTimeout(700)
+const previewLabel = (await page.locator('[data-preview-project]').innerText()).trim()
+ok(previewLabel.includes(NUMBER), 'report プレビューが選択案件の工事番号を表示', previewLabel)
+ok(previewLabel.includes(NAME_OTHER_TAB) || previewLabel.includes(NAME),
+   'report プレビューが選択案件の工事名を表示', previewLabel)
+await page.click('button:has-text("閉じる")')
+await page.waitForTimeout(400)
+
+// --- 固定案件参照の再検索 ---
+let auditOut
+let auditOk = true
+try {
+  auditOut = execFileSync('node', ['scripts/fixed-project-audit.mjs'], { encoding: 'utf8' })
+} catch (e) {
+  auditOk = false
+  auditOut = String(e.stdout ?? e)
+}
+ok(auditOk && /残存 0 件/.test(auditOut),
+   '固定案件名の判定と DEMO_PROJECT_ID の残存が0件', auditOut.trim().split('\n').pop())
+
+// =====================================================================
 section('Step 13: 別タブで更新したあとの再取得')
 await openProjects('?per_page=100')
 const tab2 = await context.newPage()
@@ -420,6 +562,7 @@ section('コンソール・通信')
 ok(consoleErrors.length === 0, 'コンソールエラー 0', consoleErrors.slice(0, 3).join(' | '))
 ok(failedRequests.length === 0, '想定外の失敗リクエスト 0', failedRequests.slice(0, 5).join(' | '))
 console.log(`  （権限テストで想定どおり拒否された通信: ${expectedFailures.length}件）`)
+console.log(`  （シード写真の実ファイル未配置による取得失敗: ${knownMissing.length}件 ※storage は git 管理外）`)
 
 console.log(`\n検証で作成した案件: ${NUMBER} / id=${NEW_ID}（削除しない）`)
 console.log(`結果: ${pass} passed, ${fail} failed`)

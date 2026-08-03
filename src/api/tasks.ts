@@ -123,28 +123,31 @@ export function invalidateTasks(qc: ReturnType<typeof useQueryClient>, projectId
   ])
 }
 
-export function useCreateTask(projectId: number) {
+/** 工程の追加。登録先の案件が決まっていないときは実行しない（既定値で登録しない）。 */
+export function useCreateTask(projectId: number | undefined) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: TaskWriteInput) =>
-      api<ApiTask>(`/projects/${projectId}/tasks`, { method: 'POST', body: input }),
-    onSuccess: async () => { await invalidateTasks(qc, projectId) },
+    mutationFn: (input: TaskWriteInput) => {
+      if (!projectId) throw new Error('対象の案件が選択されていません')
+      return api<ApiTask>(`/projects/${projectId}/tasks`, { method: 'POST', body: input })
+    },
+    onSuccess: async () => { if (projectId) await invalidateTasks(qc, projectId) },
   })
 }
 
-export function useUpdateTask(projectId: number) {
+export function useUpdateTask(projectId: number | undefined) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...input }: TaskWriteInput & { id: number }) => updateTaskRequest(id, input),
-    onSuccess: async () => { await invalidateTasks(qc, projectId) },
+    onSuccess: async () => { if (projectId) await invalidateTasks(qc, projectId) },
   })
 }
 
-export function useDeleteTask(projectId: number) {
+export function useDeleteTask(projectId: number | undefined) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: number) => api<void>(`/tasks/${id}`, { method: 'DELETE' }),
-    onSuccess: async () => { await invalidateTasks(qc, projectId) },
+    onSuccess: async () => { if (projectId) await invalidateTasks(qc, projectId) },
   })
 }
 

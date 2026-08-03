@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
+import { NoProjectSelected } from '../components/ui/ProjectSelect'
 import { StatusBadge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
 import { ContextMenu, type MenuItem } from '../components/ui/ContextMenu'
@@ -54,15 +55,16 @@ export default function Schedule() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: projects = [] } = useProjects()
   const requestedId = Number(id ?? searchParams.get('project_id'))
-  const projectId = Number.isFinite(requestedId) && requestedId > 0 ? requestedId : projects[0]?.id
+  // 指定が無いときに先頭の案件を勝手に開かない（選ぶのは利用者）
+  const projectId = Number.isFinite(requestedId) && requestedId > 0 ? requestedId : undefined
   const { data: project } = useProject(projectId)
   const { data: apiTasks, isLoading: tasksLoading, isError: tasksError } = useProjectTasks(projectId)
   // マイルストーンは milestones / milestone_types が正データ。工程名からは判定しない。
   // 対象案件の project_id をサーバーへ渡し、1回の取得でまとめて受け取る（行ごとの取得はしない）。
   const { data: milestoneData } = useCrossMilestones(EMPTY_MILESTONE_FILTERS, 'project', projectId)
-  const createTaskMutation = useCreateTask(projectId ?? 0)
-  const updateTaskMutation = useUpdateTask(projectId ?? 0)
-  const deleteTaskMutation = useDeleteTask(projectId ?? 0)
+  const createTaskMutation = useCreateTask(projectId)
+  const updateTaskMutation = useUpdateTask(projectId)
+  const deleteTaskMutation = useDeleteTask(projectId)
   const [tasks, setTasks] = useState<WbsTask[]>([])
 
   // API取得（read）→ ローカルstateへ。取得失敗時は固定ダミーへフォールバックしない。
@@ -335,6 +337,10 @@ export default function Schedule() {
 
       <ScheduleTabs projectId={projectId} />
 
+      {/* 案件未選択のときは、上の案件セレクタと空状態だけを出す */}
+      {!projectId && <Panel><NoProjectSelected what="この案件の工程（WBS・ガントチャート）" /></Panel>}
+
+      {projectId && <>
       {/* ツールバー */}
       <div className="mb-2 flex flex-wrap items-center gap-1 rounded border border-line bg-white px-2 py-1.5">
         {toolbarGroups.map((group, gi) => (
@@ -523,6 +529,7 @@ export default function Schedule() {
         {/* 凡例 */}
         <GanttLegend note="クリティカル工程は赤の依存線で表示 ／ 工程バーはドラッグで移動・右端で期間変更" />
       </Panel>
+      </>}
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
 

@@ -7,6 +7,7 @@ import { Modal } from '../components/ui/Modal'
 import { PhotoPlaceholder } from '../components/ui/PhotoPlaceholder'
 import { useApp } from '../context/AppContext'
 import { useQualityChecks, useUpdateQualityCheck } from '../api/quality'
+import { useProject } from '../api/projects'
 import { usePhotos } from '../api/photos'
 import { NoProjectSelected, ProjectSelect, useSelectedProject } from '../components/ui/ProjectSelect'
 import { useTestRecords, useCreateTestRecord } from '../api/testRecords'
@@ -20,12 +21,22 @@ export default function Quality() {
   const { toast } = useApp()
   // 対象案件は利用者が選ぶ（固定案件へ寄せない）。選択状態はURLで復元する。
   const { projectId, setProjectId } = useSelectedProject()
+  const { data: project } = useProject(projectId)
   const { data: items = [], isLoading, isError, refetch } = useQualityChecks(projectId)
   const { data: photos = [] } = usePhotos(projectId)
   const updateMut = useUpdateQualityCheck()
   const [detail, setDetail] = useState<QualityItem | null>(null)
   const [anomalyOpen, setAnomalyOpen] = useState(false)
   const [comment, setComment] = useState('')
+
+  // 案件が変わったら、開いている詳細・入力中のコメントを描画前に捨てる
+  const [stateProjectId, setStateProjectId] = useState(projectId)
+  if (stateProjectId !== projectId) {
+    setStateProjectId(projectId)
+    setDetail(null)
+    setComment('')
+    setAnomalyOpen(false)
+  }
 
   const photoById = useMemo(() => new Map(photos.map((p) => [p.id, p])), [photos])
 
@@ -57,6 +68,27 @@ export default function Quality() {
     { label: '承認済み', value: summary.承認済み, tone: 'ok' },
   ]
 
+  // 案件未選択のときは、案件セレクタと空状態だけを出す。
+  // 集計・品質確認フロー・一覧・試験記録・AI品質チェックはいずれも描画しない。
+  if (!projectId) {
+    return (
+      <div>
+        <PageHeader
+          breadcrumb={[{ label: '品質管理' }]}
+          title="品質管理"
+          description="対象案件を選択してください"
+          actions={
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-ink-soft">対象案件</span>
+              <ProjectSelect projectId={projectId} onChange={setProjectId} />
+            </div>
+          }
+        />
+        <Panel><NoProjectSelected what="品質確認と試験記録" /></Panel>
+      </div>
+    )
+  }
+
   return (
     <div>
       <PageHeader
@@ -71,7 +103,6 @@ export default function Quality() {
           </div>
         }
       />
-      {!projectId && <Panel><NoProjectSelected what="品質確認と試験記録" /></Panel>}
 
       {/* 集計 */}
       <div className="mb-3 grid grid-cols-7 gap-2">
@@ -124,7 +155,7 @@ export default function Quality() {
                 return (
                   <tr key={q.id} className="cursor-pointer hover:bg-canvas" onClick={() => { setDetail(q); setComment('') }}>
                     <td className="py-1.5 pl-3"><div className="h-10 w-14 overflow-hidden rounded">{ph ? <PhotoPlaceholder type={ph.colorKey} className="h-full w-full" /> : '—'}</div></td>
-                    <td className="px-3 text-ink-soft">{q.projectId === 'p1' ? '熊本中央局' : q.projectId === 'p3' ? '菊陽町' : '玉名局'}</td>
+                    <td className="px-3 text-ink-soft" data-quality-project>{project ? `${project.construction_number} ${project.name}` : '—'}</td>
                     <td className="px-3">{q.process}</td>
                     <td className="px-3">{q.inspectItem}</td>
                     <td className="px-3"><StatusBadge status={q.judge} /></td>
@@ -144,7 +175,7 @@ export default function Quality() {
       )}
 
       {/* 試験記録（光工事：光損失/OTDR/導通確認） */}
-      <TestRecordsPanel />
+      <TestRecordsPanel key={projectId} projectId={projectId} />
 
       {/* 詳細モーダル */}
       <Modal open={!!detail} onClose={() => setDetail(null)} title={detail ? `品質確認：${detail.inspectItem}` : ''} size="lg"
@@ -210,9 +241,8 @@ function KV({ label, value }: { label: string; value: React.ReactNode }) {
   return <div className="flex justify-between gap-3"><span className="shrink-0 text-ink-soft">{label}</span><span className="text-right text-ink">{value}</span></div>
 }
 
-function TestRecordsPanel() {
+function TestRecordsPanel({ projectId }: { projectId: number }) {
   const { toast } = useApp()
-  const { projectId } = useSelectedProject()
   const { data: records = [], isLoading } = useTestRecords(projectId)
   const { data: assets = [] } = useAssets(projectId, undefined)
   const { data: tasks = [] } = useTaskOptions(projectId)
@@ -222,8 +252,10 @@ function TestRecordsPanel() {
   const [form, setForm] = useState(empty)
 
   function submit() {
+    // 登録先の案件は実行前に検証する（強制キャストで通さない）
+    if (!projectId) { toast('対象案件を選択してください', 'ng'); return }
     createMut.mutate({
-      project_id: projectId as number, test_type: form.test_type,
+      project_id: projectId, test_type: form.test_type,
       asset_id: form.asset_id ? Number(form.asset_id) : null, task_id: form.task_id ? Number(form.task_id) : null,
       measured_value: form.measured_value || undefined, unit: form.unit || undefined, standard_value: form.standard_value || undefined,
       judge: form.judge, instrument: form.instrument || undefined, comment: form.comment || undefined,
@@ -235,7 +267,7 @@ function TestRecordsPanel() {
 
   return (
     <Panel title="試験記録（光損失 / OTDR / 導通確認）" className="mt-3" bodyClassName="p-0"
-      action={<button className="btn-default btn-xs" onClick={() => setOpen(true)}>＋ 試験記録を追加</button>}>
+      action={<button className="btn-default btn-xs" data-add-test-record onClick={() => setOpen(true)}>＋ 試験記録を追加</button>}>
       <div className="thin-scroll overflow-x-auto">
         <table className="grid-table text-[13px]">
           <thead className="bg-canvas text-[12.5px] text-ink-soft"><tr>{['試験種別', '設備', '工程', '測定値', '基準値', '判定', '測定器', '測定者'].map((h) => <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>)}</tr></thead>

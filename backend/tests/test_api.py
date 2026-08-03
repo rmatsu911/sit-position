@@ -2475,3 +2475,59 @@ def test_p4_empty_result_is_distinguishable_from_forbidden(client, p4):
     assert opts.status_code == 200
     assert opts.json() == {"statuses": [], "areas": [], "departments": [], "managers": [],
                            "companies": []}
+
+
+def test_p4_upload_rejects_missing_project(client, p4):
+    """案件が決まっていない写真アップロードは、既定値で登録されず拒否されること。
+
+    画面側は案件未選択ならアップロード自体をさせないが、API単体でも
+    存在しない案件ID（0 など）を受け付けないことを固定する。
+    """
+    from app.models import Photo
+    from tests.conftest import TestingSessionLocal
+
+    head = _p4_head(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        before = s.query(Photo).count()
+
+    files = {"file": ("t.jpg", b"not-an-image", "image/jpeg")}
+    zero = client.post("/api/photos", data={"project_id": "0"}, files=files, headers=head)
+    assert zero.status_code == 404, zero.text
+    missing = client.post("/api/photos", data={"project_id": "99999999"}, files=files, headers=head)
+    assert missing.status_code == 404, missing.text
+    # 案件IDそのものが無いリクエストは通さない
+    no_project = client.post("/api/photos", data={}, files=files, headers=head)
+    assert no_project.status_code in (400, 422), no_project.text
+
+    with TestingSessionLocal() as s:
+        assert s.query(Photo).count() == before, "拒否したのに写真が作られている"
+
+
+def test_p4_test_record_requires_accessible_project(client, p4):
+    """試験記録も、案件スコープ外・存在しない案件には登録できないこと。"""
+    from app.models import TestRecord
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        before = s.query(TestRecord).count()
+
+    body = {"project_id": p4["hit"], "test_type": "光損失測定", "judge": "合格"}
+    ok_res = client.post("/api/test-records", json=body, headers=_p4_head(client, "pm@test.jp"))
+    assert ok_res.status_code in (200, 201), ok_res.text
+
+    # 割当外の案件（協力会社ロール）
+    ng = client.post(
+        "/api/test-records",
+        json={**body, "project_id": p4["area_ng"]},
+        headers=_p4_head(client, "p4fw@test.jp"),
+    )
+    assert ng.status_code == 403, ng.text
+
+    missing = client.post(
+        "/api/test-records", json={**body, "project_id": 99999999},
+        headers=_p4_head(client, "pm@test.jp"),
+    )
+    assert missing.status_code == 404, missing.text
+
+    with TestingSessionLocal() as s:
+        assert s.query(TestRecord).count() == before + 1, "拒否した分まで登録されている"

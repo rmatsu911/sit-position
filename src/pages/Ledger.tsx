@@ -2,8 +2,8 @@ import { useMemo, useState } from 'react'
 import { FileDown, FileSpreadsheet, Printer, Filter, Copy } from 'lucide-react'
 import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
+import { Modal } from '../components/ui/Modal'
 import { StatusBadge } from '../components/ui/Badge'
-import { StepRunner } from '../components/ui/StepRunner'
 import { useApp } from '../context/AppContext'
 import { useLedger } from '../api/ledger'
 import { yen } from '../lib/format'
@@ -36,7 +36,7 @@ export default function Ledger() {
   const [selectedRow, setSelectedRow] = useState<string | null>(null)
   const [sortKey, setSortKey] = useState<string>('workNo')
   const [asc, setAsc] = useState(true)
-  const [output, setOutput] = useState<null | { title: string; steps: string[] }>(null)
+  const [output, setOutput] = useState<string | null>(null)
 
   const rows = useMemo(() => {
     const r = [...ledgerRows]
@@ -79,8 +79,8 @@ export default function Ledger() {
           <>
             <button className="btn-default" onClick={() => toast('この操作は現在準備中です')}><Filter size={15} />列固定</button>
             <button className="btn-default" onClick={() => toast('この操作は現在準備中です')}><Copy size={15} />コピー</button>
-            <button className="btn-default" onClick={() => setOutput({ title: 'CSV出力', steps: ['データを集計しています', 'CSVを生成しています', '出力準備が完了しました'] })}><FileDown size={15} />CSV出力</button>
-            <button className="btn-default" onClick={() => setOutput({ title: 'Excel出力', steps: ['データを集計しています', 'Excel帳票を生成しています', '出力準備が完了しました'] })}><FileSpreadsheet size={15} />Excel出力</button>
+            <button className="btn-default" onClick={() => setOutput('工事台帳のCSV出力')}><FileDown size={15} />CSV出力</button>
+            <button className="btn-default" onClick={() => setOutput('工事台帳のExcel出力')}><FileSpreadsheet size={15} />Excel出力</button>
             <button className="btn-default" onClick={() => toast('この操作は現在準備中です')}><Printer size={15} />印刷</button>
           </>
         }
@@ -141,7 +141,16 @@ export default function Ledger() {
         </div>
       </Panel>
 
-      <StepRunner open={!!output} title={output?.title ?? ''} steps={output?.steps ?? []} finalNote="デモ環境のため、実ファイルは生成されません。" onClose={() => setOutput(null)} />
+      {/* 未対応の出力。生成中の演出は出さず、未対応であることをそのまま伝える */}
+      <Modal open={!!output} onClose={() => setOutput(null)} title="この出力は未対応です"
+        footer={<button className="btn-primary" onClick={() => setOutput(null)}>閉じる</button>}>
+        <div className="space-y-2 px-1 py-2 text-[13px] text-ink">
+          <p>{output} は、まだ実ファイルを生成できません。</p>
+          <p className="text-ink-soft">
+            実ファイルを生成できる帳票は「報告書」画面の施工管理表（PDF ／ Excel）です。
+          </p>
+        </div>
+      </Modal>
     </div>
   )
 }

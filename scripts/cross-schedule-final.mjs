@@ -71,7 +71,9 @@ async function measureScrollSync(px) {
 console.log('== 1. 既存「案件工程」の縦スクロール（左一覧と右ガント） ==')
 // 320px 以上スクロールできる状態にするため、内容が枠を十分に超える高さで確認する
 await page.setViewportSize({ width: 1920, height: 720 })
-await page.goto(`${BASE}/schedule`, { waitUntil: 'networkidle' })
+// Ver.0.4 以降、/schedule は案件を自動選択しない。
+// この計測が見ていたのは自動選択されていた先頭案件なので、同じ案件を明示して開く。
+await page.goto(`${BASE}/projects/1/schedule`, { waitUntil: 'networkidle' })
 await page.waitForSelector('text=基準工程', { timeout: 15000 })
 await page.waitForTimeout(500)
 const legacy = await measureScrollSync(320)
@@ -117,7 +119,9 @@ const legacyDeps = await page.evaluate(() => {
   return svg ? svg.querySelectorAll('path').length : 0
 })
 ok(legacyDeps > 0, '依存線が描画されている（案件工程・先行工程あり）', `${legacyDeps} パス`)
-await page.goto(`${BASE}/schedule`, { waitUntil: 'networkidle' })
+// Ver.0.4 以降、/schedule は案件を自動選択しない。
+// この計測が見ていたのは自動選択されていた先頭案件なので、同じ案件を明示して開く。
+await page.goto(`${BASE}/projects/1/schedule`, { waitUntil: 'networkidle' })
 await page.waitForSelector('text=基準工程', { timeout: 15000 })
 await page.waitForTimeout(400)
 

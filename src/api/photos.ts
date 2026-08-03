@@ -145,12 +145,17 @@ export function useReportMissed() {
   })
 }
 
-export function useUploadPhoto(projectId: number) {
+/**
+ * 写真アップロード。登録先の案件は呼び出し側が明示する（`project_id` は必須）。
+ * 未選択のまま 0 などの既定値で登録しないため、フックは案件IDを持たない。
+ */
+export function useUploadPhoto() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: { file: File; project_id?: number; site_id?: number; asset_id?: number; task_id?: number; photo_type_id?: number; place?: string; comment?: string }) => {
+    mutationFn: (input: { file: File; project_id: number; site_id?: number; asset_id?: number; task_id?: number; photo_type_id?: number; place?: string; comment?: string }) => {
+      if (!input.project_id) throw new Error('登録先の案件が選択されていません')
       const form = new FormData()
-      form.set('project_id', String(input.project_id ?? projectId))
+      form.set('project_id', String(input.project_id))
       form.set('file', input.file)
       if (input.site_id != null) form.set('site_id', String(input.site_id))
       if (input.asset_id != null) form.set('asset_id', String(input.asset_id))

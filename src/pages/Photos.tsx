@@ -15,7 +15,7 @@ import {
   usePhotos, usePhotoAi, useUploadPhoto, useUpdatePhoto, useConfirmPhoto, useDeletePhoto,
   usePredictionFeedback, useReportMissed,
 } from '../api/photos'
-import { useProjects } from '../api/projects'
+import { useProject, useProjects } from '../api/projects'
 import { useSites, useAssets } from '../api/sites'
 import { NoProjectSelected, ProjectSelect, useSelectedProject } from '../components/ui/ProjectSelect'
 import { useTaskOptions } from '../api/tasks'
@@ -27,8 +27,9 @@ export default function Photos() {
   const { toast, confirm } = useApp()
   // 対象案件は利用者が選ぶ（固定案件へ寄せない）。選択状態はURLで復元する。
   const { projectId, setProjectId } = useSelectedProject()
+  const { data: project } = useProject(projectId)
   const { data: photoData, isLoading, isError, refetch } = usePhotos(projectId)
-  const uploadMut = useUploadPhoto(projectId ?? 0)
+  const uploadMut = useUploadPhoto()
   const updateMut = useUpdatePhoto()
   const confirmMut = useConfirmPhoto()
   const deleteMut = useDeletePhoto()
@@ -55,13 +56,34 @@ export default function Photos() {
   const [classTargetId, setClassTargetId] = useState<string>('')
   const [reflected, setReflected] = useState<Set<string>>(new Set())
 
+  // 案件が変わったら、案件に紐づく状態をレンダリング前に捨てる。
+  // useEffect で消すと1回だけ前の案件の写真が描画されてしまうため、描画前に初期化する。
+  const [photosProjectId, setPhotosProjectId] = useState(projectId)
+  if (photosProjectId !== projectId) {
+    setPhotosProjectId(projectId)
+    setPhotos([])
+    setSelected(new Set())
+    setLightbox(null)
+    setClassTargetId('')
+    setReflected(new Set())
+    // タグの選択肢は案件ごとに違うため、絞り込みも初期化する
+    setTagFilter('all')
+    setConfirmFilter('all')
+    setOnlyFav(false)
+    setUploadOpen(false)
+  }
+
   // API から取得した写真をローカル状態へ反映（即時操作のためローカルに保持）
   useEffect(() => {
-    if (photoData) {
-      setPhotos(photoData)
-      if (photoData.length && !photoData.some((p) => p.id === classTargetId)) {
-        setClassTargetId(photoData[0].id)
-      }
+    // 取得前・未選択のときは前の案件の写真を残さない
+    if (!photoData) {
+      setPhotos([])
+      setClassTargetId('')
+      return
+    }
+    setPhotos(photoData)
+    if (photoData.length && !photoData.some((p) => p.id === classTargetId)) {
+      setClassTargetId(photoData[0].id)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [photoData])
@@ -100,14 +122,18 @@ export default function Photos() {
 
   // アップロード（API連携）
   function startUpload() {
+    // 案件未選択のままアップロード画面を開かない（登録先が決まらない）
+    if (!projectId) { toast('対象案件を選択してください', 'ng'); return }
     setUploadFile(null)
     setUploadPlace('')
-    setUpProject(projectId ?? 0)
+    setUpProject(projectId)
     setUpSite(''); setUpAsset(''); setUpTask('')
     setUploadOpen(true)
   }
   function runUpload() {
     if (!uploadFile) return
+    // 登録先の案件は実行前に検証する（0 などの既定値で登録しない）
+    if (!upProject) { toast('登録先の案件を選択してください', 'ng'); return }
     uploadMut.mutate(
       {
         file: uploadFile, place: uploadPlace || undefined, project_id: upProject,
@@ -145,12 +171,31 @@ export default function Photos() {
     fav: photos.filter((p) => p.favorite).length,
   }
 
+  // 案件未選択のときは、案件セレクタと空状態だけを出す。
+  // 一覧・アップロード・一括操作は描画しない（前の案件の写真も残さない）。
+  if (!projectId) {
+    return (
+      <div>
+        <PageHeader
+          breadcrumb={[{ label: '案件一覧', to: '/projects' }, { label: '施工写真' }]}
+          title="施工写真"
+          description="対象案件を選択してください"
+          actions={
+            <>
+              <span className="text-[12px] text-ink-soft">対象案件</span>
+              <ProjectSelect projectId={projectId} onChange={setProjectId} />
+            </>
+          }
+        />
+        <Panel><NoProjectSelected what="施工写真" /></Panel>
+      </div>
+    )
+  }
+
   return (
     <div>
       <PageHeader
-        breadcrumb={projectId
-          ? [{ label: '案件一覧', to: '/projects' }, { label: '対象案件', to: `/projects/${projectId}` }, { label: '施工写真' }]
-          : [{ label: '案件一覧', to: '/projects' }, { label: '施工写真' }]}
+        breadcrumb={[{ label: '案件一覧', to: '/projects' }, { label: '対象案件', to: `/projects/${projectId}` }, { label: '施工写真' }]}
         title="施工写真"
         description={`全 ${stats.total} 枚 ／ 未確認 ${stats.unconfirmed} 枚 ／ 再撮影依頼 ${stats.recheck} 枚 ／ お気に入り ${stats.fav} 枚`}
         actions={
@@ -163,8 +208,6 @@ export default function Photos() {
           </>
         }
       />
-
-      {!projectId && <Panel><NoProjectSelected what="施工写真" /></Panel>}
 
       {/* ツールバー：表示切替＋フィルタ */}
       <div className="mb-3 flex flex-wrap items-center gap-2 rounded border border-line bg-white px-3 py-2">
@@ -229,6 +272,7 @@ export default function Photos() {
       {lightbox !== null && filtered[lightbox] && (
         <Lightbox
           photo={filtered[lightbox]}
+          projectLabel={project ? `${project.construction_number} ${project.name}` : '—'}
           hasPrev={lightbox > 0}
           hasNext={lightbox < filtered.length - 1}
           onPrev={() => setLightbox((i) => (i! > 0 ? i! - 1 : i))}
@@ -439,7 +483,8 @@ function Cand({ label, value, strong }: { label: string; value: string; strong?:
 
 function PhotoCard({ photo, onOpen, onFav, selected, onSelect }: { photo: Photo; onOpen: () => void; onFav: () => void; selected?: boolean; onSelect?: () => void }) {
   return (
-    <div className={`group relative overflow-hidden rounded border bg-white ${selected ? 'border-sysken-500 ring-1 ring-sysken-300' : 'border-line'}`}>
+    <div data-photo-id={photo.id}
+      className={`group relative overflow-hidden rounded border bg-white ${selected ? 'border-sysken-500 ring-1 ring-sysken-300' : 'border-line'}`}>
       {onSelect && (
         <input type="checkbox" checked={selected} onChange={onSelect} className="absolute left-2 top-2 z-10 h-4 w-4 accent-sysken-500" onClick={(e) => e.stopPropagation()} />
       )}
@@ -516,7 +561,7 @@ function PhotoTable({ photos, onOpen, onFav, selected, onSelect }: { photos: Pho
           </thead>
           <tbody>
             {photos.map((p) => (
-              <tr key={p.id} className="hover:bg-canvas">
+              <tr key={p.id} data-photo-id={p.id} className="hover:bg-canvas">
                 <td className="px-3"><input type="checkbox" checked={selected.has(p.id)} onChange={() => onSelect(p.id)} className="h-4 w-4 accent-sysken-500" /></td>
                 <td className="py-1.5 pl-3"><div className="h-10 w-14 cursor-pointer overflow-hidden rounded" onClick={() => onOpen(p)}><PhotoImage url={p.thumbUrl ?? p.imageUrl} type={p.colorKey} className="h-full w-full" /></div></td>
                 <td className="px-3 tabular-nums text-ink-soft">{p.no}</td>
@@ -538,8 +583,8 @@ function PhotoTable({ photos, onOpen, onFav, selected, onSelect }: { photos: Pho
   )
 }
 
-function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNext, onClose, onFav, onConfirm, onComment, onDelete }: {
-  photo: Photo; hasPrev: boolean; hasNext: boolean; reflected: boolean; onReflect: (recog: Partial<Recognition>) => void
+function Lightbox({ photo, projectLabel, hasPrev, hasNext, reflected, onReflect, onPrev, onNext, onClose, onFav, onConfirm, onComment, onDelete }: {
+  photo: Photo; projectLabel: string; hasPrev: boolean; hasNext: boolean; reflected: boolean; onReflect: (recog: Partial<Recognition>) => void
   onPrev: () => void; onNext: () => void; onClose: () => void
   onFav: () => void; onConfirm: (v: Photo['confirm']) => void; onComment: (text: string) => void; onDelete: () => void
 }) {
@@ -660,7 +705,7 @@ function Lightbox({ photo, hasPrev, hasNext, reflected, onReflect, onPrev, onNex
           <dl className="space-y-2 px-4 py-3 text-[13px]">
             <Row label="撮影日時" value={photo.takenAt} />
             <Row label="撮影者" value={photo.photographer} />
-            <Row label="案件名" value="熊本中央局 光設備更改工事" />
+            <Row label="案件名" value={projectLabel} />
             <Row label="工種" value={photo.workType} />
             <Row label="工程" value={photo.process} />
             <Row label="設備" value={photo.equipment} />
