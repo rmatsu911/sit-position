@@ -3,8 +3,14 @@
 React(静的) + FastAPI(Docker) + PostgreSQL を Render に公開する手順。
 アプリのコードは変更せず、`render.yaml`（Blueprint）と環境変数だけで動く。
 
-前提: GitHub リポジトリ `rmatsu911/sit-position`、ブランチ `claude/session-rkd93u`。
+前提: GitHub リポジトリ `rmatsu911/sit-position`、ブランチ **`main`**。
 Render の無料アカウント（https://render.com/）。
+
+> Ver.0.3 Phase 3 までの作業ブランチ `claude/session-rkd93u` は `main` へマージ済み
+> （PR #1）。以降のリリースは `main` を参照する。`render.yaml` には `branch:` を
+> 書いていないため、**どのブランチを追うかは Render 管理画面の各サービス設定
+> （Settings → Build & Deploy → Branch）で決まる**。作業ブランチのまま作成した
+> 環境は、管理画面で `main` に変更する必要がある（コードの変更では切り替わらない）。
 
 ## 1. Blueprint で作成
 
@@ -66,3 +72,16 @@ Render の無料アカウント（https://render.com/）。
   そのまま使える（マネージド PostgreSQL を用意し `DATABASE_URL` を渡す）。
 - Docker が使える1台のサーバ/VPS なら、リポジトリの `docker-compose.yml` で
   postgres/backend/frontend を一括起動できる。
+
+## リリース時に確認すること
+
+| 確認項目 | 確認方法 |
+|---|---|
+| 参照ブランチ | Render 管理画面 → 各サービス → Settings → Build & Deploy → Branch が `main` |
+| 実環境のリビジョン | 各サービスの Events / Deploys 画面で、最新デプロイのコミットSHA |
+| migration の適用 | backend の起動ログに `alembic upgrade head` が成功して出ているか。現在の head は `d5a91c3e07b2` |
+| API とフロントのリビジョン一致 | backend と frontend の最新デプロイが同じコミットSHAか |
+| 疎通 | `<backend>/health` が `{"status":"ok",...}`、frontend のログイン後に主要画面が開く |
+
+これらは Render 管理画面（またはインターネット経由の実環境）にアクセスできる環境で
+確認する。アクセスできない環境からは **確認不可**であり、推測でデプロイ完了と判断しない。

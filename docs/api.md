@@ -19,13 +19,96 @@
 
 | メソッド | パス | 権限 |
 | --- | --- | --- |
-| GET | `/projects?status=&q=` | 認証（協力会社は割当案件のみ） |
+| GET | `/projects/search?...` | 認証＋案件スコープ（一覧の正式な入口。Ver.0.4） |
+| GET | `/projects/filter-options` | 認証＋案件スコープ（絞り込みの選択肢。Ver.0.4） |
+| GET | `/projects?status=&q=` | 認証＋案件スコープ（互換用の簡易一覧） |
 | GET | `/projects/{id}` | 認証＋案件スコープ |
 | POST | `/projects` | PROJECT_MANAGER / ADMIN |
 | PUT | `/projects/{id}` | PROJECT_MANAGER / ADMIN |
 | DELETE | `/projects/{id}?reason=` | PROJECT_MANAGER / ADMIN（論理削除） |
 
 `ProjectOut` は表示名解決済み（construction_type / department / manager）と集計（unconfirmed_photos / quality_checks）を含む。
+
+**ルートの定義順**: 静的パスの `/projects/search` と `/projects/filter-options` は、
+動的パスの `/projects/{project_id}` より **前** に定義する。順序が逆だと `search` が
+`project_id` として解釈され 422 になる。`backend/tests/test_api.py::test_p4_static_routes_do_not_collide_with_project_id` で固定している。
+
+### GET /projects/search（Ver.0.4）
+
+絞り込み・並び替え・ページネーションはすべてサーバー側で行う。画面はレスポンスを
+そのまま表示し、ページ内で数え直したり追加で絞り込んだりしない。
+
+| パラメータ | 型 | 説明 |
+| --- | --- | --- |
+| `q` | string | キーワード。工事名・工事番号・顧客・**現場責任者名** のいずれかに部分一致（大文字小文字を無視） |
+| `statuses` | string | 状態。カンマ区切りの複数指定（OR） |
+| `manager_ids` | string | 現場責任者ID。カンマ区切り（OR） |
+| `company_ids` | string | 担当会社ID。カンマ区切り（OR）。**案件自身の会社ではなく「その案件の工程に設定された担当会社」**で判定する |
+| `areas` | string | エリア。カンマ区切り（OR） |
+| `department_ids` | string | 担当部署ID。カンマ区切り（OR） |
+| `delayed_only` | bool | `true` で状態が「遅延」の案件のみ |
+| `date_from` | date | 予定期間の開始（この日以降に終わる案件） |
+| `date_to` | date | 予定期間の終了（この日以前に始まる案件） |
+| `sort` | string | `recent`（既定）/ `code` / `progress` / `due` |
+| `page` | int | 1以上。既定 1 |
+| `per_page` | int | 1〜200。既定 20 |
+
+指定した条件はすべて **AND** で結合する（同じ条件内の複数値は OR）。
+
+レスポンス（`ProjectSearchOut`）:
+
+```json
+{ "items": [ProjectOut, ...], "total": 12, "page": 1, "per_page": 20, "pages": 1, "sort": "recent" }
+```
+
+- `total` は **権限・案件スコープと全条件を適用したあと、ページネーションより前** の件数。
+  すべてのページの `items` を足すと `total` と一致する。
+- `pages` は `ceil(total / per_page)`（0件でも 1）。
+- `sort` は受理した並び順（未知の値は `recent` にフォールバックし、その旨を返す）。
+
+**担当会社の判定**: `EXISTS (SELECT 1 FROM tasks WHERE tasks.project_id = projects.id
+AND tasks.deleted_at IS NULL AND tasks.company_id IN (...))`。JOIN ではなく EXISTS を
+使うため、同じ会社の工程が複数あっても案件が重複しない。
+
+**期間の重なり判定**: 「案件の予定期間が、指定した範囲と重なるもの」を返す。
+
+- `date_from` 指定時: `finish_planned_at IS NULL OR finish_planned_at >= date_from`
+- `date_to` 指定時: `start_planned_at IS NULL OR start_planned_at <= date_to`
+
+したがって **片側が未設定の案件は、その向きには制限されない**（重なるものとして扱う）。
+着工予定日・完了予定日のどちらも未設定の案件は、期間をどう指定しても常に該当する。
+境界日は含む（`date_from = 完了予定日` の案件は該当する）。
+
+**既定の並び順**: `recent` = `created_at DESC, id DESC`。`created_at` が同時刻でも `id` で
+決まるため、ページをまたいで行が入れ替わらない。登録した案件は必ず1ページ目の先頭に出る。
+
+### GET /projects/filter-options（Ver.0.4）
+
+絞り込みの選択肢を返す。**表示中のページではなく、その利用者がアクセスできる
+全案件**から作る（1ページ目に無い値も選べる）。
+
+```json
+{ "statuses": ["施工中", ...], "areas": ["熊本市中央区", ...],
+  "departments": [{"id": 1, "name": "..."}], "managers": [...], "companies": [...] }
+```
+
+- `departments` / `managers` / `companies` は同名を区別できるよう id と name の組で返す。
+- `companies` は工程（`tasks.company_id`）に実際に設定されている会社だけを返す。
+- 権限範囲に案件が1件も無い場合は、403 ではなくすべて空配列を返す（0件と権限なしを区別する）。
+
+### 登録・更新時の検証（Ver.0.4）
+
+| 状況 | 応答 |
+| --- | --- |
+| 工事番号が既存案件と重複（作成・更新とも） | 409 |
+| 事前チェックをすり抜けてDBの一意制約に違反 | 409（`IntegrityError` を捕捉。500 にしない） |
+| 着工予定日が完了予定日より後 | 422 |
+| 更新で片側の日付だけ変更 | 保存後の値の組で判定する（422 になる場合がある） |
+| 権限不足（QUALITY_MANAGER / FIELD_WORKER / VIEWER の作成・更新） | 403 |
+| PROJECT_MANAGER が担当外案件を更新 | 案件スコープで判定（`ensure_project_access`） |
+
+工事番号の一意判定は論理削除済みの案件も対象に含める（`projects.construction_number` の
+UNIQUE 制約と一致させるため）。
 
 ## 現場・設備
 

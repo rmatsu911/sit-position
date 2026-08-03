@@ -35,6 +35,20 @@ yamada@example.co.jp（PROJECT_MANAGER）
   POST /projects       → 201（audit_logs に CREATE 記録）
 ```
 
+## 案件ライフサイクル（Ver.0.4）
+
+| 操作 | ADMIN | PROJECT_MANAGER | QUALITY_MANAGER | VIEWER | FIELD_WORKER |
+| --- | --- | --- | --- | --- | --- |
+| `GET /projects/search` | 全件 | 全件 | 全件 | 全件 | 割当案件のみ |
+| `GET /projects/filter-options` | 全件から生成 | 全件 | 全件 | 全件 | 割当案件から生成 |
+| `GET /projects/{id}` | ○ | ○ | ○ | ○ | 割当案件のみ（他は403） |
+| `POST /projects` | ○ | ○ | 403 | 403 | 403 |
+| `PUT /projects/{id}` | ○ | ○（スコープ内） | 403 | 403 | 403 |
+
+- `total` は権限・案件スコープを適用したあとに数える。権限で見えない案件は件数にも含めない。
+- 割当が1件も無い協力会社ユーザーは、403 ではなく **0件の 200** を返す（権限なしと区別する）。
+- 画面は操作できない権限に入口を出さないが、拒否の最終判断はAPI側が行う。
+
 ## 監査
 
 すべての作成/更新/削除は `audit_logs`（user_id / action / entity_type / entity_id / project_id / before / after）に記録する。
