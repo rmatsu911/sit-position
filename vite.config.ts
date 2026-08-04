@@ -15,7 +15,12 @@ function commitSha(): string {
 }
 
 // https://vite.dev/config/
+// サブパス配信（例: https://example.com/sysken/）に対応する。
+// VITE_BASE_PATH を指定してビルドすると、JS/CSS の参照とルーティングがそのパス配下になる。
+const BASE = process.env.VITE_BASE_PATH ?? '/'
+
 export default defineConfig({
+  base: BASE,
   plugins: [react()],
   define: {
     // アプリの実バージョン（package.json）をビルド時に埋め込む
@@ -23,6 +28,7 @@ export default defineConfig({
     // 実環境でどのコードが動いているかを確認するための情報（秘密情報は含めない）
     __APP_COMMIT__: JSON.stringify(commitSha()),
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+    __BASE_PATH__: JSON.stringify(BASE),
   },
   server: {
     host: true,

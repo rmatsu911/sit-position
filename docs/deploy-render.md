@@ -85,3 +85,31 @@ Render の無料アカウント（https://render.com/）。
 
 これらは Render 管理画面（またはインターネット経由の実環境）にアクセスできる環境で
 確認する。アクセスできない環境からは **確認不可**であり、推測でデプロイ完了と判断しない。
+
+## サブパス配信（例: https://example.com/sysken/）
+
+ルート直下ではなくサブパスへ置く場合、**ビルド時に** `VITE_BASE_PATH` を指定する。
+指定しないと JS/CSS が `/assets/...` を指し、ルーティングも `/login` を期待するため、
+`/sysken/login` を開いても画面が出ない。
+
+```bash
+VITE_BASE_PATH=/sysken/ \
+VITE_API_BASE_URL="https://<バックエンド>/api" \
+VITE_APP_ENV=production \
+npm ci && npm run build
+```
+
+- `dist/index.html` の参照が `/sysken/assets/...` になっていることを確認する。
+- react-router の basename も同じ値になるため、`/sysken/login` で同じ画面が開く。
+- Apache の場合は `dist/` を `public_html/sysken/` へ置き、同ディレクトリに
+  SPA用の `.htaccess`（全パスを `index.html` へ）を置く。
+- 画像・帳票のURLはAPIが絶対URLで返すため、バックエンドの `PUBLIC_BASE_URL` を
+  実際のAPIホストに合わせる（フロントのベースパスとは独立）。
+
+## 稼働中のコード世代の確認
+
+- `GET /health` … 認証不要。`backend_commit` と `backend_built_at` を返す。
+- `GET /api/system/info` … ADMIN のみ。Alembic revision・DB・ファイル保存・AI接続状態も返す。
+- 画面では「設定 ＞ システム情報」。フロントとバックエンドのSHAが違うときは警告が出る。
+- フロントのSHAはビルド時に埋め込む。CI/Render では `GIT_COMMIT`（または
+  `RENDER_GIT_COMMIT`）を渡す。バックエンドも同じ環境変数を読む。

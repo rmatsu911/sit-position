@@ -3,6 +3,7 @@
 declare const __APP_VERSION__: string
 declare const __APP_COMMIT__: string
 declare const __BUILD_TIME__: string
+declare const __BASE_PATH__: string
 
 export type AppEnv = 'development' | 'staging' | 'production'
 
@@ -35,3 +36,14 @@ export const BUILD_TIME: string =
 /** 表示用に短縮したSHA。 */
 export const shortSha = (sha: string): string =>
   sha && sha !== 'unknown' ? sha.slice(0, 7) : 'unknown'
+
+/**
+ * 配信のベースパス。サブパス配信（例 `/sysken/`）でビルドしたときに設定される。
+ * ルーターの basename に使い、`/sysken/login` のようなURLでも同じ画面が開くようにする。
+ */
+export const BASE_PATH: string =
+  typeof __BASE_PATH__ !== 'undefined' ? __BASE_PATH__ : '/'
+
+/** react-router の basename（末尾のスラッシュを除く。ルート配信なら空文字） */
+export const ROUTER_BASENAME: string =
+  BASE_PATH === '/' ? '' : BASE_PATH.replace(/\/$/, '')
