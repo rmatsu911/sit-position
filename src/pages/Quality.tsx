@@ -9,7 +9,7 @@ import { useApp } from '../context/AppContext'
 import { useQualityChecks, useUpdateQualityCheck } from '../api/quality'
 import { useProject } from '../api/projects'
 import { usePhotos } from '../api/photos'
-import { NoProjectSelected, ProjectSelect, useSelectedProject } from '../components/ui/ProjectSelect'
+import { FixedProject, NoProjectSelected, ProjectSelect, projectLabel, useSelectedProject } from '../components/ui/ProjectSelect'
 import { useTestRecords, useCreateTestRecord } from '../api/testRecords'
 import { useAssets } from '../api/sites'
 import { useTaskOptions } from '../api/tasks'
@@ -17,10 +17,38 @@ import type { QualityItem, QualityStatus } from '../types'
 
 const flow = ['写真登録', 'AI画像認識', '品質確認', 'コメント入力', '修正・再撮影依頼', '再確認', '承認']
 
+/**
+ * 品質管理。
+ *
+ * 案件に紐づく状態（開いている詳細・入力中のコメント・試験記録の入力）は
+ * `QualityBody` が持ち、`key={projectId}` で案件ごとに作り直す。
+ */
 export default function Quality() {
-  const { toast } = useApp()
-  // 対象案件は利用者が選ぶ（固定案件へ寄せない）。選択状態はURLで復元する。
   const { projectId, setProjectId } = useSelectedProject()
+  if (!projectId) {
+    return (
+      <div>
+        <PageHeader
+          breadcrumb={[{ label: '品質管理' }]}
+          title="品質管理"
+          description="対象案件を選択してください"
+          actions={
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-ink-soft">対象案件</span>
+              <ProjectSelect projectId={undefined} onChange={setProjectId} />
+            </div>
+          }
+        />
+        <Panel><NoProjectSelected what="品質確認と試験記録" /></Panel>
+      </div>
+    )
+  }
+  return <QualityBody key={projectId} projectId={projectId} />
+}
+
+function QualityBody({ projectId }: { projectId: number }) {
+  const { toast } = useApp()
+  const { fixedByPath, setProjectId } = useSelectedProject()
   const { data: project } = useProject(projectId)
   const { data: items = [], isLoading, isError, refetch } = useQualityChecks(projectId)
   const { data: photos = [] } = usePhotos(projectId)
@@ -28,15 +56,6 @@ export default function Quality() {
   const [detail, setDetail] = useState<QualityItem | null>(null)
   const [anomalyOpen, setAnomalyOpen] = useState(false)
   const [comment, setComment] = useState('')
-
-  // 案件が変わったら、開いている詳細・入力中のコメントを描画前に捨てる
-  const [stateProjectId, setStateProjectId] = useState(projectId)
-  if (stateProjectId !== projectId) {
-    setStateProjectId(projectId)
-    setDetail(null)
-    setComment('')
-    setAnomalyOpen(false)
-  }
 
   const photoById = useMemo(() => new Map(photos.map((p) => [p.id, p])), [photos])
 
@@ -68,29 +87,9 @@ export default function Quality() {
     { label: '承認済み', value: summary.承認済み, tone: 'ok' },
   ]
 
-  // 案件未選択のときは、案件セレクタと空状態だけを出す。
-  // 集計・品質確認フロー・一覧・試験記録・AI品質チェックはいずれも描画しない。
-  if (!projectId) {
-    return (
-      <div>
-        <PageHeader
-          breadcrumb={[{ label: '品質管理' }]}
-          title="品質管理"
-          description="対象案件を選択してください"
-          actions={
-            <div className="flex items-center gap-2">
-              <span className="text-[12px] text-ink-soft">対象案件</span>
-              <ProjectSelect projectId={projectId} onChange={setProjectId} />
-            </div>
-          }
-        />
-        <Panel><NoProjectSelected what="品質確認と試験記録" /></Panel>
-      </div>
-    )
-  }
-
   return (
-    <div>
+    // どの案件を表示している画面かをDOMにも持たせる（切替時の混在検証に使う）
+    <div data-project-scope={projectId}>
       <PageHeader
         breadcrumb={[{ label: '品質管理' }]}
         title="品質管理"
@@ -98,7 +97,9 @@ export default function Quality() {
         actions={
           <div className="flex items-center gap-2">
             <span className="text-[12px] text-ink-soft">対象案件</span>
-            <ProjectSelect projectId={projectId} onChange={setProjectId} />
+            {fixedByPath
+              ? <FixedProject label={project ? projectLabel(project) : undefined} />
+              : <ProjectSelect projectId={projectId} onChange={setProjectId} />}
             <button className="btn-default" onClick={() => setAnomalyOpen(true)}><ScanSearch size={15} />AI品質チェック</button>
           </div>
         }
@@ -175,7 +176,7 @@ export default function Quality() {
       )}
 
       {/* 試験記録（光工事：光損失/OTDR/導通確認） */}
-      <TestRecordsPanel key={projectId} projectId={projectId} />
+      <TestRecordsPanel projectId={projectId} />
 
       {/* 詳細モーダル */}
       <Modal open={!!detail} onClose={() => setDetail(null)} title={detail ? `品質確認：${detail.inspectItem}` : ''} size="lg"

@@ -16,7 +16,7 @@ import { Modal } from '../components/ui/Modal'
 import { useApp } from '../context/AppContext'
 import { downloadReport, useReportPreview, type ReportFormat } from '../api/reports'
 import { ApiError } from '../lib/apiClient'
-import { ProjectSelect, useSelectedProject, NoProjectSelected } from '../components/ui/ProjectSelect'
+import { FixedProject, ProjectSelect, useSelectedProject, NoProjectSelected } from '../components/ui/ProjectSelect'
 
 // バックエンドが実ファイルを生成できる帳票（type表示名 → APIキー）
 const REPORT_KEY: Record<string, string> = { 施工管理表: 'construction-management' }
@@ -30,7 +30,7 @@ export default function Reports() {
   const { toast } = useApp()
   const [type, setType] = useState(reportTypes[0])
   // 帳票の対象案件は利用者が選ぶ（固定案件へ出力しない）
-  const { projectId, setProjectId } = useSelectedProject()
+  const { projectId, setProjectId, fixedByPath } = useSelectedProject()
   const reportKey = REPORT_KEY[type]
   const { data: report, isLoading, isError, error } = useReportPreview(reportKey, projectId)
   const [preview, setPreview] = useState(false)
@@ -59,7 +59,9 @@ export default function Reports() {
       actions={
         <div className="flex items-center gap-2">
           <span className="text-[12px] text-ink-soft">対象案件</span>
-          <ProjectSelect projectId={projectId} onChange={setProjectId} />
+          {fixedByPath
+            ? <FixedProject label={report ? `${report.construction_number} ${report.project_name}` : undefined} />
+            : <ProjectSelect projectId={projectId} onChange={setProjectId} />}
         </div>
       }
     />
@@ -69,6 +71,8 @@ export default function Reports() {
   if (!projectId) {
     return <div>{header}<Panel><NoProjectSelected what="その案件の工程から作る帳票" /></Panel></div>
   }
+  // 帳票の内容はAPIが正データなので画面側に案件依存stateは持たないが、
+  // 案件を変えたらプレビューの開閉なども確実に初期化されるよう key で作り直す。
 
   return (
     <div>

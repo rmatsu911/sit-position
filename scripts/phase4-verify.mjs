@@ -98,22 +98,33 @@ async function openProjects(query = '') {
 }
 
 /**
- * 案件を切り替え、切替直後から一定時間その画面に出た値を連続サンプリングする。
- * 「読み込み中に前の案件のデータが一瞬でも描画されないこと」を見るために使う。
+ * 案件を切り替え、切替後の描画を連続サンプリングする。
+ *
+ * 画面が「どの案件を表示しているか」は `data-project-scope` で分かる。
+ * 判定は **「新しい案件を表示していると宣言している画面に、前の案件のデータが
+ * 混ざっていないか」**で行う。URLが変わってから React が描き直すまでの1フレームは
+ * 画面自体がまだ前の案件（scope が前の案件のまま）なので、混在ではない。
  */
 async function switchProjectAndSample(id, selector, attr, ms = 1800) {
-  const seen = new Set()
+  const leaked = new Set()
+  const scopes = new Set()
   await page.selectOption('[data-project-select]', id)
-  // URLが新しい案件になった時点から数える（切替前のDOMは対象にしない）
   await page.waitForFunction(
     (v) => new URLSearchParams(location.search).get('project_id') === (v || null), id, { timeout: 10000 })
   const end = Date.now() + ms
   while (Date.now() < end) {
-    const vals = await page.$$eval(selector, (els, a) => els.map((e) => e.getAttribute(a)), attr)
-      .catch(() => [])
-    for (const v of vals) seen.add(v)
+    const sample = await page.evaluate(([sel, a]) => {
+      const root = document.querySelector('[data-project-scope]')
+      return {
+        scope: root ? root.getAttribute('data-project-scope') : null,
+        values: [...document.querySelectorAll(sel)].map((e) => e.getAttribute(a)),
+      }
+    }, [selector, attr]).catch(() => ({ scope: null, values: [] }))
+    scopes.add(sample.scope)
+    // 新しい案件（または未選択）を表示している画面に出ている値だけを対象にする
+    if (sample.scope === (id || null)) for (const v of sample.values) leaked.add(v)
   }
-  return [...seen]
+  return { leaked: [...leaked], scopes: [...scopes] }
 }
 
 const modal = () => page.locator('div[data-print="hide"]').last()
@@ -425,8 +436,9 @@ ok(photosA.length > 0, '案件Aには写真がある', `${photosA.length}枚`)
 
 // 切替直後から連続サンプリングし、読み込み中も含めて案件Aの写真が出ないことを見る
 const duringSwitch = await switchProjectAndSample(String(NEW_ID), '[data-photo-id]', 'data-photo-id')
-ok(!duringSwitch.some((id) => photosA.includes(id)),
-   '切替直後（読み込み中）も案件Aの写真を描画しない', `途中で見えたID: ${duringSwitch.length}件`)
+ok(!duringSwitch.leaked.some((id) => photosA.includes(id)),
+   '案件Bを表示している間、案件Aの写真が1フレームも混ざらない',
+   `混在: ${duringSwitch.leaked.length}件 / 観測したscope: ${duringSwitch.scopes.join(',')}`)
 const photosB = await page.$$eval('[data-photo-id]', (els) => els.map((e) => e.getAttribute('data-photo-id')))
 ok(photosB.length === 0, '写真0件の案件Bへ切り替えると案件Aの写真が残らない', `${photosB.length}枚`)
 ok(!photosA.some((id) => photosB.includes(id)), '案件Aの写真IDが案件Bに混ざらない')
@@ -449,8 +461,9 @@ ok((await page.locator('[data-photo-id]').count()) === photosA.length,
 
 // A から直接「未選択」へ戻す経路も確認する（0件の案件を経由しない）
 const duringClear = await switchProjectAndSample('', '[data-photo-id]', 'data-photo-id')
-ok(!duringClear.some((id) => photosA.includes(id)),
-   '案件Aから直接未選択へ戻しても案件Aの写真を描画しない', `途中で見えたID: ${duringClear.length}件`)
+ok(!duringClear.leaked.some((id) => photosA.includes(id)),
+   '未選択の画面に案件Aの写真が1フレームも混ざらない',
+   `混在: ${duringClear.leaked.length}件 / 観測したscope: ${duringClear.scopes.join(',')}`)
 ok((await page.locator('[data-photo-id]').count()) === 0, '直接未選択へ戻すと写真が1枚も残らない')
 
 // --- 現場日報: 日報のある案件A → 日報0件の案件B ---
@@ -462,8 +475,9 @@ ok((await page.locator('[data-daily-report]').count()) === 1, '案件Aの日報�
 
 // 切替直後から連続サンプリングし、読み込み中も含めて案件Aの日報が出ないことを見る
 const reportsDuring = await switchProjectAndSample(String(NEW_ID), '[data-daily-report]', 'data-daily-report')
-ok(reportsDuring.length === 0,
-   '切替直後（読み込み中）も案件Aの日報を描画しない', `途中で見えた日報: ${reportsDuring.length}件`)
+ok(reportsDuring.leaked.length === 0,
+   '案件Bを表示している間、案件Aの日報が1フレームも混ざらない',
+   `混在: ${reportsDuring.leaked.length}件 / 観測したscope: ${reportsDuring.scopes.join(',')}`)
 await page.waitForTimeout(600)
 ok((await page.locator('[data-report-item]').count()) === 0, '日報0件の案件Bで案件Aの日報一覧が残らない')
 ok((await page.locator('[data-daily-report]').count()) === 0, '日報0件の案件Bで案件Aの日報が編集フォームに残らない')

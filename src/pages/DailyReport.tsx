@@ -14,13 +14,35 @@ import type { ReflectResult } from '../api/dailyReports'
 import { useTaskOptions } from '../api/tasks'
 import { useProject } from '../api/projects'
 import { usePhotos } from '../api/photos'
-import { NoProjectSelected, ProjectSelect, useSelectedProject } from '../components/ui/ProjectSelect'
+import { FixedProject, NoProjectSelected, ProjectSelect, projectLabel, useSelectedProject } from '../components/ui/ProjectSelect'
 import type { DailyReport, ReportStatus } from '../types'
 
+/**
+ * 現場日報。
+ *
+ * 案件に紐づく状態（表示中の日報・編集中の内容・反映プレビュー）はすべて
+ * `DailyReportBody` が持ち、`key={projectId}` で案件ごとに作り直す。
+ * 案件を切り替えた瞬間に前の案件の日報が1フレームも残らない。
+ */
 export default function DailyReportPage() {
-  const { toast, confirm } = useApp()
-  // 対象案件は利用者が選ぶ（固定案件へ寄せない）。選択状態はURLで復元する。
   const { projectId, setProjectId } = useSelectedProject()
+  if (!projectId) {
+    return (
+      <div>
+        <div className="mb-3 flex items-center gap-2 rounded border border-line bg-white px-3 py-2">
+          <span className="text-[12px] text-ink-soft">対象案件</span>
+          <ProjectSelect projectId={undefined} onChange={setProjectId} />
+        </div>
+        <Panel><NoProjectSelected what="現場日報" /></Panel>
+      </div>
+    )
+  }
+  return <DailyReportBody key={projectId} projectId={projectId} />
+}
+
+function DailyReportBody({ projectId }: { projectId: number }) {
+  const { toast, confirm } = useApp()
+  const { fixedByPath, setProjectId } = useSelectedProject()
   const { data: project } = useProject(projectId)
   const { data: reports = [], isLoading, isError, refetch } = useDailyReports(projectId)
   const { data: taskOpts = [] } = useTaskOptions(projectId)
@@ -35,17 +57,6 @@ export default function DailyReportPage() {
   const [draft, setDraft] = useState<DailyReport | null>(null)
   const [reflectPreview, setReflectPreview] = useState<ReflectResult | null>(null)
   const [reflecting, setReflecting] = useState(false)
-
-  // 案件が変わったら、案件に紐づく状態をレンダリング前に捨てる。
-  // useEffect で消すと1回だけ前の案件の日報が描画されてしまうため、描画前に初期化する。
-  const [draftProjectId, setDraftProjectId] = useState(projectId)
-  if (draftProjectId !== projectId) {
-    setDraftProjectId(projectId)
-    setCurrentId('')
-    setDraft(null)
-    setReflectPreview(null)
-    setReflecting(false)
-  }
 
   // 選択中の日報を編集用 draft へ複製
   useEffect(() => {
@@ -133,7 +144,6 @@ export default function DailyReportPage() {
       <ProjectSelect projectId={projectId} onChange={setProjectId} />
     </div>
   )
-  if (!projectId) return <div>{selector}<Panel><NoProjectSelected what="現場日報" /></Panel></div>
   if (isLoading) return <div>{selector}<div className="rounded border border-line bg-white px-4 py-16 text-center text-[13px] text-ink-soft">日報を読み込んでいます…</div></div>
   if (isError) return <div>{selector}<div className="rounded border border-red-200 bg-red-50 px-4 py-10 text-center text-[13px] text-ng">日報の取得に失敗しました。<button className="ml-2 underline" onClick={() => refetch()}>再試行</button></div></div>
   if (!current) return (
@@ -152,7 +162,8 @@ export default function DailyReportPage() {
   )
 
   return (
-    <div>
+    // どの案件を表示している画面かをDOMにも持たせる（切替時の混在検証に使う）
+    <div data-project-scope={projectId}>
       <PageHeader
         breadcrumb={[{ label: '現場日報' }]}
         title="現場日報"
@@ -160,7 +171,9 @@ export default function DailyReportPage() {
         actions={
           <>
             <span className="text-[12px] text-ink-soft">対象案件</span>
-            <ProjectSelect projectId={projectId} onChange={setProjectId} />
+            {fixedByPath
+              ? <FixedProject label={project ? projectLabel(project) : undefined} />
+              : <ProjectSelect projectId={projectId} onChange={setProjectId} />}
             <button className="btn-default" onClick={() => {
               const prev = reports.filter((r) => r.date < current.date).sort((a, b) => b.date.localeCompare(a.date))[0]
               if (!prev) { toast('前日の日報がありません', 'warn'); return }

@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Plus, FolderPlus, CornerDownRight, Pencil, Trash2, Copy, ClipboardPaste,
   Undo2, Redo2, UserPlus, Users2, TrendingUp, Save, SlidersHorizontal, Filter,
@@ -7,14 +7,14 @@ import {
 } from 'lucide-react'
 import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
-import { NoProjectSelected } from '../components/ui/ProjectSelect'
+import { FixedProject, NoProjectSelected, ProjectSelect, projectLabel, useSelectedProject } from '../components/ui/ProjectSelect'
 import { StatusBadge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
 import { ContextMenu, type MenuItem } from '../components/ui/ContextMenu'
 import { useApp } from '../context/AppContext'
 import { useCreateTask, useDeleteTask, useProjectTasks, useUpdateTask, type TaskWriteInput } from '../api/tasks'
 import { EMPTY_MILESTONE_FILTERS, useCrossMilestones } from '../api/crossMilestones'
-import { useProject, useProjects } from '../api/projects'
+import { useProject } from '../api/projects'
 import { ApiError } from '../lib/apiClient'
 import type { WbsTask } from '../types'
 
@@ -48,15 +48,42 @@ const LEFT_COLS = [
   { key: 'pred', label: '先行', w: 48 },
 ]
 
+/**
+ * 工程管理。
+ *
+ * 選択案件の正本は URL（`/projects/:id/schedule` のパス、または `?project_id=`）。
+ * 案件に紐づく状態はすべて `ScheduleBody` が持ち、`key={projectId}` で案件ごとに
+ * 作り直す。こうすることで、案件を切り替えた瞬間に前の案件の工程・選択・モーダル・
+ * ドラッグ状態が1フレームも残らない（描画中に state を消す必要がない）。
+ */
 export default function Schedule() {
+  const { projectId, setProjectId } = useSelectedProject()
+  if (!projectId) {
+    return (
+      <div>
+        <PageHeader
+          breadcrumb={[{ label: '案件一覧', to: '/projects' }, { label: '工程管理' }]}
+          title="工程管理"
+          description="対象案件を選択してください"
+          actions={
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-ink-soft">対象案件</span>
+              <ProjectSelect projectId={undefined} onChange={setProjectId} />
+            </div>
+          }
+        />
+        <Panel><NoProjectSelected what="この案件の工程（WBS・ガントチャート）" /></Panel>
+      </div>
+    )
+  }
+  return <ScheduleBody key={projectId} projectId={projectId} />
+}
+
+function ScheduleBody({ projectId }: { projectId: number }) {
   const { toast, confirm } = useApp()
   const navigate = useNavigate()
-  const { id } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
-  const { data: projects = [] } = useProjects()
-  const requestedId = Number(id ?? searchParams.get('project_id'))
-  // 指定が無いときに先頭の案件を勝手に開かない（選ぶのは利用者）
-  const projectId = Number.isFinite(requestedId) && requestedId > 0 ? requestedId : undefined
+  const { fixedByPath, setProjectId } = useSelectedProject()
   const { data: project } = useProject(projectId)
   const { data: apiTasks, isLoading: tasksLoading, isError: tasksError } = useProjectTasks(projectId)
   // マイルストーンは milestones / milestone_types が正データ。工程名からは判定しない。
@@ -313,7 +340,8 @@ export default function Schedule() {
   ]
 
   return (
-    <div>
+    // どの案件を表示している画面かをDOMにも持たせる（切替時の混在検証に使う）
+    <div data-project-scope={projectId}>
       <PageHeader
         breadcrumb={[
           { label: '案件一覧', to: '/projects' },
@@ -324,10 +352,9 @@ export default function Schedule() {
         description={`${project?.name ?? '案件未選択'} ／ WBS・ガントチャート ${tasksLoading ? '（工程データを読み込み中...）' : tasksError ? '（工程データの取得に失敗しました）' : '（DB保存）'}`}
         actions={
           <div className="flex items-center gap-2">
-            <select className="field !w-64 !py-1 text-xs" value={projectId ?? ''} onChange={(e) => navigate(`/projects/${e.target.value}/schedule`)}>
-              <option value="" disabled>案件を選択</option>
-              {projects.map((p) => <option key={p.id} value={p.id}>{p.construction_number} {p.name}</option>)}
-            </select>
+            {fixedByPath
+              ? <FixedProject label={project ? projectLabel(project) : undefined} />
+              : <ProjectSelect projectId={projectId} onChange={(v) => (v ? navigate(`/projects/${v}/schedule`) : setProjectId(undefined))} />}
             {/* 表示単位は横断工程と同じ共通部品。3時間も直接選べる */}
             <ScaleSelector scale={scale} onChange={setScale} />
             <button onClick={() => toast('この操作は現在準備中です')} className="rounded border border-line bg-white p-1.5 text-ink-soft hover:bg-canvas" title="全画面表示"><Maximize2 size={15} /></button>
@@ -337,10 +364,6 @@ export default function Schedule() {
 
       <ScheduleTabs projectId={projectId} />
 
-      {/* 案件未選択のときは、上の案件セレクタと空状態だけを出す */}
-      {!projectId && <Panel><NoProjectSelected what="この案件の工程（WBS・ガントチャート）" /></Panel>}
-
-      {projectId && <>
       {/* ツールバー */}
       <div className="mb-2 flex flex-wrap items-center gap-1 rounded border border-line bg-white px-2 py-1.5">
         {toolbarGroups.map((group, gi) => (
@@ -529,7 +552,6 @@ export default function Schedule() {
         {/* 凡例 */}
         <GanttLegend note="クリティカル工程は赤の依存線で表示 ／ 工程バーはドラッグで移動・右端で期間変更" />
       </Panel>
-      </>}
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
 

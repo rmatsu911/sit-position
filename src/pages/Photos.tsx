@@ -17,16 +17,45 @@ import {
 } from '../api/photos'
 import { useProject, useProjects } from '../api/projects'
 import { useSites, useAssets } from '../api/sites'
-import { NoProjectSelected, ProjectSelect, useSelectedProject } from '../components/ui/ProjectSelect'
+import { FixedProject, NoProjectSelected, ProjectSelect, projectLabel, useSelectedProject } from '../components/ui/ProjectSelect'
 import { useTaskOptions } from '../api/tasks'
 import type { Photo } from '../types'
 
 type ViewMode = 'thumb' | 'list' | 'process' | 'date' | 'equip'
 
+/**
+ * 施工写真。
+ *
+ * 案件に紐づく状態はすべて `PhotosBody` が持ち、`key={projectId}` で案件ごとに
+ * 作り直す。案件を切り替えた瞬間に前の案件の写真・選択・ライトボックス・
+ * AI反映状態が1フレームも残らない。
+ */
 export default function Photos() {
-  const { toast, confirm } = useApp()
-  // 対象案件は利用者が選ぶ（固定案件へ寄せない）。選択状態はURLで復元する。
   const { projectId, setProjectId } = useSelectedProject()
+  if (!projectId) {
+    return (
+      <div>
+        <PageHeader
+          breadcrumb={[{ label: '案件一覧', to: '/projects' }, { label: '施工写真' }]}
+          title="施工写真"
+          description="対象案件を選択してください"
+          actions={
+            <>
+              <span className="text-[12px] text-ink-soft">対象案件</span>
+              <ProjectSelect projectId={undefined} onChange={setProjectId} />
+            </>
+          }
+        />
+        <Panel><NoProjectSelected what="施工写真" /></Panel>
+      </div>
+    )
+  }
+  return <PhotosBody key={projectId} projectId={projectId} />
+}
+
+function PhotosBody({ projectId }: { projectId: number }) {
+  const { toast, confirm } = useApp()
+  const { fixedByPath, setProjectId } = useSelectedProject()
   const { data: project } = useProject(projectId)
   const { data: photoData, isLoading, isError, refetch } = usePhotos(projectId)
   const uploadMut = useUploadPhoto()
@@ -55,23 +84,6 @@ export default function Photos() {
   const { data: taskOpts = [] } = useTaskOptions(upProject, upSite || undefined, upAsset || undefined)
   const [classTargetId, setClassTargetId] = useState<string>('')
   const [reflected, setReflected] = useState<Set<string>>(new Set())
-
-  // 案件が変わったら、案件に紐づく状態をレンダリング前に捨てる。
-  // useEffect で消すと1回だけ前の案件の写真が描画されてしまうため、描画前に初期化する。
-  const [photosProjectId, setPhotosProjectId] = useState(projectId)
-  if (photosProjectId !== projectId) {
-    setPhotosProjectId(projectId)
-    setPhotos([])
-    setSelected(new Set())
-    setLightbox(null)
-    setClassTargetId('')
-    setReflected(new Set())
-    // タグの選択肢は案件ごとに違うため、絞り込みも初期化する
-    setTagFilter('all')
-    setConfirmFilter('all')
-    setOnlyFav(false)
-    setUploadOpen(false)
-  }
 
   // API から取得した写真をローカル状態へ反映（即時操作のためローカルに保持）
   useEffect(() => {
@@ -171,29 +183,9 @@ export default function Photos() {
     fav: photos.filter((p) => p.favorite).length,
   }
 
-  // 案件未選択のときは、案件セレクタと空状態だけを出す。
-  // 一覧・アップロード・一括操作は描画しない（前の案件の写真も残さない）。
-  if (!projectId) {
-    return (
-      <div>
-        <PageHeader
-          breadcrumb={[{ label: '案件一覧', to: '/projects' }, { label: '施工写真' }]}
-          title="施工写真"
-          description="対象案件を選択してください"
-          actions={
-            <>
-              <span className="text-[12px] text-ink-soft">対象案件</span>
-              <ProjectSelect projectId={projectId} onChange={setProjectId} />
-            </>
-          }
-        />
-        <Panel><NoProjectSelected what="施工写真" /></Panel>
-      </div>
-    )
-  }
-
   return (
-    <div>
+    // どの案件を表示している画面かをDOMにも持たせる（切替時の混在検証に使う）
+    <div data-project-scope={projectId}>
       <PageHeader
         breadcrumb={[{ label: '案件一覧', to: '/projects' }, { label: '対象案件', to: `/projects/${projectId}` }, { label: '施工写真' }]}
         title="施工写真"
@@ -201,7 +193,9 @@ export default function Photos() {
         actions={
           <>
             <span className="text-[12px] text-ink-soft">対象案件</span>
-            <ProjectSelect projectId={projectId} onChange={setProjectId} />
+            {fixedByPath
+              ? <FixedProject label={project ? projectLabel(project) : undefined} />
+              : <ProjectSelect projectId={projectId} onChange={setProjectId} />}
             <button className="btn-default" onClick={() => selected.size ? toast('一括タグ設定は現在準備中です', 'info') : toast('写真を選択してください')}><Tag size={15} />一括タグ</button>
             <button className="btn-default" onClick={() => toast('この操作は現在準備中です')}><Download size={15} />ダウンロード</button>
             <button className="btn-primary" onClick={startUpload}><Upload size={15} />写真追加</button>
