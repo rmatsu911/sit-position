@@ -4,7 +4,7 @@ import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../auth/AuthContext'
-import { APP_ENV, APP_VERSION, ENV_LABEL } from '../lib/env'
+import { SystemInfo } from '../components/system/SystemInfo'
 
 const ROLE_LABELS: Record<string, string> = {
   ADMIN: '管理者', PROJECT_MANAGER: '案件管理者', FIELD_WORKER: '現場担当者', QUALITY_MANAGER: '品質管理者', VIEWER: '閲覧者',
@@ -109,16 +109,7 @@ export default function Settings() {
               </div>
             </Panel>
           )}
-          {tab === 'data' && (
-            <Panel title="システム情報">
-              <dl className="max-w-lg divide-y divide-line text-[13px]">
-                <div className="flex justify-between py-2.5"><dt className="text-ink-soft">アプリバージョン</dt><dd className="font-medium text-ink">v{APP_VERSION}</dd></div>
-                <div className="flex justify-between py-2.5"><dt className="text-ink-soft">実行環境</dt><dd className="text-ink">{ENV_LABEL[APP_ENV]}</dd></div>
-                <div className="flex justify-between py-2.5"><dt className="text-ink-soft">構成</dt><dd className="text-ink">React / FastAPI / PostgreSQL / File Storage / AI Worker</dd></div>
-                <div className="flex justify-between py-2.5"><dt className="text-ink-soft">AI（物体検出）</dt><dd className="text-ink">YOLO 接続基盤（学習済みモデル配置後に有効化）</dd></div>
-              </dl>
-            </Panel>
-          )}
+          {tab === 'data' && <SystemInfo isAdmin={user?.role === 'ADMIN'} />}
         </div>
       </div>
     </div>

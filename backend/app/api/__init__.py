@@ -20,6 +20,7 @@ from app.api import (
     reports,
     schedule,
     sites,
+    system,
     tasks,
     test_records,
 )
@@ -46,3 +47,4 @@ api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboar
 api_router.include_router(materials.router, prefix="/materials", tags=["materials"])
 api_router.include_router(test_records.router, prefix="/test-records", tags=["test-records"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
+api_router.include_router(system.router, tags=["system"])

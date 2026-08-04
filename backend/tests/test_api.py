@@ -2759,3 +2759,39 @@ def test_p5_milestone_create_from_project_route(client, p4):
     listed = client.get(f"/api/schedule/milestones?project_id={pid}&limit=100", headers=head).json()
     assert [m["name"] for m in listed["milestones"]] == ["着工"]
     assert listed["milestones"][0]["project_id"] == pid
+
+
+def test_p5_system_info_shows_revision_without_secrets(client, p4):
+    """稼働中のコード世代と接続状態を返し、秘密情報は返さないこと。"""
+    admin = _p4_head(client, "admin@test.jp")
+    r = client.get("/api/system/info", headers=admin)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for key in ("environment", "api_version", "backend_commit", "backend_built_at",
+                "alembic_revision", "database", "storage", "ai_service", "server_time"):
+        assert key in body, f"{key} が返っていない"
+    assert body["database"] == "ok"
+    # 秘密情報・接続先を返さない
+    dumped = str(body).lower()
+    for leaked in ("password", "secret", "token", "postgresql://", "sqlite://", "jwt", "key="):
+        assert leaked not in dumped, f"{leaked} が含まれている"
+
+    # 管理者以外は参照できない
+    for email in ("pm@test.jp", "p4qm@test.jp", "p4viewer@test.jp", "p4fw@test.jp"):
+        assert client.get("/api/system/info", headers=_p4_head(client, email)).status_code == 403
+
+    # 稼働確認だけは全ロールで取れる（秘密情報なし）
+    ping = client.get("/api/system/ping", headers=_p4_head(client, "p4viewer@test.jp"))
+    assert ping.status_code == 200
+    assert set(ping.json()) == {"environment", "api_version", "backend_commit"}
+
+
+def test_p5_health_exposes_code_generation(client):
+    """/health からも稼働中のコード世代が分かること（認証不要・秘密情報なし）。"""
+    r = client.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    for key in ("version", "environment", "backend_commit", "backend_built_at"):
+        assert key in body
+    assert "password" not in str(body).lower()

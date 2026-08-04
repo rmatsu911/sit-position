@@ -24,7 +24,16 @@ if settings.storage_backend == "local":
 
 @app.get("/health", tags=["system"])
 def health() -> dict:
-    return {"status": "ok", "version": settings.app_version}
+    """稼働確認と、動いているコード世代。秘密情報は含めない。"""
+    from app.api.system import _built_at, _commit
+
+    return {
+        "status": "ok",
+        "version": settings.app_version,
+        "environment": settings.app_env,
+        "backend_commit": _commit(),
+        "backend_built_at": _built_at(),
+    }
 
 
 @app.get("/api/meta", tags=["system"])
