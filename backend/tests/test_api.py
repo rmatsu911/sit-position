@@ -2531,3 +2531,161 @@ def test_p4_test_record_requires_accessible_project(client, p4):
 
     with TestingSessionLocal() as s:
         assert s.query(TestRecord).count() == before + 1, "拒否した分まで登録されている"
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: 帳票（画面・プレビュー・PDF・Excel・CSV が同じ内容であること）
+# ---------------------------------------------------------------------------
+
+def _p5_project_with_tasks(client):
+    """工程を持つ検証用の案件を作る。Seed の固定IDには依存しない。"""
+    from datetime import datetime, timedelta, timezone
+
+    from app.models import Task
+    from tests.conftest import TestingSessionLocal
+
+    head = _p4_head(client, "pm@test.jp")
+    number = _p4_number("P5RPT")
+    created = client.post("/api/projects", json={"construction_number": number, "name": "帳票の一致確認"},
+                          headers=head)
+    assert created.status_code == 201, created.text
+    pid = created.json()["id"]
+
+    jst = timezone(timedelta(hours=9))
+    base = datetime(2026, 4, 1, 0, 0, tzinfo=jst)
+    with TestingSessionLocal() as s:
+        # 親を持たない工程（WBS にドットが無い）だけの案件でも帳票へ載ること
+        s.add(Task(project_id=pid, wbs_code="1", name="現場確認",
+                   planned_start_at=base, planned_finish_at=base + timedelta(days=1),
+                   actual_start_at=base, actual_finish_at=base + timedelta(days=1),
+                   planned_workers=3, actual_workers=4, actual_progress=100, status="完了",
+                   notes="立会あり"))
+        s.add(Task(project_id=pid, wbs_code="2", name="現地確認",
+                   planned_start_at=base + timedelta(days=1), planned_finish_at=base + timedelta(days=2),
+                   planned_workers=2, actual_workers=0, actual_progress=30, status="施工中"))
+        s.commit()
+    return pid, number, head
+
+
+def _p5_preview(client, pid, head):
+    r = client.get(f"/api/reports/construction-management/preview?project_id={pid}", headers=head)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_p5_report_includes_tasks_without_parent(client, p4):
+    """親子を作っていない案件でも、工程が帳票に載ること（0件にならない）。"""
+    pid, number, head = _p5_project_with_tasks(client)
+    body = _p5_preview(client, pid, head)
+    assert body["row_count"] == 2, body["rows"]
+    assert [r[1] for r in body["rows"]] == ["現場確認", "現地確認"], "WBS順で工程が並ばない"
+    assert body["construction_number"] == number
+    assert body["source"] == "tasks"
+    # 画面が固定行を作らないよう、行はすべて工程由来であること
+    names = {r[1] for r in body["rows"]}
+    assert not names & {"光ケーブル敷設", "クロージャ設置", "光ファイバ融着", "接続損失測定", "ONU設置"}
+
+
+def test_p5_report_screen_pdf_xlsx_csv_match(client, p4):
+    """プレビュー（画面）・PDF・Excel・CSV の件数と内容が一致すること。"""
+    import csv as _csv
+    import io
+    import re
+
+    from openpyxl import load_workbook
+    from pypdf import PdfReader
+
+    pid, _number, head = _p5_project_with_tasks(client)
+    body = _p5_preview(client, pid, head)
+    rows = body["rows"]
+    assert len(rows) == 2
+
+    # --- Excel: セルを読んで突き合わせる ---
+    xlsx = client.get(f"/api/reports/construction-management?project_id={pid}&format=xlsx", headers=head)
+    assert xlsx.status_code == 200, xlsx.text
+    wb = load_workbook(io.BytesIO(xlsx.content))
+    ws = wb.active
+    cells = [[("" if c is None else str(c)) for c in row] for row in ws.iter_rows(values_only=True)]
+    header_at = next(i for i, r in enumerate(cells) if r[:len(body["columns"])] == body["columns"])
+    xlsx_rows = [r[:len(body["columns"])] for r in cells[header_at + 1:] if any(v for v in r)]
+    assert xlsx_rows == rows, f"Excel が画面と一致しない: {xlsx_rows}"
+
+    # --- CSV: パースして突き合わせる ---
+    csv_res = client.get(f"/api/reports/construction-management?project_id={pid}&format=csv", headers=head)
+    assert csv_res.status_code == 200, csv_res.text
+    text = csv_res.content.decode("utf-8-sig")
+    parsed = list(_csv.reader(io.StringIO(text)))
+    c_header = next(i for i, r in enumerate(parsed) if r == body["columns"])
+    csv_rows = [r for r in parsed[c_header + 1:] if any(v for v in r)]
+    assert csv_rows == rows, f"CSV が画面と一致しない: {csv_rows}"
+
+    # --- PDF: テキストを抽出して突き合わせる ---
+    pdf = client.get(f"/api/reports/construction-management?project_id={pid}&format=pdf", headers=head)
+    assert pdf.status_code == 200, pdf.text
+    text = "".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf.content)).pages)
+    flat = re.sub(r"\s+", "", text)
+    for row in rows:
+        for value in row:
+            if value in ("—", ""):
+                continue
+            assert re.sub(r"\s+", "", value) in flat, f"PDFに {value} が無い"
+    assert "施工管理表" in flat
+
+
+def test_p5_report_empty_project_has_no_rows(client, p4):
+    """工程0件の案件では、固定行を出さずどの形式も0件になること。"""
+    import csv as _csv
+    import io
+
+    from openpyxl import load_workbook
+
+    head = _p4_head(client, "pm@test.jp")
+    created = client.post("/api/projects",
+                          json={"construction_number": _p4_number("P5EMP"), "name": "工程なしの帳票"},
+                          headers=head)
+    assert created.status_code == 201, created.text
+    pid = created.json()["id"]
+
+    body = _p5_preview(client, pid, head)
+    assert body["row_count"] == 0 and body["rows"] == []
+
+    xlsx = client.get(f"/api/reports/construction-management?project_id={pid}&format=xlsx", headers=head)
+    wb = load_workbook(io.BytesIO(xlsx.content))
+    cells = [[("" if c is None else str(c)) for c in r] for r in wb.active.iter_rows(values_only=True)]
+    header_at = next(i for i, r in enumerate(cells) if r[:len(body["columns"])] == body["columns"])
+    assert [r for r in cells[header_at + 1:] if any(v for v in r)] == []
+
+    csv_res = client.get(f"/api/reports/construction-management?project_id={pid}&format=csv", headers=head)
+    parsed = list(_csv.reader(io.StringIO(csv_res.content.decode("utf-8-sig"))))
+    c_header = next(i for i, r in enumerate(parsed) if r == body["columns"])
+    assert [r for r in parsed[c_header + 1:] if any(v for v in r)] == []
+
+
+def test_p5_report_meta_comes_from_real_data(client, p4):
+    """工事名・工事番号・出力日時・出力者・件数が実データから作られること。"""
+    from datetime import datetime, timezone
+
+    pid, number, head = _p5_project_with_tasks(client)
+    body = _p5_preview(client, pid, head)
+    meta = {m["label"]: m["value"] for m in body["meta"]}
+    assert meta["工事番号"] == number
+    assert meta["工事名"] == "帳票の一致確認"
+    assert meta["工程件数"] == "2 件"
+    assert meta["出力者"] == "PM"  # ログイン中の利用者
+    assert meta["出力日時"].startswith(str(datetime.now(timezone.utc).year))
+    assert "熊本中央局" not in str(meta)
+
+
+def test_p5_report_respects_permissions(client, p4):
+    """帳票も案件スコープと権限に従うこと。"""
+    pid, _n, _h = _p5_project_with_tasks(client)
+    for path in (f"/api/reports/construction-management/preview?project_id={pid}",
+                 f"/api/reports/construction-management?project_id={pid}&format=csv"):
+        r = client.get(path, headers=_p4_head(client, "p4fw@test.jp"))
+        assert r.status_code == 403, f"{path} が割当外へ漏れている: {r.status_code}"
+    bad = client.get(f"/api/reports/construction-management?project_id={pid}&format=docx",
+                     headers=_p4_head(client, "pm@test.jp"))
+    assert bad.status_code == 422
+    missing = client.get(f"/api/reports/unknown-report/preview?project_id={pid}",
+                         headers=_p4_head(client, "pm@test.jp"))
+    assert missing.status_code == 404

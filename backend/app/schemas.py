@@ -952,3 +952,27 @@ class ProjectFilterOptions(BaseModel):
     departments: list[IdNameOut]
     managers: list[IdNameOut]
     companies: list[IdNameOut]
+
+
+class ReportMetaOut(BaseModel):
+    label: str
+    value: str
+
+
+class ReportPreviewOut(BaseModel):
+    """帳票の内容。画面・プレビュー・印刷・PDF・Excel・CSV がこの1本を共有する。
+
+    画面側で行を作らないため、ここに出た行がそのまま出力ファイルの行になる。
+    """
+
+    report_type: str
+    title: str
+    project_id: int
+    construction_number: str
+    project_name: str
+    meta: list[ReportMetaOut]
+    columns: list[str]
+    rows: list[list[str]]
+    row_count: int
+    source: str  # tasks = 工程から自動生成 / manual = 手入力
+    formats: list[str]
