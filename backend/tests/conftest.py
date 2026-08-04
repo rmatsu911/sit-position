@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.db import Base, get_db
 from app.core.security import hash_password
 from app.main import app
-from app.models import Project, ProjectMember, User
+from app.models import MilestoneType, Project, ProjectMember, User
 
 # 一時ファイルのSQLite（スレッド間で同一DBを共有）
 _DB_FD, _DB_PATH = tempfile.mkstemp(suffix=".db")
@@ -42,6 +42,11 @@ with TestingSessionLocal() as _s:
         Project(construction_number="T-002", name="テスト案件2", status="施工中"),
     ])
     _s.flush()
+    # マイルストーン種別マスタ（Seed と同じ区分。登録の選択肢として必要）
+    _s.add_all([
+        MilestoneType(code=n, name=n, sort_order=i, active=True)
+        for i, n in enumerate(["契約", "着工", "中間検査", "完成検査", "引き渡し", "完工"], start=1)
+    ])
     partner = _s.query(User).filter_by(email="partner@test.jp").one()
     p1 = _s.query(Project).filter_by(construction_number="T-001").one()
     _s.add(ProjectMember(project_id=p1.id, user_id=partner.id, role="FIELD_WORKER"))

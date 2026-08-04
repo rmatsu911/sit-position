@@ -2689,3 +2689,73 @@ def test_p5_report_respects_permissions(client, p4):
     missing = client.get(f"/api/reports/unknown-report/preview?project_id={pid}",
                          headers=_p4_head(client, "pm@test.jp"))
     assert missing.status_code == 404
+
+
+def test_p5_milestone_options_allow_projects_without_milestones(client, p4):
+    """マイルストーンが1件も無い案件でも、登録先として選べること。
+
+    録画で「案件欄が『選択してください』のまま候補も出ない」状態になっていた原因は、
+    選択肢を既存のマイルストーンから作っていたこと。登録できる案件から作る。
+    """
+    head = _p4_head(client, "pm@test.jp")
+    created = client.post("/api/projects",
+                          json={"construction_number": _p4_number("P5MS"), "name": "マイルストーン未登録の案件"},
+                          headers=head)
+    assert created.status_code == 201, created.text
+    pid = created.json()["id"]
+
+    # 案件配下ルート相当（project_id 指定）
+    scoped = client.get(f"/api/schedule/milestones/options?project_id={pid}", headers=head).json()
+    assert [p["id"] for p in scoped["projects"]] == [pid], "自分の案件が候補に出ない"
+    assert scoped["milestone_types"], "マイルストーン種別マスタが取得できない"
+
+    # 横断画面（project_id なし）でも権限範囲の案件がすべて選べる
+    across = client.get("/api/schedule/milestones/options", headers=head).json()
+    assert pid in [p["id"] for p in across["projects"]]
+    assert len(across["projects"]) >= len(scoped["projects"])
+
+    # 権限が無い案件は候補に出ない
+    fw = client.get("/api/schedule/milestones/options", headers=_p4_head(client, "p4fw@test.jp")).json()
+    assert pid not in [p["id"] for p in fw["projects"]]
+    assert [p["id"] for p in fw["projects"]] == [p4["hit"]]
+
+
+def test_p5_milestone_related_tasks_come_from_project(client, p4):
+    """関連工程は、その案件の工程から選べること（既存の紐付けに限定しない）。"""
+    from app.models import Task
+    from tests.conftest import TestingSessionLocal
+
+    head = _p4_head(client, "pm@test.jp")
+    created = client.post("/api/projects",
+                          json={"construction_number": _p4_number("P5MST"), "name": "関連工程の選択肢"},
+                          headers=head)
+    pid = created.json()["id"]
+    with TestingSessionLocal() as s:
+        s.add(Task(project_id=pid, wbs_code="1", name="関連工程の候補"))
+        s.commit()
+
+    opts = client.get(f"/api/schedule/milestones/options?project_id={pid}", headers=head).json()
+    names = [t["name"] for t in opts["related_tasks"]]
+    assert "関連工程の候補" in names, names
+    assert all(t["project_id"] == pid for t in opts["related_tasks"]), "他案件の工程が混ざっている"
+
+
+def test_p5_milestone_create_from_project_route(client, p4):
+    """案件配下から登録したマイルストーンが、その案件で取得できること。"""
+    head = _p4_head(client, "pm@test.jp")
+    created = client.post("/api/projects",
+                          json={"construction_number": _p4_number("P5MSC"), "name": "マイルストーン登録"},
+                          headers=head)
+    pid = created.json()["id"]
+    opts = client.get(f"/api/schedule/milestones/options?project_id={pid}", headers=head).json()
+    type_id = opts["milestone_types"][0]["id"]
+
+    r = client.post("/api/schedule/milestones", json={
+        "project_id": pid, "milestone_type_id": type_id, "name": "着工",
+        "planned_at": "2026-05-01T00:00:00+09:00", "status": "予定", "schedule_precision": "day",
+    }, headers=head)
+    assert r.status_code in (200, 201), r.text
+
+    listed = client.get(f"/api/schedule/milestones?project_id={pid}&limit=100", headers=head).json()
+    assert [m["name"] for m in listed["milestones"]] == ["着工"]
+    assert listed["milestones"][0]["project_id"] == pid
