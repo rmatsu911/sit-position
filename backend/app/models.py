@@ -212,6 +212,8 @@ class Task(Base, TimestampMixin, SoftDeleteMixin):
     schedule_precision: Mapped[str] = mapped_column(String(16), default="day", server_default="day")
     # 担当会社（協力会社を含む）。担当者の所属とは独立して割り当てられる。
     company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), index=True)
+    # 担当班。責任者・担当会社とは独立して割り当てられる。未設定は NULL のまま。
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"), index=True)
 
 
 class TaskDependency(Base, TimestampMixin):

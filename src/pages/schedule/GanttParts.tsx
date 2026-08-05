@@ -7,7 +7,8 @@
  */
 import { ZoomIn, ZoomOut } from 'lucide-react'
 import {
-  formatJst, formatPeriod, groupSlots, nowJst, shiftDays, splitEndAt, splitStartAt, toJst,
+  formatJst, formatPeriod, groupSlots, nowJst, shiftDays, splitDateTime, splitEndAt, splitStartAt,
+  toJst,
   toJstIsoString, type TimeScale, type Timeline,
 } from '../../lib/timeline'
 import type { CrossMilestone } from '../../api/crossMilestones'
@@ -87,6 +88,11 @@ export const statusColor: Record<string, string> = {
  * 終了は exclusive のため、表示用に日付＋区分へ戻してから整形する。
  */
 export function edgeLabel(iso: string, edge: 'start' | 'end', precision: WbsTask['precision']): string {
+  // 時間単位は日時をそのまま見せる（時刻を指定した意味が消えないように）
+  if (precision === 'time') {
+    const { dateKey, time } = splitDateTime(iso)
+    return `${formatJst(dateKey, 'MM-dd')} ${time}`
+  }
   const { dateKey, half } = edge === 'start' ? splitStartAt(iso) : splitEndAt(iso)
   const date = formatJst(dateKey, 'MM-dd')
   return precision === 'half_day' ? `${date} ${half === 'AM' ? '午前' : '午後'}` : date
@@ -299,6 +305,9 @@ export function GanttRow({
 }) {
   const ds = preview?.ds ?? 0
   const de = preview?.de ?? 0
+  // 日程が未設定の工程はガント上にバーを描かない（架空の日付で描かない）。
+  // 左の工程表には「日程未設定」として行が残る。
+  if (!t.planStartAt || !t.planEndAt) return null
   // ドラッグ中はプレビュー分だけ日付をずらしてから座標化する（区分=午前/午後は保たれる）
   const planBar = timeline.spanOf(shiftDays(t.planStartAt, ds), shiftDays(t.planEndAt, de))
   const baseBar = timeline.spanOf(t.planStartAt, t.planEndAt)
@@ -338,11 +347,12 @@ export function GanttRow({
       <div
         className={`group absolute flex items-center rounded-sm ${t.status === '遅延' ? 'ring-1 ring-ng' : ''}`}
         style={{ top: top + 6, left: planLeft, width: planW, height: 11, background: color, opacity: 0.9, cursor: 'grab' }}
+        data-task-bar={t.id}
         onPointerDown={(e) => onStartDrag(e, t, 'move')}
         onContextMenu={onContext}
         onClick={onSelect}
         onDoubleClick={onOpenProgress}
-        title={`${t.name} ｜ 予定 ${formatPeriod(t.planStartAt, t.planEndAt, t.precision)}（${t.planDays}日） ｜ 進捗${t.progress}% ｜ ${t.actualPeople || t.planPeople}名`}
+        title={`${t.name} ｜ 予定 ${formatPeriod(t.planStartAt, t.planEndAt, t.precision)}（${t.planDays ?? '—'}日） ｜ 進捗${t.progress}% ｜ ${t.actualPeople || t.planPeople}名`}
       >
         {/* 進捗塗り */}
         <div className="absolute left-0 top-0 h-full rounded-l-sm bg-black/25" style={{ width: `${t.progress}%` }} />
@@ -357,10 +367,17 @@ export function GanttRow({
 }
 
 /** 依存線（先行工程のバー右端 → 後続工程の開始位置）。 */
+/**
+ * 工程間の依存線。
+ *
+ * `emphasized` は「赤で強調するか」だけを表す。何を強調するかは画面ごとに違い
+ * （案件工程＝クリティカルパス、横断工程＝遅延）、凡例でそれぞれ明示する。
+ * ここでは意味を決めない（片方の意味の名前を付けて誤解させない）。
+ */
 export function DependencyLines({
   lines, width, height,
 }: {
-  lines: { x1: number; y1: number; x2: number; y2: number; critical: boolean }[]
+  lines: { x1: number; y1: number; x2: number; y2: number; emphasized: boolean }[]
   width: number
   height: number
 }) {
@@ -373,10 +390,10 @@ export function DependencyLines({
             <path
               d={`M${l.x1},${l.y1} L${midX},${l.y1} L${midX},${l.y2} L${l.x2},${l.y2}`}
               fill="none"
-              stroke={l.critical ? '#d64545' : '#94a3b8'}
+              stroke={l.emphasized ? '#d64545' : '#94a3b8'}
               strokeWidth={1.2}
             />
-            <path d={`M${l.x2},${l.y2} l-5,-3 l0,6 z`} fill={l.critical ? '#d64545' : '#94a3b8'} />
+            <path d={`M${l.x2},${l.y2} l-5,-3 l0,6 z`} fill={l.emphasized ? '#d64545' : '#94a3b8'} />
           </g>
         )
       })}

@@ -54,21 +54,36 @@ export interface WbsTask {
   manager: string // 責任者
   // 期間は [開始, 終了) の半開区間（ISO日時・Asia/Tokyo基準）。
   // 終了は exclusive のため、1日工程は 00:00〜翌00:00、午前のみは 00:00〜12:00 になる。
-  planStartAt: string
-  planEndAt: string
+  // 日程が未設定の工程もある。架空の日付で埋めず null のまま扱う。
+  planStartAt: string | null
+  planEndAt: string | null
   actualStartAt: string | null
   actualEndAt: string | null
   /** 入力・表示の粒度（日単位 / 0.5日単位 / 任意時刻） */
   precision: SchedulePrecision
-  planDays: number // 予定日数（0.5刻み）
-  progress: number // 0-100
+  planDays: number | null // 予定日数（0.5刻み）。日程未設定なら null
+  planProgress: number // 予定進捗 0-100
+  progress: number // 実績進捗 0-100
   planPeople: number
   actualPeople: number
   status: TaskStatus
   predecessors: string[] // 先行工程 WBS
-  level: number // 0=親, 1=子
+  predecessorIds: string[] // 先行工程のID（正本。WBSは表示用）
+  notes: string | null
+  delayReason: string | null
+  // 担当情報の参照先。表示名（workType/crew/manager）はAPIが解決した値で、
+  // 編集時はこちらのIDを送る。未設定は null のまま。
+  workTypeId: number | null
+  processTypeId: number | null
+  teamId: number | null
+  managerId: number | null
+  companyId: number | null
+  /** 親工程のID（parent_task_id が正本。WBSの文字列では判定しない） */
+  parentId: string | null
+  /** 階層の深さ（0=最上位）。2階層に限定しない */
+  level: number
+  /** 子工程を持つか（WBSにドットがあるかでは判定しない） */
   isParent: boolean
-  critical?: boolean
 }
 
 // ============ 施工写真 ============

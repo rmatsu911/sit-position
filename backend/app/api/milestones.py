@@ -393,11 +393,20 @@ def milestone_options(
     scope_stmt = select(Milestone.id).join(Project, Project.id == Milestone.project_id).where(*clauses)
     scoped = select(Milestone).where(Milestone.id.in_(scope_stmt)).subquery()
 
+    # 案件の選択肢は「マイルストーンが既にある案件」ではなく、**登録できる案件**
+    # （＝権限範囲の案件。project_id 指定時はその案件）から作る。
+    # 既存の登録だけから作ると、まだ1件も登録していない案件で候補が空になり登録できない。
+    project_clauses = [Project.deleted_at.is_(None)]
+    allowed = accessible_project_ids(db, user)
+    if allowed is not None:
+        project_clauses.append(Project.id.in_(allowed or {-1}))
+    if project_id is not None:
+        project_clauses.append(Project.id == project_id)
     projects = db.execute(
         select(Project.id, Project.name, Project.construction_number, Project.status)
-        .where(Project.id.in_(select(scoped.c.project_id)))
-        .order_by(Project.construction_number)
+        .where(*project_clauses).order_by(Project.construction_number)
     ).all()
+    project_ids = [p[0] for p in projects]
     types = db.execute(
         select(MilestoneType.id, MilestoneType.name)
         .where(MilestoneType.active.is_(True))
@@ -416,10 +425,11 @@ def milestone_options(
         .where(Company.id.in_(select(scoped.c.company_id)))
         .order_by(Company.id)
     ).all()
-    # 関連工程は「実際に紐づいていて、削除されていない工程」だけを選択肢にする
+    # 関連工程は、選択できる案件に属する削除されていない工程すべて。
+    # 既に紐づいている工程だけに絞ると、新規登録で工程を選べなくなる。
     related = db.execute(
         select(Task.id, Task.wbs_code, Task.name, Task.project_id)
-        .where(Task.id.in_(select(scoped.c.related_task_id)), Task.deleted_at.is_(None))
+        .where(Task.project_id.in_(project_ids or [-1]), Task.deleted_at.is_(None))
         .order_by(Task.project_id, Task.wbs_code)
     ).all()
 

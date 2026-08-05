@@ -22,9 +22,14 @@ export function ContextMenu({
 }) {
   useEffect(() => {
     const handler = () => onClose()
-    window.addEventListener('click', handler)
-    window.addEventListener('contextmenu', handler)
+    // メニューを開いた右クリック自体がまだ window まで伝わっている最中に
+    // 閉じる購読を始めると、開いた瞬間に閉じてしまう。1ティック遅らせて購読する。
+    const timer = window.setTimeout(() => {
+      window.addEventListener('click', handler)
+      window.addEventListener('contextmenu', handler)
+    }, 0)
     return () => {
+      window.clearTimeout(timer)
       window.removeEventListener('click', handler)
       window.removeEventListener('contextmenu', handler)
     }

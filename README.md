@@ -78,3 +78,36 @@ cd backend
 pip install pytest httpx
 pytest            # 認証・案件・権限スコープのAPIテスト
 ```
+
+## 開発環境の前提
+
+| 対象 | バージョン | 備考 |
+|---|---|---|
+| Node.js | **20.19 以上**（`package.json` の `engines` と `.nvmrc` で固定） | `playwright` が Node 20 以上を要求するため |
+| npm | Node.js 同梱版 | |
+| Python | **3.11 以上** | `backend/pyproject.toml` の `requires-python` |
+| PostgreSQL | 16 | 開発は docker-compose でも可 |
+
+```bash
+node -v          # v20.19 以上であること
+npm ci           # 依存を lockfile どおりに導入
+```
+
+### ブラウザ回帰（Playwright）
+
+実ブラウザ回帰スクリプト（`scripts/*.mjs`）は Playwright を使う。**ブラウザ本体は
+別途インストールが必要**で、既定の場所へ入れる場合は次を実行する。
+
+```bash
+npx playwright install chromium          # ブラウザ本体を導入
+node scripts/phase4-verify.mjs           # backend(:8000) と vite preview(:4173) を起動しておく
+```
+
+すでに別の場所へ Chromium がある環境（CI イメージ等）では、パスを渡して実行する。
+
+```bash
+PW_CHROME=/path/to/chromium node scripts/phase4-verify.mjs
+```
+
+これらの回帰は DB とブラウザを必要とするため CI では自動実行せず、**手動実行**する。
+CI で自動実行するのは pytest / typecheck / ESLint / build / timeline テスト。

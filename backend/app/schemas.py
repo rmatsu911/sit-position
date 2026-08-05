@@ -62,6 +62,8 @@ class ProjectCreate(ProjectBase):
 
 
 class ProjectUpdate(BaseModel):
+    # 工事番号も変更できる。ただし他案件との重複は 409 で拒否する。
+    construction_number: str | None = Field(default=None, min_length=1, max_length=64)
     name: str | None = None
     customer: str | None = None
     customer_type: str | None = None
@@ -160,8 +162,11 @@ class TaskOut(BaseModel):
     wbs_code: str | None = None
     name: str
     work_type: str | None = None
+    work_type_id: int | None = None
     process_type: str | None = None
+    process_type_id: int | None = None
     crew: str | None = None
+    team_id: int | None = None
     manager: str | None = None
     manager_id: int | None = None
     company: str | None = None
@@ -191,10 +196,14 @@ class TaskCreate(BaseModel):
     process_type_id: int | None = None
     planned_start_at: datetime | None = None
     planned_finish_at: datetime | None = None
+    # 実績は登録時から入力できる（着手済みの工程を後から登録する運用があるため）
+    actual_start_at: datetime | None = None
+    actual_finish_at: datetime | None = None
     planned_progress: int = 0
     actual_progress: int = 0
     planned_workers: int = 0
     actual_workers: int = 0
+    team_id: int | None = None
     manager_id: int | None = None
     company_id: int | None = None
     status: str = "未着手"
@@ -219,6 +228,7 @@ class TaskUpdate(BaseModel):
     actual_progress: int | None = None
     planned_workers: int | None = None
     actual_workers: int | None = None
+    team_id: int | None = None
     manager_id: int | None = None
     company_id: int | None = None
     status: str | None = None
@@ -708,6 +718,74 @@ class IdNameOut(BaseModel):
     name: str
 
 
+class AuditEntryOut(BaseModel):
+    """操作履歴の1件。表示文はサーバー側で組み立て、画面が文言を持たない。"""
+
+    at: datetime | None = None
+    user: str
+    summary: str
+    #: audit_log = 監査ログ / task_change = 工程の変更履歴
+    source: str
+    entity_type: str
+    entity_id: str | None = None
+
+
+class AuditLogOut(BaseModel):
+    entries: list[AuditEntryOut]
+    returned: int
+    limit: int
+
+
+class AiFeatureStatusOut(BaseModel):
+    """AI機能1つの状態。構想（note）と実際の状態（status）を分けて返す。"""
+
+    key: str
+    title: str
+    #: not_implemented / model_missing / service_down / failed / processing / connected
+    status: str
+    #: 状態の補足（件数・エラー内容など）。無いときは None
+    detail: str | None = None
+    #: その機能が何をするものか。実装済みかどうかとは別の情報
+    note: str
+    #: 推論ジョブの種別。未実装の機能は None
+    job_type: str | None = None
+
+
+class AiModelStatusOut(BaseModel):
+    id: int
+    name: str
+    model_type: str
+    version: str
+    status: str
+    trained_at: datetime | None = None
+    #: 学習済みか。「登録されている」だけのモデルと区別する
+    trained: bool
+
+
+class AiStatusOut(BaseModel):
+    features: list[AiFeatureStatusOut]
+    models: list[AiModelStatusOut]
+    trained_model_count: int
+    #: 処理待ち・処理中のジョブ数（AI Worker が動いているかの手がかり）
+    pending_jobs: int
+    #: 最後に成功した推論ジョブの完了時刻。1件も無ければ None
+    last_successful_job_at: datetime | None = None
+
+
+class TaskFormOptions(BaseModel):
+    """工程フォームの選択肢。画面が固定の一覧を持たないよう、実データから作る。
+
+    候補が空のときも空配列を返す。画面はそれを「マスタ未登録」として示し、
+    仮の選択肢を作らない。
+    """
+
+    work_types: list[IdNameOut]
+    process_types: list[IdNameOut]
+    teams: list[IdNameOut]
+    managers: list[IdNameOut]
+    companies: list[IdNameOut]
+
+
 class CrossProjectOption(BaseModel):
     id: int
     name: str
@@ -924,3 +1002,53 @@ class CalendarOptions(BaseModel):
     statuses: list[str]
     responsibles: list[IdNameOut]
     companies: list[IdNameOut]
+
+
+# ===== 案件一覧の検索（Ver.0.3 Phase 4） =====
+class ProjectSearchOut(BaseModel):
+    """権限・案件スコープと全条件を適用したあとの1ページ分。
+
+    `total` は**ページネーション前**の全件数。画面はこの値をそのまま表示し、
+    表示中のページから数え直さない。
+    """
+
+    items: list[ProjectOut]
+    total: int
+    page: int
+    per_page: int
+    pages: int
+    sort: str
+
+
+class ProjectFilterOptions(BaseModel):
+    """案件一覧の絞り込み選択肢。表示中のページではなく、権限範囲の全案件から作る。"""
+
+    statuses: list[str]
+    areas: list[str]
+    departments: list[IdNameOut]
+    managers: list[IdNameOut]
+    companies: list[IdNameOut]
+
+
+class ReportMetaOut(BaseModel):
+    label: str
+    value: str
+
+
+class ReportPreviewOut(BaseModel):
+    """帳票の内容。画面・プレビュー・印刷・PDF・Excel・CSV がこの1本を共有する。
+
+    画面側で行を作らないため、ここに出た行がそのまま出力ファイルの行になる。
+    """
+
+    report_type: str
+    title: str
+    project_id: int
+    construction_number: str
+    project_name: str
+    meta: list[ReportMetaOut]
+    columns: list[str]
+    rows: list[list[str]]
+    row_count: int
+    source: str  # tasks = 工程から自動生成 / manual = 手入力
+    formats: list[str]

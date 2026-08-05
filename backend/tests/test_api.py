@@ -286,6 +286,9 @@ def _cross(client, email: str, qs: str = ""):
     return r.json()
 
 
+_cross_seq = [0]
+
+
 def _make_cross_fixture(client):
     """横断工程表の検証用に、2案件へ工程を作る（担当者・担当会社・未割当を含む）。"""
     t = token(client, "pm@test.jp")
@@ -308,6 +311,9 @@ def _make_cross_fixture(client):
         pm_id = me.json()["id"]
 
     created = []
+    # WBSは案件内で一意なので、呼び出しごとに衝突しない接尾辞を付ける
+    _cross_seq[0] += 1
+    sfx = f"-{_cross_seq[0]}"
     specs = [
         ("cx-1", "横断 親工程", None, "2026-09-01", "2026-09-11", company_a1, pm_id),
         ("cx-1.1", "横断 子工程A", "cx-1", "2026-09-01", "2026-09-06", company_a1, pm_id),
@@ -317,7 +323,7 @@ def _make_cross_fixture(client):
     parents: dict[str, int] = {}
     for wbs, name, parent, ps, pe, company, manager in specs:
         body = {
-            "wbs_code": wbs, "name": name,
+            "wbs_code": f"{wbs}{sfx}", "name": name,
             "planned_start_at": f"{ps}T00:00:00+09:00",
             "planned_finish_at": f"{pe}T00:00:00+09:00",
             "company_id": company, "manager_id": manager,
@@ -404,7 +410,7 @@ def test_cross_schedule_half_day_roundtrip(client):
     t = token(client, "pm@test.jp")
     headers = {"Authorization": f"Bearer {t}"}
     r = client.post("/api/projects/2/tasks", headers=headers, json={
-        "wbs_code": "cx-9", "name": "横断 半日工程",
+        "wbs_code": f"cx-9-{_cross_seq[0]}", "name": "横断 半日工程",
         "planned_start_at": "2026-09-21T12:00:00+09:00",
         "planned_finish_at": "2026-09-22T00:00:00+09:00",
         "schedule_precision": "half_day",
@@ -1935,3 +1941,1424 @@ def test_calendar_has_no_dedicated_table(client):
 
     names = set(Base.metadata.tables)
     assert not {n for n in names if "calendar" in n}, "カレンダー専用テーブルを作っている"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: 案件ライフサイクル（検索・登録・更新・権限）
+#
+# Seed の固定ID には依存せず、この節が自分で作った実データだけを対象にする。
+# 案件は工事番号・工事名の接頭辞で識別し、他テストの案件と混ざらないようにする。
+# ---------------------------------------------------------------------------
+
+P4_TAG = "P4LC"  # 絞り込み確認用の案件群
+P4_PERIOD_TAG = "P4PER"  # 期間検索の境界確認用の案件群
+
+_p4_seq = [0]
+
+
+def _p4_number(prefix: str = "P4NEW") -> str:
+    """テスト内で一意な工事番号。Seed の固定値を使い回さない。"""
+    _p4_seq[0] += 1
+    return f"{prefix}-{_p4_seq[0]:04d}"
+
+
+def _p4_head(client, email: str) -> dict:
+    return {"Authorization": f"Bearer {token(client, email)}"}
+
+
+def _p4_search(client, email: str, qs: str = "") -> dict:
+    r = client.get(f"/api/projects/search?{qs}", headers=_p4_head(client, email))
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _p4_ids(client, email: str, qs: str) -> list[int]:
+    return [p["id"] for p in _p4_search(client, email, qs)["items"]]
+
+
+def _p4_walk_pages(client, email: str, qs: str, per_page: int = 2):
+    """全ページを順に取得し、(通し順のID列, total, ページ数) を返す。"""
+    ids: list[int] = []
+    totals: set[int] = set()
+    page = 1
+    pages = 1
+    while True:
+        data = _p4_search(client, email, f"{qs}&per_page={per_page}&page={page}")
+        totals.add(data["total"])
+        pages = data["pages"]
+        ids += [p["id"] for p in data["items"]]
+        if page >= pages:
+            break
+        page += 1
+    assert len(totals) == 1, f"ページごとに total が変わっている: {totals}"
+    return ids, totals.pop(), pages
+
+
+@pytest.fixture(scope="module")
+def p4():
+    """Phase 4 のテストデータ。ダミーの固定IDは作らず、作成したIDを返す。"""
+    from datetime import date
+
+    from app.core.security import hash_password
+    from app.models import Company, Department, Project, ProjectMember, Task, User
+    from tests.conftest import TestingSessionLocal
+
+    env: dict = {}
+    with TestingSessionLocal() as s:
+        def user(email: str, role: str, name: str) -> User:
+            u = s.query(User).filter_by(email=email).one_or_none()
+            if u is None:
+                u = User(email=email, hashed_password=hash_password("pass"), name=name, role=role)
+                s.add(u)
+                s.flush()
+            return u
+
+        env["manager"] = user("p4mgr@test.jp", "PROJECT_MANAGER", "P4担当者A").id
+        env["manager2"] = user("p4mgr2@test.jp", "PROJECT_MANAGER", "P4担当者B").id
+        env["qm"] = user("p4qm@test.jp", "QUALITY_MANAGER", "P4品質").id
+        env["viewer"] = user("p4viewer@test.jp", "VIEWER", "P4閲覧").id
+        fw = user("p4fw@test.jp", "FIELD_WORKER", "P4現場")
+        env["fw"] = fw.id
+
+        dept = Department(name="P4部署")
+        company_a = Company(name="P4会社A", is_partner=True)
+        company_b = Company(name="P4会社B", is_partner=True)
+        s.add_all([dept, company_a, company_b])
+        s.flush()
+        env["dept"] = dept.id
+        env["company_a"] = company_a.id
+        env["company_b"] = company_b.id
+
+        def project(key: str, **over) -> None:
+            base = dict(
+                construction_number=f"{P4_TAG}-{key}",
+                name=f"{P4_TAG} {key}",
+                customer="P4顧客",
+                status="遅延",
+                area="P4エリア北",
+                department_id=dept.id,
+                manager_id=env["manager"],
+                start_planned_at=date(2026, 3, 1),
+                finish_planned_at=date(2026, 3, 31),
+            )
+            base.update(over)
+            p = Project(**base)
+            s.add(p)
+            s.flush()
+            env[key] = p.id
+
+        # hit だけが全条件に一致する。他はどれか1条件だけ外れている。
+        project("hit")
+        project("status_ng", status="施工中")
+        project("area_ng", area="P4エリア南")
+        project("mgr_ng", manager_id=env["manager2"])
+        project("dept_ng", department_id=None)
+        project("period_ng", start_planned_at=date(2026, 8, 1),
+                finish_planned_at=date(2026, 8, 31))
+        project("company_ng")
+        env["all"] = {env[k] for k in
+                      ("hit", "status_ng", "area_ng", "mgr_ng", "dept_ng", "period_ng",
+                       "company_ng")}
+
+        # 会社は案件ではなく「工程の担当会社」。hit は同じ会社の工程を2件持つ。
+        for key in ("hit", "status_ng", "area_ng", "mgr_ng", "dept_ng", "period_ng"):
+            s.add_all([
+                Task(project_id=env[key], name=f"{key} 工程1", company_id=company_a.id),
+                Task(project_id=env[key], name=f"{key} 工程2", company_id=company_a.id),
+            ])
+        s.add(Task(project_id=env["hit"], name="hit 工程3", company_id=company_b.id))
+        s.add(Task(project_id=env["company_ng"], name="company_ng 工程1",
+                   company_id=company_b.id))
+
+        # 期間検索の境界確認。片側だけ未設定の案件を必ず含める。
+        periods = {
+            "both": (date(2026, 5, 10), date(2026, 5, 20)),
+            "no_start": (None, date(2026, 5, 20)),
+            "no_finish": (date(2026, 5, 10), None),
+            "no_period": (None, None),
+            "before": (date(2026, 1, 1), date(2026, 1, 31)),
+            "after": (date(2026, 9, 1), date(2026, 9, 30)),
+        }
+        for key, (start, finish) in periods.items():
+            p = Project(construction_number=f"{P4_PERIOD_TAG}-{key}",
+                        name=f"{P4_PERIOD_TAG} {key}", status="施工中",
+                        start_planned_at=start, finish_planned_at=finish)
+            s.add(p)
+            s.flush()
+            env[f"per_{key}"] = p.id
+        env["periods"] = {env[f"per_{k}"] for k in periods}
+
+        # 協力会社ロールは hit だけに割り当てる（0件と403を区別するため）
+        if s.query(ProjectMember).filter_by(user_id=fw.id).one_or_none() is None:
+            s.add(ProjectMember(project_id=env["hit"], user_id=fw.id, role="FIELD_WORKER"))
+        s.commit()
+    return env
+
+
+def test_p4_project_lifecycle_create_list_detail_update(client, p4):
+    """CREATE → 一覧 → 詳細 → UPDATE → 再取得 が一続きで通ること。"""
+    head = _p4_head(client, "pm@test.jp")
+    number = _p4_number()
+    body = {
+        "construction_number": number,
+        "name": "ライフサイクル確認",
+        "customer": "P4顧客",
+        "status": "未着工",
+        "area": "P4エリア北",
+        "manager_id": p4["manager"],
+        "start_planned_at": "2026-04-01",
+        "finish_planned_at": "2026-04-30",
+    }
+    created = client.post("/api/projects", json=body, headers=head)
+    assert created.status_code == 201, created.text
+    new_id = created.json()["id"]
+
+    # 一覧（検索API）。既定の並び順は登録が新しい順なので1ページ目の先頭に出る。
+    listed = _p4_search(client, "pm@test.jp", "per_page=20&page=1")
+    assert listed["sort"] == "recent"
+    assert listed["items"][0]["id"] == new_id, "登録直後の案件が1ページ目の先頭に出ない"
+    assert listed["page"] == 1 and listed["per_page"] == 20
+
+    # 互換の一覧APIからも見える
+    legacy = client.get("/api/projects", headers=head)
+    assert new_id in [p["id"] for p in legacy.json()]
+
+    # 詳細
+    detail = client.get(f"/api/projects/{new_id}", headers=head)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["construction_number"] == number
+    assert detail.json()["manager"] == "P4担当者A"
+
+    # 更新
+    updated = client.put(
+        f"/api/projects/{new_id}",
+        json={"name": "ライフサイクル確認（更新後）", "status": "施工中",
+              "finish_planned_at": "2026-05-31", "actual_progress": 40},
+        headers=head,
+    )
+    assert updated.status_code == 200, updated.text
+
+    # 再取得で反映されている（画面の状態ではなく保存結果を確認する）
+    again = client.get(f"/api/projects/{new_id}", headers=head).json()
+    assert again["name"] == "ライフサイクル確認（更新後）"
+    assert again["status"] == "施工中"
+    assert again["finish_planned_at"] == "2026-05-31"
+    assert again["actual_progress"] == 40
+    assert again["start_planned_at"] == "2026-04-01", "更新していない項目が消えている"
+    searched = _p4_search(client, "pm@test.jp", f"q={number}")
+    assert [p["name"] for p in searched["items"]] == ["ライフサイクル確認（更新後）"]
+    assert searched["total"] == 1
+
+
+def test_p4_duplicate_construction_number_conflicts(client, p4):
+    """工事番号の重複は、作成時も更新時も 409 で拒否されること。"""
+    head = _p4_head(client, "pm@test.jp")
+    first = _p4_number()
+    r = client.post("/api/projects", json={"construction_number": first, "name": "重複元"},
+                    headers=head)
+    assert r.status_code == 201, r.text
+    kept_id = r.json()["id"]
+
+    dup = client.post("/api/projects", json={"construction_number": first, "name": "重複先"},
+                      headers=head)
+    assert dup.status_code == 409, dup.text
+    assert _p4_search(client, "pm@test.jp", f"q={first}")["total"] == 1, "重複が保存されている"
+
+    second = _p4_number()
+    other = client.post("/api/projects", json={"construction_number": second, "name": "別案件"},
+                        headers=head)
+    assert other.status_code == 201, other.text
+    other_id = other.json()["id"]
+
+    conflict = client.put(f"/api/projects/{other_id}", json={"construction_number": first},
+                          headers=head)
+    assert conflict.status_code == 409, conflict.text
+    assert client.get(f"/api/projects/{other_id}",
+                      headers=head).json()["construction_number"] == second
+
+    # 自分自身の工事番号での更新は重複扱いにしない
+    same = client.put(f"/api/projects/{other_id}",
+                      json={"construction_number": second, "name": "別案件（更新）"}, headers=head)
+    assert same.status_code == 200, same.text
+    assert client.get(f"/api/projects/{kept_id}", headers=head).status_code == 200
+
+
+def test_p4_period_validation_rejects_reversed_dates(client, p4):
+    """開始日が終了日より後なら 422。更新は保存後の値の組で判定すること。"""
+    head = _p4_head(client, "pm@test.jp")
+    bad = client.post(
+        "/api/projects",
+        json={"construction_number": _p4_number(), "name": "逆転期間",
+              "start_planned_at": "2026-06-30", "finish_planned_at": "2026-06-01"},
+        headers=head,
+    )
+    assert bad.status_code == 422, bad.text
+
+    number = _p4_number()
+    ok = client.post(
+        "/api/projects",
+        json={"construction_number": number, "name": "期間更新",
+              "start_planned_at": "2026-06-01", "finish_planned_at": "2026-06-30"},
+        headers=head,
+    )
+    assert ok.status_code == 201, ok.text
+    pid = ok.json()["id"]
+
+    # 片側だけ更新しても、保存済みのもう片方と突き合わせて判定される
+    late_start = client.put(f"/api/projects/{pid}", json={"start_planned_at": "2026-07-15"},
+                            headers=head)
+    assert late_start.status_code == 422, late_start.text
+    early_finish = client.put(f"/api/projects/{pid}", json={"finish_planned_at": "2026-05-01"},
+                              headers=head)
+    assert early_finish.status_code == 422, early_finish.text
+    kept = client.get(f"/api/projects/{pid}", headers=head).json()
+    assert kept["start_planned_at"] == "2026-06-01" and kept["finish_planned_at"] == "2026-06-30"
+
+    # 同日は許可（1日で終わる工事がある）
+    same_day = client.put(f"/api/projects/{pid}",
+                          json={"start_planned_at": "2026-06-30"}, headers=head)
+    assert same_day.status_code == 200, same_day.text
+
+
+def test_p4_unique_violation_maps_to_conflict(client, p4, monkeypatch):
+    """事前チェックをすり抜けても、DBの一意制約違反は 500 ではなく 409 になること。"""
+    head = _p4_head(client, "pm@test.jp")
+    number = _p4_number()
+    seed = client.post("/api/projects", json={"construction_number": number, "name": "一意制約元"},
+                       headers=head)
+    assert seed.status_code == 201, seed.text
+
+    other_number = _p4_number()
+    other = client.post("/api/projects",
+                        json={"construction_number": other_number, "name": "一意制約先"},
+                        headers=head)
+    assert other.status_code == 201, other.text
+    other_id = other.json()["id"]
+
+    # 事前チェックを無効化して IntegrityError の経路だけを通す
+    monkeypatch.setattr("app.api.projects._check_number_unique", lambda *a, **k: None)
+
+    dup = client.post("/api/projects", json={"construction_number": number, "name": "衝突"},
+                      headers=head)
+    assert dup.status_code == 409, dup.text
+
+    conflict = client.put(f"/api/projects/{other_id}", json={"construction_number": number},
+                          headers=head)
+    assert conflict.status_code == 409, conflict.text
+
+    monkeypatch.undo()
+    # ロールバックされ、既存データは壊れていない
+    assert client.get(f"/api/projects/{other_id}",
+                      headers=head).json()["construction_number"] == other_number
+    assert _p4_search(client, "pm@test.jp", f"q={number}")["total"] == 1
+
+
+def test_p4_search_combines_all_filters_with_and(client, p4):
+    """全条件を同時指定するとANDで効き、条件を1つ外すとその分だけ増えること。"""
+    base = {
+        "q": P4_TAG,
+        "statuses": "遅延",
+        "delayed_only": "true",
+        "manager_ids": str(p4["manager"]),
+        "department_ids": str(p4["dept"]),
+        "company_ids": str(p4["company_a"]),
+        "areas": "P4エリア北",
+        "date_from": "2026-03-01",
+        "date_to": "2026-03-31",
+        "per_page": "50",
+    }
+
+    def qs(*drop: str) -> str:
+        return "&".join(f"{k}={v}" for k, v in base.items() if k not in drop)
+
+    assert set(_p4_ids(client, "admin@test.jp", qs())) == {p4["hit"]}
+
+    # 条件を1つ外すと、その条件で落ちていた案件だけが戻る
+    assert set(_p4_ids(client, "admin@test.jp", qs("areas"))) == {p4["hit"], p4["area_ng"]}
+    assert set(_p4_ids(client, "admin@test.jp", qs("manager_ids"))) == {p4["hit"], p4["mgr_ng"]}
+    assert set(_p4_ids(client, "admin@test.jp", qs("department_ids"))) == {p4["hit"], p4["dept_ng"]}
+    assert set(_p4_ids(client, "admin@test.jp", qs("company_ids"))) == {p4["hit"], p4["company_ng"]}
+    assert set(_p4_ids(client, "admin@test.jp", qs("date_to"))) == {p4["hit"], p4["period_ng"]}
+    assert set(_p4_ids(client, "admin@test.jp", qs("statuses", "delayed_only"))) == {
+        p4["hit"], p4["status_ng"]}
+
+    # キーワードは工事名・工事番号・顧客・責任者名のいずれかに当たる
+    assert set(_p4_ids(client, "admin@test.jp", f"q={P4_TAG}&per_page=50")) == p4["all"]
+    assert set(_p4_ids(client, "admin@test.jp", "q=P4担当者B&per_page=50")) == {p4["mgr_ng"]}
+    assert _p4_search(client, "admin@test.jp", "q=該当しないキーワード")["total"] == 0
+
+
+def test_p4_search_by_task_company_without_duplicates(client, p4):
+    """会社は工程の担当会社で判定し、同じ会社の工程が複数でも案件が重複しないこと。"""
+    both = f"{p4['company_a']},{p4['company_b']}"
+    ids = _p4_ids(client, "admin@test.jp", f"q={P4_TAG}&company_ids={both}&per_page=50")
+    assert len(ids) == len(set(ids)), f"同じ案件が複数行で返っている: {ids}"
+    # hit は会社Aの工程を2件、会社Bの工程を1件持つが1件として数える
+    assert ids.count(p4["hit"]) == 1
+    assert set(ids) == p4["all"]
+    assert _p4_search(client, "admin@test.jp",
+                      f"q={P4_TAG}&company_ids={both}&per_page=50")["total"] == len(p4["all"])
+
+    only_b = _p4_ids(client, "admin@test.jp",
+                     f"q={P4_TAG}&company_ids={p4['company_b']}&per_page=50")
+    assert set(only_b) == {p4["hit"], p4["company_ng"]}
+    assert len(only_b) == 2
+
+
+def test_p4_search_period_treats_open_ended_as_overlapping(client, p4):
+    """期間は「予定期間が範囲と重なる案件」。片側未設定はその向きに制限しない。"""
+    tag = f"q={P4_PERIOD_TAG}&per_page=50"
+
+    def ids(extra: str) -> set:
+        return set(_p4_ids(client, "admin@test.jp", f"{tag}&{extra}"))
+
+    # 境界日ちょうどを含む（5/20 は both の完了予定日、no_start の完了予定日）
+    assert ids("date_from=2026-05-20&date_to=2026-05-20") == {
+        p4["per_both"], p4["per_no_start"], p4["per_no_finish"], p4["per_no_period"]}
+
+    # 1日ずらすと、終了予定日で外れる案件が落ちる
+    assert ids("date_from=2026-05-21&date_to=2026-05-21") == {
+        p4["per_no_finish"], p4["per_no_period"]}
+
+    # 開始予定日の境界。5/10 は both / no_finish の着工予定日
+    assert ids("date_to=2026-05-10&date_from=2026-05-10") == {
+        p4["per_both"], p4["per_no_start"], p4["per_no_finish"], p4["per_no_period"]}
+    assert ids("date_to=2026-05-09&date_from=2026-05-09") == {
+        p4["per_no_start"], p4["per_no_period"]}
+
+    # 片側だけの指定は、その向きだけ制限する
+    assert ids("date_from=2026-06-01") == {
+        p4["per_no_finish"], p4["per_no_period"], p4["per_after"]}
+    assert ids("date_to=2026-02-01") == {
+        p4["per_no_start"], p4["per_no_period"], p4["per_before"]}
+
+    # 期間未指定なら全件
+    assert ids("") == p4["periods"]
+
+
+def test_p4_total_is_counted_after_scope_and_pages_sum_to_total(client, p4):
+    """total は権限・条件を適用したあとの件数で、全ページの合計と一致すること。"""
+    qs = f"q={P4_TAG}"
+    admin_ids, admin_total, admin_pages = _p4_walk_pages(client, "admin@test.jp", qs, per_page=2)
+    assert admin_total == len(p4["all"])
+    assert len(admin_ids) == admin_total, "全ページの items 合計が total と一致しない"
+    assert len(set(admin_ids)) == admin_total, "ページ間で同じ案件が重複している"
+    assert set(admin_ids) == p4["all"]
+    assert admin_pages == (admin_total + 1) // 2
+
+    # 協力会社ロールは割当案件だけ。total もスコープ適用後の値になる。
+    fw_ids, fw_total, _ = _p4_walk_pages(client, "p4fw@test.jp", qs, per_page=2)
+    assert fw_ids == [p4["hit"]]
+    assert fw_total == 1, "権限適用前の件数を total に返している"
+    assert fw_total < admin_total
+
+    # 1ページに収めても total は変わらない
+    single = _p4_search(client, "admin@test.jp", f"{qs}&per_page=50")
+    assert single["total"] == admin_total and single["pages"] == 1
+    assert len(single["items"]) == admin_total
+
+
+def test_p4_filter_options_cover_whole_scope_not_current_page(client, p4):
+    """絞り込みの選択肢は表示中のページではなく、権限範囲の全案件から作ること。"""
+    head = _p4_head(client, "admin@test.jp")
+    page = _p4_search(client, "admin@test.jp", f"q={P4_TAG}&per_page=1&page=1")
+    assert len(page["items"]) == 1 and page["total"] > 1
+
+    r = client.get("/api/projects/filter-options", headers=head)
+    assert r.status_code == 200, r.text
+    opts = r.json()
+    areas = set(opts["areas"])
+    assert {"P4エリア北", "P4エリア南"} <= areas, "1ページ目に無いエリアが選択肢から落ちている"
+    assert {"P4担当者A", "P4担当者B"} <= {m["name"] for m in opts["managers"]}
+    assert {"P4会社A", "P4会社B"} <= {c["name"] for c in opts["companies"]}
+    assert "P4部署" in {d["name"] for d in opts["departments"]}
+    assert {"遅延", "施工中"} <= set(opts["statuses"])
+    assert len({d["id"] for d in opts["departments"]}) == len(opts["departments"])
+
+    # 権限範囲が狭ければ選択肢も狭まる（割当案件は hit のみ）
+    fw = client.get("/api/projects/filter-options",
+                    headers=_p4_head(client, "p4fw@test.jp")).json()
+    assert fw["areas"] == ["P4エリア北"]
+    assert [m["name"] for m in fw["managers"]] == ["P4担当者A"]
+    assert {c["name"] for c in fw["companies"]} == {"P4会社A", "P4会社B"}
+    assert fw["statuses"] == ["遅延"]
+
+
+def test_p4_static_routes_do_not_collide_with_project_id(client, p4):
+    """/search と /filter-options が /{project_id} に吸われていないこと。"""
+    head = _p4_head(client, "admin@test.jp")
+
+    search = client.get("/api/projects/search", headers=head)
+    assert search.status_code == 200, search.text
+    assert set(search.json()) >= {"items", "total", "page", "per_page", "pages", "sort"}
+    assert "construction_number" not in search.json(), "検索が案件詳細として解釈されている"
+
+    options = client.get("/api/projects/filter-options", headers=head)
+    assert options.status_code == 200, options.text
+    assert set(options.json()) >= {"statuses", "areas", "departments", "managers", "companies"}
+
+    detail = client.get(f"/api/projects/{p4['hit']}", headers=head)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["id"] == p4["hit"]
+
+    missing = client.get("/api/projects/99999999", headers=head)
+    assert missing.status_code == 404, missing.text
+
+    # 数値に変換できないパスは 422（= 動的ルートの側で弾かれる）
+    assert client.get("/api/projects/not-a-number", headers=head).status_code == 422
+
+
+def test_p4_update_allowed_for_admin_and_project_manager(client, p4):
+    """ADMIN と PROJECT_MANAGER は案件を更新できること。"""
+    for email, label in (("admin@test.jp", "管理者更新"), ("pm@test.jp", "PM更新")):
+        head = _p4_head(client, email)
+        created = client.post("/api/projects",
+                              json={"construction_number": _p4_number(), "name": "権限確認"},
+                              headers=head)
+        assert created.status_code == 201, created.text
+        pid = created.json()["id"]
+        r = client.put(f"/api/projects/{pid}", json={"name": label}, headers=head)
+        assert r.status_code == 200, r.text
+        assert client.get(f"/api/projects/{pid}", headers=head).json()["name"] == label
+
+
+def test_p4_update_forbidden_for_other_roles(client, p4):
+    """QUALITY_MANAGER・FIELD_WORKER・VIEWER は API 側で 403 になること。"""
+    admin = _p4_head(client, "admin@test.jp")
+    before = client.get(f"/api/projects/{p4['hit']}", headers=admin).json()["name"]
+
+    for email in ("p4qm@test.jp", "p4fw@test.jp", "p4viewer@test.jp"):
+        head = _p4_head(client, email)
+        upd = client.put(f"/api/projects/{p4['hit']}", json={"name": "権限外の更新"}, headers=head)
+        assert upd.status_code == 403, f"{email} の更新が通ってしまった: {upd.text}"
+        create = client.post("/api/projects",
+                             json={"construction_number": _p4_number(), "name": "権限外の登録"},
+                             headers=head)
+        assert create.status_code == 403, f"{email} の登録が通ってしまった: {create.text}"
+
+    assert client.get(f"/api/projects/{p4['hit']}", headers=admin).json()["name"] == before
+
+
+def test_p4_field_worker_cannot_reach_unassigned_project(client, p4):
+    """割当外の案件は、取得も更新もできないこと。"""
+    head = _p4_head(client, "p4fw@test.jp")
+    assert client.get(f"/api/projects/{p4['hit']}", headers=head).status_code == 200
+
+    unassigned = p4["area_ng"]
+    assert client.get(f"/api/projects/{unassigned}", headers=head).status_code == 403
+    assert client.put(f"/api/projects/{unassigned}", json={"name": "割当外の更新"},
+                      headers=head).status_code == 403
+    # 検索結果にも出ない
+    assert unassigned not in _p4_ids(client, "p4fw@test.jp", f"q={P4_TAG}&per_page=50")
+
+
+def test_p4_empty_result_is_distinguishable_from_forbidden(client, p4):
+    """0件（200 + total 0）と権限なし（403）を取り違えないこと。"""
+    empty = _p4_search(client, "p4fw@test.jp", "q=該当しないキーワード")
+    assert empty["total"] == 0 and empty["items"] == [] and empty["pages"] == 1
+
+    # 権限範囲は空ではない
+    assert _p4_search(client, "p4fw@test.jp", f"q={P4_TAG}")["total"] == 1
+
+    forbidden = client.get(f"/api/projects/{p4['area_ng']}",
+                           headers=_p4_head(client, "p4fw@test.jp"))
+    assert forbidden.status_code == 403
+
+    # 割当が1件も無い協力会社は、403 ではなく 0件の 200 になる
+    from app.core.security import hash_password
+    from app.models import User
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        if s.query(User).filter_by(email="p4fw0@test.jp").one_or_none() is None:
+            s.add(User(email="p4fw0@test.jp", hashed_password=hash_password("pass"),
+                       name="P4未割当", role="FIELD_WORKER"))
+            s.commit()
+    none_assigned = _p4_search(client, "p4fw0@test.jp", "per_page=50")
+    assert none_assigned["total"] == 0 and none_assigned["items"] == []
+    opts = client.get("/api/projects/filter-options",
+                      headers=_p4_head(client, "p4fw0@test.jp"))
+    assert opts.status_code == 200
+    assert opts.json() == {"statuses": [], "areas": [], "departments": [], "managers": [],
+                           "companies": []}
+
+
+def test_p4_upload_rejects_missing_project(client, p4):
+    """案件が決まっていない写真アップロードは、既定値で登録されず拒否されること。
+
+    画面側は案件未選択ならアップロード自体をさせないが、API単体でも
+    存在しない案件ID（0 など）を受け付けないことを固定する。
+    """
+    from app.models import Photo
+    from tests.conftest import TestingSessionLocal
+
+    head = _p4_head(client, "pm@test.jp")
+    with TestingSessionLocal() as s:
+        before = s.query(Photo).count()
+
+    files = {"file": ("t.jpg", b"not-an-image", "image/jpeg")}
+    zero = client.post("/api/photos", data={"project_id": "0"}, files=files, headers=head)
+    assert zero.status_code == 404, zero.text
+    missing = client.post("/api/photos", data={"project_id": "99999999"}, files=files, headers=head)
+    assert missing.status_code == 404, missing.text
+    # 案件IDそのものが無いリクエストは通さない
+    no_project = client.post("/api/photos", data={}, files=files, headers=head)
+    assert no_project.status_code in (400, 422), no_project.text
+
+    with TestingSessionLocal() as s:
+        assert s.query(Photo).count() == before, "拒否したのに写真が作られている"
+
+
+def test_p4_test_record_requires_accessible_project(client, p4):
+    """試験記録も、案件スコープ外・存在しない案件には登録できないこと。"""
+    from app.models import TestRecord
+    from tests.conftest import TestingSessionLocal
+
+    with TestingSessionLocal() as s:
+        before = s.query(TestRecord).count()
+
+    body = {"project_id": p4["hit"], "test_type": "光損失測定", "judge": "合格"}
+    ok_res = client.post("/api/test-records", json=body, headers=_p4_head(client, "pm@test.jp"))
+    assert ok_res.status_code in (200, 201), ok_res.text
+
+    # 割当外の案件（協力会社ロール）
+    ng = client.post(
+        "/api/test-records",
+        json={**body, "project_id": p4["area_ng"]},
+        headers=_p4_head(client, "p4fw@test.jp"),
+    )
+    assert ng.status_code == 403, ng.text
+
+    missing = client.post(
+        "/api/test-records", json={**body, "project_id": 99999999},
+        headers=_p4_head(client, "pm@test.jp"),
+    )
+    assert missing.status_code == 404, missing.text
+
+    with TestingSessionLocal() as s:
+        assert s.query(TestRecord).count() == before + 1, "拒否した分まで登録されている"
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: 帳票（画面・プレビュー・PDF・Excel・CSV が同じ内容であること）
+# ---------------------------------------------------------------------------
+
+def _p5_project_with_tasks(client):
+    """工程を持つ検証用の案件を作る。Seed の固定IDには依存しない。"""
+    from datetime import datetime, timedelta, timezone
+
+    from app.models import Task
+    from tests.conftest import TestingSessionLocal
+
+    head = _p4_head(client, "pm@test.jp")
+    number = _p4_number("P5RPT")
+    created = client.post("/api/projects", json={"construction_number": number, "name": "帳票の一致確認"},
+                          headers=head)
+    assert created.status_code == 201, created.text
+    pid = created.json()["id"]
+
+    jst = timezone(timedelta(hours=9))
+    base = datetime(2026, 4, 1, 0, 0, tzinfo=jst)
+    with TestingSessionLocal() as s:
+        # 親を持たない工程（WBS にドットが無い）だけの案件でも帳票へ載ること
+        s.add(Task(project_id=pid, wbs_code="1", name="現場確認",
+                   planned_start_at=base, planned_finish_at=base + timedelta(days=1),
+                   actual_start_at=base, actual_finish_at=base + timedelta(days=1),
+                   planned_workers=3, actual_workers=4, actual_progress=100, status="完了",
+                   notes="立会あり"))
+        s.add(Task(project_id=pid, wbs_code="2", name="現地確認",
+                   planned_start_at=base + timedelta(days=1), planned_finish_at=base + timedelta(days=2),
+                   planned_workers=2, actual_workers=0, actual_progress=30, status="施工中"))
+        s.commit()
+    return pid, number, head
+
+
+def _p5_preview(client, pid, head):
+    r = client.get(f"/api/reports/construction-management/preview?project_id={pid}", headers=head)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_p5_report_includes_tasks_without_parent(client, p4):
+    """親子を作っていない案件でも、工程が帳票に載ること（0件にならない）。"""
+    pid, number, head = _p5_project_with_tasks(client)
+    body = _p5_preview(client, pid, head)
+    assert body["row_count"] == 2, body["rows"]
+    assert [r[1] for r in body["rows"]] == ["現場確認", "現地確認"], "WBS順で工程が並ばない"
+    assert body["construction_number"] == number
+    assert body["source"] == "tasks"
+    # 画面が固定行を作らないよう、行はすべて工程由来であること
+    names = {r[1] for r in body["rows"]}
+    assert not names & {"光ケーブル敷設", "クロージャ設置", "光ファイバ融着", "接続損失測定", "ONU設置"}
+
+
+def test_p5_report_screen_pdf_xlsx_csv_match(client, p4):
+    """プレビュー（画面）・PDF・Excel・CSV の件数と内容が一致すること。"""
+    import csv as _csv
+    import io
+    import re
+
+    from openpyxl import load_workbook
+    from pypdf import PdfReader
+
+    pid, _number, head = _p5_project_with_tasks(client)
+    body = _p5_preview(client, pid, head)
+    rows = body["rows"]
+    assert len(rows) == 2
+
+    # --- Excel: セルを読んで突き合わせる ---
+    xlsx = client.get(f"/api/reports/construction-management?project_id={pid}&format=xlsx", headers=head)
+    assert xlsx.status_code == 200, xlsx.text
+    wb = load_workbook(io.BytesIO(xlsx.content))
+    ws = wb.active
+    cells = [[("" if c is None else str(c)) for c in row] for row in ws.iter_rows(values_only=True)]
+    header_at = next(i for i, r in enumerate(cells) if r[:len(body["columns"])] == body["columns"])
+    xlsx_rows = [r[:len(body["columns"])] for r in cells[header_at + 1:] if any(v for v in r)]
+    assert xlsx_rows == rows, f"Excel が画面と一致しない: {xlsx_rows}"
+
+    # --- CSV: パースして突き合わせる ---
+    csv_res = client.get(f"/api/reports/construction-management?project_id={pid}&format=csv", headers=head)
+    assert csv_res.status_code == 200, csv_res.text
+    text = csv_res.content.decode("utf-8-sig")
+    parsed = list(_csv.reader(io.StringIO(text)))
+    c_header = next(i for i, r in enumerate(parsed) if r == body["columns"])
+    csv_rows = [r for r in parsed[c_header + 1:] if any(v for v in r)]
+    assert csv_rows == rows, f"CSV が画面と一致しない: {csv_rows}"
+
+    # --- PDF: テキストを抽出して突き合わせる ---
+    pdf = client.get(f"/api/reports/construction-management?project_id={pid}&format=pdf", headers=head)
+    assert pdf.status_code == 200, pdf.text
+    text = "".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf.content)).pages)
+    flat = re.sub(r"\s+", "", text)
+    for row in rows:
+        for value in row:
+            if value in ("—", ""):
+                continue
+            assert re.sub(r"\s+", "", value) in flat, f"PDFに {value} が無い"
+    assert "施工管理表" in flat
+
+
+def test_p5_report_empty_project_has_no_rows(client, p4):
+    """工程0件の案件では、固定行を出さずどの形式も0件になること。"""
+    import csv as _csv
+    import io
+
+    from openpyxl import load_workbook
+
+    head = _p4_head(client, "pm@test.jp")
+    created = client.post("/api/projects",
+                          json={"construction_number": _p4_number("P5EMP"), "name": "工程なしの帳票"},
+                          headers=head)
+    assert created.status_code == 201, created.text
+    pid = created.json()["id"]
+
+    body = _p5_preview(client, pid, head)
+    assert body["row_count"] == 0 and body["rows"] == []
+
+    xlsx = client.get(f"/api/reports/construction-management?project_id={pid}&format=xlsx", headers=head)
+    wb = load_workbook(io.BytesIO(xlsx.content))
+    cells = [[("" if c is None else str(c)) for c in r] for r in wb.active.iter_rows(values_only=True)]
+    header_at = next(i for i, r in enumerate(cells) if r[:len(body["columns"])] == body["columns"])
+    assert [r for r in cells[header_at + 1:] if any(v for v in r)] == []
+
+    csv_res = client.get(f"/api/reports/construction-management?project_id={pid}&format=csv", headers=head)
+    parsed = list(_csv.reader(io.StringIO(csv_res.content.decode("utf-8-sig"))))
+    c_header = next(i for i, r in enumerate(parsed) if r == body["columns"])
+    assert [r for r in parsed[c_header + 1:] if any(v for v in r)] == []
+
+
+def test_p5_report_meta_comes_from_real_data(client, p4):
+    """工事名・工事番号・出力日時・出力者・件数が実データから作られること。"""
+    from datetime import datetime, timezone
+
+    pid, number, head = _p5_project_with_tasks(client)
+    body = _p5_preview(client, pid, head)
+    meta = {m["label"]: m["value"] for m in body["meta"]}
+    assert meta["工事番号"] == number
+    assert meta["工事名"] == "帳票の一致確認"
+    assert meta["工程件数"] == "2 件"
+    assert meta["出力者"] == "PM"  # ログイン中の利用者
+    assert meta["出力日時"].startswith(str(datetime.now(timezone.utc).year))
+    assert "熊本中央局" not in str(meta)
+
+
+def test_p5_report_respects_permissions(client, p4):
+    """帳票も案件スコープと権限に従うこと。"""
+    pid, _n, _h = _p5_project_with_tasks(client)
+    for path in (f"/api/reports/construction-management/preview?project_id={pid}",
+                 f"/api/reports/construction-management?project_id={pid}&format=csv"):
+        r = client.get(path, headers=_p4_head(client, "p4fw@test.jp"))
+        assert r.status_code == 403, f"{path} が割当外へ漏れている: {r.status_code}"
+    bad = client.get(f"/api/reports/construction-management?project_id={pid}&format=docx",
+                     headers=_p4_head(client, "pm@test.jp"))
+    assert bad.status_code == 422
+    missing = client.get(f"/api/reports/unknown-report/preview?project_id={pid}",
+                         headers=_p4_head(client, "pm@test.jp"))
+    assert missing.status_code == 404
+
+
+def test_p5_milestone_options_allow_projects_without_milestones(client, p4):
+    """マイルストーンが1件も無い案件でも、登録先として選べること。
+
+    録画で「案件欄が『選択してください』のまま候補も出ない」状態になっていた原因は、
+    選択肢を既存のマイルストーンから作っていたこと。登録できる案件から作る。
+    """
+    head = _p4_head(client, "pm@test.jp")
+    created = client.post("/api/projects",
+                          json={"construction_number": _p4_number("P5MS"), "name": "マイルストーン未登録の案件"},
+                          headers=head)
+    assert created.status_code == 201, created.text
+    pid = created.json()["id"]
+
+    # 案件配下ルート相当（project_id 指定）
+    scoped = client.get(f"/api/schedule/milestones/options?project_id={pid}", headers=head).json()
+    assert [p["id"] for p in scoped["projects"]] == [pid], "自分の案件が候補に出ない"
+    assert scoped["milestone_types"], "マイルストーン種別マスタが取得できない"
+
+    # 横断画面（project_id なし）でも権限範囲の案件がすべて選べる
+    across = client.get("/api/schedule/milestones/options", headers=head).json()
+    assert pid in [p["id"] for p in across["projects"]]
+    assert len(across["projects"]) >= len(scoped["projects"])
+
+    # 権限が無い案件は候補に出ない
+    fw = client.get("/api/schedule/milestones/options", headers=_p4_head(client, "p4fw@test.jp")).json()
+    assert pid not in [p["id"] for p in fw["projects"]]
+    assert [p["id"] for p in fw["projects"]] == [p4["hit"]]
+
+
+def test_p5_milestone_related_tasks_come_from_project(client, p4):
+    """関連工程は、その案件の工程から選べること（既存の紐付けに限定しない）。"""
+    from app.models import Task
+    from tests.conftest import TestingSessionLocal
+
+    head = _p4_head(client, "pm@test.jp")
+    created = client.post("/api/projects",
+                          json={"construction_number": _p4_number("P5MST"), "name": "関連工程の選択肢"},
+                          headers=head)
+    pid = created.json()["id"]
+    with TestingSessionLocal() as s:
+        s.add(Task(project_id=pid, wbs_code="1", name="関連工程の候補"))
+        s.commit()
+
+    opts = client.get(f"/api/schedule/milestones/options?project_id={pid}", headers=head).json()
+    names = [t["name"] for t in opts["related_tasks"]]
+    assert "関連工程の候補" in names, names
+    assert all(t["project_id"] == pid for t in opts["related_tasks"]), "他案件の工程が混ざっている"
+
+
+def test_p5_milestone_create_from_project_route(client, p4):
+    """案件配下から登録したマイルストーンが、その案件で取得できること。"""
+    head = _p4_head(client, "pm@test.jp")
+    created = client.post("/api/projects",
+                          json={"construction_number": _p4_number("P5MSC"), "name": "マイルストーン登録"},
+                          headers=head)
+    pid = created.json()["id"]
+    opts = client.get(f"/api/schedule/milestones/options?project_id={pid}", headers=head).json()
+    type_id = opts["milestone_types"][0]["id"]
+
+    r = client.post("/api/schedule/milestones", json={
+        "project_id": pid, "milestone_type_id": type_id, "name": "着工",
+        "planned_at": "2026-05-01T00:00:00+09:00", "status": "予定", "schedule_precision": "day",
+    }, headers=head)
+    assert r.status_code in (200, 201), r.text
+
+    listed = client.get(f"/api/schedule/milestones?project_id={pid}&limit=100", headers=head).json()
+    assert [m["name"] for m in listed["milestones"]] == ["着工"]
+    assert listed["milestones"][0]["project_id"] == pid
+
+
+def test_p5_system_info_shows_revision_without_secrets(client, p4):
+    """稼働中のコード世代と接続状態を返し、秘密情報は返さないこと。"""
+    admin = _p4_head(client, "admin@test.jp")
+    r = client.get("/api/system/info", headers=admin)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for key in ("environment", "api_version", "backend_commit", "backend_built_at",
+                "alembic_revision", "database", "storage", "ai", "server_time",
+                "api_root_path"):
+        assert key in body, f"{key} が返っていない"
+    assert body["database"] == "ok"
+    # AIは1語にまとめず、意味ごとに分けて返す
+    assert set(body["ai"]) == {
+        "registered_models", "trained_models", "pending_jobs",
+        "last_successful_job_at", "worker",
+    }, body["ai"]
+    # 秘密情報・接続先を返さない
+    dumped = str(body).lower()
+    for leaked in ("password", "secret", "token", "postgresql://", "sqlite://", "jwt", "key="):
+        assert leaked not in dumped, f"{leaked} が含まれている"
+
+    # 管理者以外は参照できない
+    for email in ("pm@test.jp", "p4qm@test.jp", "p4viewer@test.jp", "p4fw@test.jp"):
+        assert client.get("/api/system/info", headers=_p4_head(client, email)).status_code == 403
+
+    # 稼働確認だけは全ロールで取れる（秘密情報なし）
+    ping = client.get("/api/system/ping", headers=_p4_head(client, "p4viewer@test.jp"))
+    assert ping.status_code == 200
+    assert set(ping.json()) == {"environment", "api_version", "backend_commit"}
+
+
+def test_p5_health_exposes_code_generation(client):
+    """/health からも稼働中のコード世代が分かること（認証不要・秘密情報なし）。"""
+    r = client.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    for key in ("version", "environment", "backend_commit", "backend_built_at"):
+        assert key in body
+    assert "password" not in str(body).lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: 親子工程（parent_task_id が正本）と日程未設定
+# ---------------------------------------------------------------------------
+
+def _p5_task(client, project_id, head, **body):
+    r = client.post(f"/api/projects/{project_id}/tasks", json={"name": "工程", **body}, headers=head)
+    return r
+
+
+def _p5_jst(value: str | None) -> str | None:
+    """APIが返した日時を JST 表記に揃える（保存時と同じ瞬間かどうかを比べるため）。
+
+    本番の PostgreSQL は timestamptz なのでタイムゾーン付きで返る。
+    テストの SQLite はタイムゾーンを保存できず、JSTで渡した時刻の壁時計だけが
+    そのまま返るため、タイムゾーンが無い値は JST として読む。
+    """
+    if value is None:
+        return None
+    from datetime import datetime as _dt
+    from datetime import timedelta, timezone as _tz
+    jst = _tz(timedelta(hours=9))
+    d = _dt.fromisoformat(value)
+    return (d.replace(tzinfo=jst) if d.tzinfo is None else d.astimezone(jst)).isoformat()
+
+
+def test_p5_parent_child_uses_parent_task_id(client, p4):
+    """親子は parent_task_id が正本で、WBSのドット有無に依存しないこと。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5WBS"), "name": "親子判定"},
+                      headers=head).json()["id"]
+
+    # WBS にドットが無くても親子にできる
+    parent = _p5_task(client, pid, head, name="親", wbs_code="A")
+    assert parent.status_code in (200, 201), parent.text
+    child = _p5_task(client, pid, head, name="子", wbs_code="B", parent_task_id=parent.json()["id"])
+    assert child.status_code in (200, 201), child.text
+    grand = _p5_task(client, pid, head, name="孫", wbs_code="C", parent_task_id=child.json()["id"])
+    assert grand.status_code in (200, 201), grand.text
+
+    rows = client.get(f"/api/projects/{pid}/tasks", headers=head).json()
+    by_name = {t["name"]: t for t in rows}
+    assert by_name["子"]["parent_task_id"] == by_name["親"]["id"]
+    assert by_name["孫"]["parent_task_id"] == by_name["子"]["id"]
+
+    # 帳票の末端工程は「子を持たない工程」＝孫だけ（WBSのドットでは判定しない）
+    preview = client.get(f"/api/reports/construction-management/preview?project_id={pid}", headers=head).json()
+    assert [r[1] for r in preview["rows"]] == ["孫"], preview["rows"]
+
+
+def test_p5_invalid_parent_is_rejected(client, p4):
+    """不正な親（自己参照・子孫・別案件・存在しない）を 422 で拒否すること。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5PAR"), "name": "親の検証"},
+                      headers=head).json()["id"]
+    other = client.post("/api/projects", json={"construction_number": _p4_number("P5OTH"), "name": "別案件"},
+                        headers=head).json()["id"]
+
+    a = _p5_task(client, pid, head, name="A", wbs_code="1").json()
+    b = _p5_task(client, pid, head, name="B", wbs_code="2", parent_task_id=a["id"]).json()
+    c = _p5_task(client, pid, head, name="C", wbs_code="3", parent_task_id=b["id"]).json()
+    foreign = _p5_task(client, other, head, name="他案件の工程", wbs_code="1").json()
+
+    # 自己参照
+    r = client.put(f"/api/tasks/{a['id']}", json={"name": "A", "parent_task_id": a["id"]}, headers=head)
+    assert r.status_code == 422, r.text
+    # 子孫を親にする（循環）
+    r = client.put(f"/api/tasks/{a['id']}", json={"name": "A", "parent_task_id": c["id"]}, headers=head)
+    assert r.status_code == 422, r.text
+    # 別案件の工程を親にする
+    r = client.put(f"/api/tasks/{b['id']}", json={"name": "B", "parent_task_id": foreign["id"]}, headers=head)
+    assert r.status_code == 422, r.text
+    # 存在しない親
+    r = client.put(f"/api/tasks/{b['id']}", json={"name": "B", "parent_task_id": 99999999}, headers=head)
+    assert r.status_code == 422, r.text
+    # 正当な付け替え（孫を最上位へ）は通る
+    r = client.put(f"/api/tasks/{c['id']}", json={"name": "C", "parent_task_id": None}, headers=head)
+    assert r.status_code == 200, r.text
+
+
+def test_p5_wbs_duplicate_is_rejected(client, p4):
+    """同じ案件でWBSコードが重複しないこと。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5DUP"), "name": "WBS重複"},
+                      headers=head).json()["id"]
+    first = _p5_task(client, pid, head, name="A", wbs_code="1")
+    assert first.status_code in (200, 201)
+    dup = _p5_task(client, pid, head, name="B", wbs_code="1")
+    assert dup.status_code == 422, dup.text
+    second = _p5_task(client, pid, head, name="B", wbs_code="2")
+    assert second.status_code in (200, 201)
+    # 更新でも重複は拒否
+    r = client.put(f"/api/tasks/{second.json()['id']}", json={"name": "B", "wbs_code": "1"}, headers=head)
+    assert r.status_code == 422, r.text
+    # 自分自身のWBSはそのまま保存できる
+    r = client.put(f"/api/tasks/{second.json()['id']}", json={"name": "B2", "wbs_code": "2"}, headers=head)
+    assert r.status_code == 200, r.text
+
+
+def test_p5_unscheduled_task_keeps_null_dates(client, p4):
+    """日程未設定の工程が、APIでも帳票でも「今日」に置き換えられないこと。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5NUL"), "name": "日程未設定"},
+                      headers=head).json()["id"]
+    created = _p5_task(client, pid, head, name="日程未設定の工程", wbs_code="1")
+    assert created.status_code in (200, 201), created.text
+
+    rows = client.get(f"/api/projects/{pid}/tasks", headers=head).json()
+    assert rows[0]["planned_start_at"] is None and rows[0]["planned_finish_at"] is None
+
+    preview = client.get(f"/api/reports/construction-management/preview?project_id={pid}", headers=head).json()
+    assert preview["row_count"] == 1
+    # 予定期間・実績期間ともに「—」（架空の日付を出さない）
+    assert preview["rows"][0][2] == "—", preview["rows"][0]
+    assert preview["rows"][0][3] == "—", preview["rows"][0]
+
+
+def test_p5_multiple_predecessors_are_kept(client, p4):
+    """複数の先行工程を設定・入れ替え・全解除できること。重複指定は1件にまとめる。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5DEP"), "name": "先行工程"},
+                      headers=head).json()["id"]
+    a = _p5_task(client, pid, head, name="A", wbs_code="1").json()
+    b = _p5_task(client, pid, head, name="B", wbs_code="2").json()
+    c = _p5_task(client, pid, head, name="C", wbs_code="3",
+                 dependency_ids=[a["id"], b["id"], a["id"]]).json()
+    # 重複を渡しても1件ずつになる
+    assert sorted(c["dependencies"]) == sorted([a["id"], b["id"]]), c
+
+    # 入れ替え（B だけにする）
+    r = client.put(f"/api/tasks/{c['id']}", json={"dependency_ids": [b["id"]]}, headers=head)
+    assert r.status_code == 200, r.text
+    assert r.json()["dependencies"] == [b["id"]]
+
+    # 全解除
+    r = client.put(f"/api/tasks/{c['id']}", json={"dependency_ids": []}, headers=head)
+    assert r.status_code == 200, r.text
+    assert r.json()["dependencies"] == []
+
+    # 再読込しても同じ（保存されている）
+    r = client.put(f"/api/tasks/{c['id']}", json={"dependency_ids": [a["id"], b["id"]]}, headers=head)
+    assert r.status_code == 200, r.text
+    rows = {t["id"]: t for t in client.get(f"/api/projects/{pid}/tasks", headers=head).json()}
+    assert sorted(rows[c["id"]]["dependencies"]) == sorted([a["id"], b["id"]])
+
+
+def test_p5_self_and_circular_dependencies_are_rejected(client, p4):
+    """自己依存・循環依存・別案件の先行工程を 422 で拒否すること。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5CYC"), "name": "循環依存"},
+                      headers=head).json()["id"]
+    other = client.post("/api/projects", json={"construction_number": _p4_number("P5CYO"), "name": "別案件"},
+                        headers=head).json()["id"]
+    a = _p5_task(client, pid, head, name="A", wbs_code="1").json()
+    b = _p5_task(client, pid, head, name="B", wbs_code="2", dependency_ids=[a["id"]]).json()
+    c = _p5_task(client, pid, head, name="C", wbs_code="3", dependency_ids=[b["id"]]).json()
+    foreign = _p5_task(client, other, head, name="他案件", wbs_code="1").json()
+
+    # 自己依存
+    r = client.put(f"/api/tasks/{a['id']}", json={"dependency_ids": [a["id"]]}, headers=head)
+    assert r.status_code == 422, r.text
+    # 循環（A→C→B→A）
+    r = client.put(f"/api/tasks/{a['id']}", json={"dependency_ids": [c["id"]]}, headers=head)
+    assert r.status_code == 422, r.text
+    # 別案件の工程
+    r = client.put(f"/api/tasks/{a['id']}", json={"dependency_ids": [foreign["id"]]}, headers=head)
+    assert r.status_code == 422, r.text
+    # 存在しない工程
+    r = client.put(f"/api/tasks/{a['id']}", json={"dependency_ids": [99999999]}, headers=head)
+    assert r.status_code == 422, r.text
+
+    # 拒否されても既存の依存は壊れていない
+    rows = {t["id"]: t for t in client.get(f"/api/projects/{pid}/tasks", headers=head).json()}
+    assert rows[a["id"]]["dependencies"] == []
+    assert rows[b["id"]]["dependencies"] == [a["id"]]
+    assert rows[c["id"]]["dependencies"] == [b["id"]]
+
+
+def test_p5_schedule_precision_round_trips(client, p4):
+    """日／半日／時間の粒度と日時が、保存・再読込で変わらないこと。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5PRC"), "name": "入力粒度"},
+                      headers=head).json()["id"]
+
+    cases = [
+        ("day", "2026-05-11T00:00:00+09:00", "2026-05-13T00:00:00+09:00"),
+        ("half_day", "2026-05-11T12:00:00+09:00", "2026-05-12T12:00:00+09:00"),
+        ("time", "2026-05-11T09:30:00+09:00", "2026-05-11T17:15:00+09:00"),
+    ]
+    for i, (precision, start, finish) in enumerate(cases):
+        created = _p5_task(client, pid, head, name=f"粒度{precision}", wbs_code=str(i + 1),
+                           schedule_precision=precision,
+                           planned_start_at=start, planned_finish_at=finish)
+        assert created.status_code in (200, 201), created.text
+        got = created.json()
+        assert got["schedule_precision"] == precision
+        # 保存した時刻がそのまま返る（丸められない）
+        assert _p5_jst(got["planned_start_at"]) == start
+        assert _p5_jst(got["planned_finish_at"]) == finish
+
+    # 再読込しても同じ
+    rows = {t["name"]: t for t in client.get(f"/api/projects/{pid}/tasks", headers=head).json()}
+    for precision, start, finish in cases:
+        row = rows[f"粒度{precision}"]
+        assert row["schedule_precision"] == precision
+        assert _p5_jst(row["planned_start_at"]) == start
+        assert _p5_jst(row["planned_finish_at"]) == finish
+
+
+def test_p5_precision_change_keeps_datetime(client, p4):
+    """粒度だけを変えたとき、日時が書き換わらないこと（二重管理にしない）。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5PCH"), "name": "粒度変更"},
+                      headers=head).json()["id"]
+    t = _p5_task(client, pid, head, name="工程", wbs_code="1", schedule_precision="time",
+                 planned_start_at="2026-06-01T09:30:00+09:00",
+                 planned_finish_at="2026-06-01T17:15:00+09:00").json()
+
+    r = client.put(f"/api/tasks/{t['id']}", json={"schedule_precision": "day"}, headers=head)
+    assert r.status_code == 200, r.text
+    assert r.json()["schedule_precision"] == "day"
+    assert _p5_jst(r.json()["planned_start_at"]) == "2026-06-01T09:30:00+09:00"
+    assert _p5_jst(r.json()["planned_finish_at"]) == "2026-06-01T17:15:00+09:00"
+
+
+def test_p5_task_form_options_come_from_masters(client, p4):
+    """工程フォームの選択肢が、画面固定ではなく実データから返ること。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5OPT"), "name": "工程フォーム"},
+                      headers=head).json()["id"]
+    r = client.get(f"/api/projects/{pid}/task-form-options", headers=head)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for key in ("work_types", "process_types", "teams", "managers", "companies"):
+        assert key in body and isinstance(body[key], list), body
+    # 責任者はログイン可能な利用者から作る（少なくともテスト利用者が含まれる）
+    assert any(m["name"] == "PM" for m in body["managers"]), body["managers"]
+    # 権限の無い案件では見られない
+    other = client.get("/api/projects/999999/task-form-options", headers=head)
+    assert other.status_code in (403, 404), other.text
+
+
+def test_p5_task_assignment_fields_are_saved(client, p4):
+    """担当班・責任者・担当会社・工種が保存され、名前付きで返ること。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5ASG"), "name": "担当情報"},
+                      headers=head).json()["id"]
+    opts = client.get(f"/api/projects/{pid}/task-form-options", headers=head).json()
+    manager = opts["managers"][0]
+
+    created = _p5_task(client, pid, head, name="担当あり", wbs_code="1", manager_id=manager["id"])
+    assert created.status_code in (200, 201), created.text
+    assert created.json()["manager"] == manager["name"]
+    assert created.json()["manager_id"] == manager["id"]
+
+    if opts["teams"]:
+        team = opts["teams"][0]
+        r = client.put(f"/api/tasks/{created.json()['id']}", json={"team_id": team["id"]}, headers=head)
+        assert r.status_code == 200, r.text
+        # 担当班は teams の実データ（固定文字列ではない）
+        assert r.json()["crew"] == team["name"]
+        assert r.json()["team_id"] == team["id"]
+
+    # 存在しないマスタIDは 422（FK違反の500にしない・黙って捨てない）
+    for field in ("team_id", "manager_id", "company_id", "work_type_id"):
+        r = client.put(f"/api/tasks/{created.json()['id']}", json={field: 99999999}, headers=head)
+        assert r.status_code == 422, (field, r.text)
+
+
+def test_p5_dependency_change_is_recorded(client, p4):
+    """先行工程の変更が、他の項目と同じように変更履歴へ残ること。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5HIS"), "name": "依存の履歴"},
+                      headers=head).json()["id"]
+    a = _p5_task(client, pid, head, name="A", wbs_code="1").json()
+    b = _p5_task(client, pid, head, name="B", wbs_code="2").json()
+
+    r = client.put(f"/api/tasks/{b['id']}",
+                   json={"dependency_ids": [a["id"]], "change_reason": "先行工程を追加"}, headers=head)
+    assert r.status_code == 200, r.text
+
+    from app.models import TaskChangeHistory
+    from tests.conftest import TestingSessionLocal
+    with TestingSessionLocal() as s:
+        rows = s.query(TaskChangeHistory).filter(
+            TaskChangeHistory.task_id == b["id"], TaskChangeHistory.field == "dependencies"
+        ).all()
+    assert len(rows) == 1, rows
+    assert rows[0].old_value is None
+    assert rows[0].new_value == str(a["id"])
+    assert rows[0].change_reason == "先行工程を追加"
+
+
+def test_p5_reversed_period_is_rejected(client, p4):
+    """終了が開始以前になる保存を拒否すること（ドラッグ・リサイズも含む）。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5REV"), "name": "期間の検証"},
+                      headers=head).json()["id"]
+
+    # 登録時から逆転している期間は作れない
+    bad = _p5_task(client, pid, head, name="逆転", wbs_code="1",
+                   planned_start_at="2026-07-10T00:00:00+09:00",
+                   planned_finish_at="2026-07-09T00:00:00+09:00")
+    assert bad.status_code == 422, bad.text
+
+    t = _p5_task(client, pid, head, name="正常", wbs_code="1",
+                 planned_start_at="2026-07-10T00:00:00+09:00",
+                 planned_finish_at="2026-07-13T00:00:00+09:00").json()
+
+    # リサイズ相当（終了だけを開始より前へ動かす）
+    r = client.put(f"/api/tasks/{t['id']}",
+                   json={"planned_finish_at": "2026-07-09T00:00:00+09:00"}, headers=head)
+    assert r.status_code == 422, r.text
+    # 開始と同時刻（長さ0）も拒否する
+    r = client.put(f"/api/tasks/{t['id']}",
+                   json={"planned_finish_at": "2026-07-10T00:00:00+09:00"}, headers=head)
+    assert r.status_code == 422, r.text
+    # ドラッグ相当（開始だけを終了より後へ動かす）
+    r = client.put(f"/api/tasks/{t['id']}",
+                   json={"planned_start_at": "2026-07-20T00:00:00+09:00"}, headers=head)
+    assert r.status_code == 422, r.text
+    # 実績期間も同じ判定
+    r = client.put(f"/api/tasks/{t['id']}",
+                   json={"actual_start_at": "2026-07-11T00:00:00+09:00",
+                         "actual_finish_at": "2026-07-10T00:00:00+09:00"}, headers=head)
+    assert r.status_code == 422, r.text
+
+    # 拒否されても元の期間は変わっていない
+    rows = {x["id"]: x for x in client.get(f"/api/projects/{pid}/tasks", headers=head).json()}
+    assert _p5_jst(rows[t["id"]]["planned_start_at"]) == "2026-07-10T00:00:00+09:00"
+    assert _p5_jst(rows[t["id"]]["planned_finish_at"]) == "2026-07-13T00:00:00+09:00"
+
+    # 両方をまとめてずらす（正しい向きのまま）のは通る
+    r = client.put(f"/api/tasks/{t['id']}",
+                   json={"planned_start_at": "2026-07-20T00:00:00+09:00",
+                         "planned_finish_at": "2026-07-23T00:00:00+09:00"}, headers=head)
+    assert r.status_code == 200, r.text
+    # 日程未設定（片側だけ）は「まだ決まっていない」として許容する
+    r = client.put(f"/api/tasks/{t['id']}", json={"planned_finish_at": None}, headers=head)
+    assert r.status_code == 200, r.text
+
+
+def test_p5_audit_log_comes_from_real_records(client, p4):
+    """操作履歴が、実際に記録された監査ログ・工程変更履歴だけから作られること。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5AUD"), "name": "操作履歴"},
+                      headers=head).json()["id"]
+
+    # 登録直後は、この案件を作った記録だけがある（固定の履歴は出ない）
+    first = client.get(f"/api/projects/{pid}/audit-logs", headers=head)
+    assert first.status_code == 200, first.text
+    entries = first.json()["entries"]
+    assert len(entries) == 1, entries
+    assert entries[0]["summary"] == "案件を登録"
+    assert entries[0]["source"] == "audit_log"
+    assert entries[0]["user"] == "PM"
+
+    t = _p5_task(client, pid, head, name="工程A", wbs_code="1",
+                 planned_start_at="2026-08-10T00:00:00+09:00",
+                 planned_finish_at="2026-08-12T00:00:00+09:00").json()
+    r = client.put(f"/api/tasks/{t['id']}",
+                   json={"actual_progress": 50, "change_reason": "現地確認のため"}, headers=head)
+    assert r.status_code == 200, r.text
+
+    body = client.get(f"/api/projects/{pid}/audit-logs", headers=head).json()
+    summaries = [e["summary"] for e in body["entries"]]
+    # 工程の登録・更新と、変更された項目の履歴が両方出る
+    assert "工程を登録" in summaries, summaries
+    assert "工程を更新" in summaries, summaries
+    change = next(e for e in body["entries"] if e["source"] == "task_change")
+    assert "実績進捗" in change["summary"], change
+    assert "0 → 50" in change["summary"], change
+    assert "現地確認のため" in change["summary"], change
+    assert change["entity_type"] == "task" and change["entity_id"] == str(t["id"])
+
+    # 別案件の履歴は混ざらない
+    other = client.post("/api/projects", json={"construction_number": _p4_number("P5AUX"), "name": "別案件"},
+                        headers=head).json()["id"]
+    other_body = client.get(f"/api/projects/{other}/audit-logs", headers=head).json()
+    assert [e["summary"] for e in other_body["entries"]] == ["案件を登録"]
+
+    # 権限の無い案件は見られない
+    viewer = _p4_head(client, "partner@test.jp")
+    denied = client.get(f"/api/projects/{pid}/audit-logs", headers=viewer)
+    assert denied.status_code in (403, 404), denied.text
+
+    # 件数の上限を指定できる（新しい順）
+    limited = client.get(f"/api/projects/{pid}/audit-logs?limit=1", headers=head).json()
+    assert limited["returned"] == 1 and limited["limit"] == 1
+    assert limited["entries"][0]["at"] >= body["entries"][-1]["at"]
+
+
+def test_p5_ai_status_separates_implemented_and_connected(client, p4):
+    """AI機能の状態が、実データから判定した値で返ること。"""
+    head = _p4_head(client, "pm@test.jp")
+    r = client.get("/api/ai/status", headers=head)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    keys = [f["key"] for f in body["features"]]
+    assert len(keys) == 7, keys
+    by_key = {f["key"]: f for f in body["features"]}
+
+    # 実装が無い機能は「未実装」。推論ジョブの種別も持たない。
+    for key in ("quality_check", "completion_compare", "duration_forecast",
+                "staffing_forecast", "construction_advice", "report_generation"):
+        assert by_key[key]["status"] == "not_implemented", by_key[key]
+        assert by_key[key]["job_type"] is None, by_key[key]
+
+    # 実装がある機能は、モデルが無ければ「モデル未配置」（未実装とは区別する）
+    photo = by_key["photo_classification"]
+    assert photo["job_type"] == "detection"
+    assert photo["status"] in ("model_missing", "service_down", "processing", "failed", "connected")
+    assert photo["status"] != "not_implemented"
+
+    # 説明文（構想）は状態とは別に必ず入っている
+    assert all(f["note"] for f in body["features"])
+
+    # モデルとジョブの状況は分けて返す
+    assert body["trained_model_count"] == 0
+    assert body["pending_jobs"] == 0
+    assert body["last_successful_job_at"] is None
+
+
+def test_p5_ai_status_reflects_model_and_jobs(client, p4):
+    """モデルを配置し、ジョブを登録すると状態が変わること（固定値ではない）。"""
+    from datetime import datetime, timezone
+
+    from app.models import AiAnalysisJob, AiModel
+    from tests.conftest import TestingSessionLocal
+
+    head = _p4_head(client, "pm@test.jp")
+    key = lambda: {f["key"]: f for f in client.get("/api/ai/status", headers=head).json()["features"]}
+
+    before = key()["photo_classification"]
+    assert before["status"] == "model_missing", before
+
+    with TestingSessionLocal() as s:
+        # 未学習のモデルは「配置済み」と数えない
+        s.add(AiModel(name="未学習", model_type="YOLO", version="v0", status="ACTIVE"))
+        s.commit()
+    assert key()["photo_classification"]["status"] == "model_missing"
+
+    with TestingSessionLocal() as s:
+        s.add(AiModel(name="学習済み", model_type="YOLO", version="v1", status="ACTIVE",
+                      trained_at=datetime.now(timezone.utc)))
+        s.commit()
+    # モデルはあるが推論の実績が無い → 未接続（「接続済み」とは書かない）
+    after_model = key()["photo_classification"]
+    assert after_model["status"] == "service_down", after_model
+
+    body = client.get("/api/ai/status", headers=head).json()
+    assert body["trained_model_count"] == 1
+    assert len(body["models"]) == 2
+    assert [m["trained"] for m in sorted(body["models"], key=lambda m: m["id"])] == [False, True]
+
+    # 直近のジョブが処理中なら「処理中」
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5AI"), "name": "AI状態"},
+                      headers=head).json()["id"]
+    with TestingSessionLocal() as s:
+        from app.models import Photo
+        photo = Photo(project_id=pid, photo_no="AI-1", original_file_path="ai/test.jpg")
+        s.add(photo)
+        s.flush()
+        photo_id = photo.id
+        s.add(AiAnalysisJob(photo_id=photo_id, job_type="detection", status="QUEUED"))
+        s.commit()
+    assert key()["photo_classification"]["status"] == "processing"
+
+    # 成功したジョブがあれば「接続済み」
+    with TestingSessionLocal() as s:
+        job = s.query(AiAnalysisJob).filter(AiAnalysisJob.photo_id == photo_id).first()
+        job.status = "DONE"
+        job.completed_at = datetime.now(timezone.utc)
+        s.commit()
+    assert key()["photo_classification"]["status"] == "connected"
+
+    final = client.get("/api/ai/status", headers=head).json()
+    assert final["pending_jobs"] == 0
+    assert final["last_successful_job_at"] is not None
+
+
+def test_p5_report_dates_match_screen(client, p4):
+    """帳票の日付が画面と同じ規則で出ること（UTCで整形して1日ずれない）。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5RDT"), "name": "帳票の日付"},
+                      headers=head).json()["id"]
+
+    # 日単位: 8/10 00:00 〜 8/13 00:00（exclusive）＝ 8/10〜8/12
+    _p5_task(client, pid, head, name="日単位", wbs_code="1",
+             planned_start_at="2026-08-10T00:00:00+09:00",
+             planned_finish_at="2026-08-13T00:00:00+09:00")
+    # 0.5日単位: 8/21 午後 〜 8/24 午前
+    _p5_task(client, pid, head, name="半日", wbs_code="2", schedule_precision="half_day",
+             planned_start_at="2026-08-21T12:00:00+09:00",
+             planned_finish_at="2026-08-24T12:00:00+09:00")
+    # 時間単位: 日をまたぐ夜間作業
+    _p5_task(client, pid, head, name="時間", wbs_code="3", schedule_precision="time",
+             planned_start_at="2026-08-25T22:00:00+09:00",
+             planned_finish_at="2026-08-26T05:00:00+09:00")
+    # 時間単位: 同じ日に収まる作業（終了は時刻だけ出す）
+    _p5_task(client, pid, head, name="同日時間", wbs_code="4", schedule_precision="time",
+             planned_start_at="2026-08-27T09:30:00+09:00",
+             planned_finish_at="2026-08-27T17:15:00+09:00")
+
+    rows = {r[1]: r for r in client.get(
+        f"/api/reports/construction-management/preview?project_id={pid}", headers=head).json()["rows"]}
+
+    # 日単位: 開始は当日、終了は exclusive を1日戻した日
+    assert rows["日単位"][2] == "08/10〜08/12", rows["日単位"]
+    # 0.5日単位: 午前/午後まで出す
+    assert rows["半日"][2] == "08/21 午後〜08/24 午前", rows["半日"]
+    # 時間単位: 時刻まで出す
+    assert rows["時間"][2] == "08/25 22:00〜08/26 05:00", rows["時間"]
+    assert rows["同日時間"][2] == "08/27 09:30〜17:15", rows["同日時間"]
+    # 日程未設定は「—」
+    assert rows["日単位"][3] == "—", rows["日単位"]
+
+    # CSV / Excel / PDF もプレビューと同じ文字列を含む
+    csv = client.get(f"/api/reports/construction-management?project_id={pid}&format=csv", headers=head)
+    assert csv.status_code == 200
+    text = csv.content.decode("utf-8-sig")
+    for expected in ("08/10〜08/12", "08/21 午後〜08/24 午前", "08/25 22:00〜08/26 05:00"):
+        assert expected in text, f"{expected} が CSV に無い"
+
+
+def test_p5_report_period_reads_utc_as_jst():
+    """帳票の期間が、DBから来る UTC の日時を日本時間として読むこと。
+
+    このテストは DB を通さない。テスト用の SQLite はタイムゾーンを保存できず
+    naive な値を返すため、**SQLite 経由では UTC のまま整形する不具合を再現できない**。
+    本番の PostgreSQL は timestamptz を UTC の aware な値で返すので、
+    その形をそのまま関数へ渡して確かめる。
+    """
+    from datetime import datetime, timezone
+
+    from app.api.reports import _period
+
+    utc = timezone.utc
+    # 8/10 00:00 JST = 8/9 15:00 UTC ／ 8/13 00:00 JST = 8/12 15:00 UTC（終了は exclusive）
+    assert _period(datetime(2026, 8, 9, 15, tzinfo=utc),
+                   datetime(2026, 8, 12, 15, tzinfo=utc), "day") == "08/10〜08/12"
+    # 0.5日単位: 8/21 12:00 JST = 8/21 03:00 UTC ／ 8/24 12:00 JST = 8/24 03:00 UTC
+    assert _period(datetime(2026, 8, 21, 3, tzinfo=utc),
+                   datetime(2026, 8, 24, 3, tzinfo=utc), "half_day") == "08/21 午後〜08/24 午前"
+    # 時間単位: 8/25 22:00 JST = 8/25 13:00 UTC ／ 8/26 05:00 JST = 8/25 20:00 UTC
+    assert _period(datetime(2026, 8, 25, 13, tzinfo=utc),
+                   datetime(2026, 8, 25, 20, tzinfo=utc), "time") == "08/25 22:00〜08/26 05:00"
+    # 同じ日に収まる時間単位は、終了を時刻だけにする
+    assert _period(datetime(2026, 8, 27, 0, 30, tzinfo=utc),
+                   datetime(2026, 8, 27, 8, 15, tzinfo=utc), "time") == "08/27 09:30〜17:15"
+    # 片側だけ・未設定
+    assert _period(datetime(2026, 8, 9, 15, tzinfo=utc), None, "day") == "08/10〜—"
+    assert _period(None, None, "day") == "—"

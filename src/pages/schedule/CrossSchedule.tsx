@@ -6,7 +6,9 @@
  * PUT /api/tasks/{id} を使い、案件工程と同じ実装を共有する。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { FixedProject, projectLabel, useSelectedProject } from '../../components/ui/ProjectSelect'
+import { useProject } from '../../api/projects'
 import {
   AlertTriangle, Building2, ChevronDown, ChevronRight, Crosshair, ExternalLink, Eye, FileDown,
   Filter, Printer, RotateCcw, Save, SlidersHorizontal, Trash2, TrendingUp, UserPlus,
@@ -132,11 +134,16 @@ function paramsFromFilters(f: CrossFilters, group: GroupKey, scale: TimeScale): 
 export default function CrossSchedule() {
   const { toast } = useApp()
   const navigate = useNavigate()
-  const { id } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
+  // 案件IDは共通コンテキスト（パスの :id → ?project_id=）だけを正本にする
+  const { projectId: scopedFromContext, fixedByPath } = useSelectedProject()
 
   // 案件指定つきルート（/projects/:id/schedule/cross）は対象案件で絞り込んだ状態で開く
-  const scopedProjectId = Number(id) > 0 ? Number(id) : undefined
+  // 案件配下ルートのときだけ案件で絞り込む（横断ルートでは undefined）
+  const scopedProjectId = fixedByPath ? scopedFromContext : undefined
+  // 案件名・工事番号は案件APIから取る（画面で組み立てない）
+  const { data: scopedProject } = useProject(scopedProjectId)
+  const scopedLabel = scopedProject ? projectLabel(scopedProject) : undefined
 
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams])
   const group = (searchParams.get('group') as GroupKey) || 'project'
@@ -309,7 +316,7 @@ export default function CrossSchedule() {
 
   // 依存線は工程IDで結ぶ（案件をまたぐとWBS番号が重複するため名前では判定しない）
   const depLines = useMemo(() => {
-    const lines: { x1: number; y1: number; x2: number; y2: number; critical: boolean }[] = []
+    const lines: { x1: number; y1: number; x2: number; y2: number; emphasized: boolean }[] = []
     for (const r of rows) {
       if (r.kind !== 'task' || !r.bar) continue
       const sr = rowIndexByTaskId.get(r.task.id)
@@ -318,13 +325,15 @@ export default function CrossSchedule() {
         const pr = rowIndexByTaskId.get(depId)
         const pred = taskById.get(depId)
         if (pr === undefined || !pred?.planned_start_at || !pred.planned_finish_at) continue
+        if (!r.bar.planStartAt) continue  // 日程未設定の工程へは依存線を引かない
         const predBar = timeline.spanOf(pred.planned_start_at, pred.planned_finish_at)
         lines.push({
           x1: predBar.left + predBar.width,
           y1: pr * ROW_H + 11,
           x2: timeline.xOf(r.bar.planStartAt),
           y2: sr * ROW_H + 11,
-          critical: r.task.is_delayed || pred.is_delayed,
+          // 横断工程で赤くするのは「遅延」。クリティカルパスは案件ごとの工程表で示す。
+          emphasized: r.task.is_delayed || pred.is_delayed,
         })
       }
     }
@@ -385,6 +394,8 @@ export default function CrossSchedule() {
     const t = taskById.get(Number(bar.id))
     // 工程は名前に関係なくドラッグできる（マイルストーンは工程行に含めない）
     if (!t) return
+    // 日程未設定の工程はドラッグで動かせない（まず日程を登録する）
+    if (!bar.planStartAt || !bar.planEndAt) return
     dragRef.current = {
       taskId: t.id, projectId: t.project_id, mode: 'move', startX: e.clientX,
       s: bar.planStartAt, e: bar.planEndAt, precision: bar.precision,
@@ -451,6 +462,9 @@ export default function CrossSchedule() {
         description={`${scopedProjectId ? '対象案件で絞り込み中 ／ ' : ''}複数案件の工程を1画面で確認します${isFetching ? '（更新中...）' : ''}`}
         actions={
           <div className="flex items-center gap-2">
+            {/* 案件配下ルートでは、どの案件で絞り込んでいるかを工事番号まで見せる
+                （「対象案件で絞り込み中」だけでは、どの案件か分からない） */}
+            {scopedProjectId && <FixedProject label={scopedLabel} />}
             <div className="flex items-center gap-0.5 rounded border border-line bg-white p-0.5">
               {GROUPS.map((g) => (
                 <button
@@ -685,7 +699,7 @@ export default function CrossSchedule() {
           </div>
         </div>
         <div data-print="hide">
-          <GanttLegend note="工程バーはドラッグで移動（0.5日単位の工程は0.5日刻み）／右端で期間変更 ／ 右クリックで操作メニュー" />
+          <GanttLegend note="遅延している工程の依存線を赤で表示 ／ 工程バーはドラッグで移動（0.5日単位の工程は0.5日刻み）／右端で期間変更 ／ 右クリックで操作メニュー" />
         </div>
       </Panel>
 

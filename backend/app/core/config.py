@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
+    # サブパス配信（例: https://example.com/sysken/api）。
+    # リバースプロキシがパスを切り落とす構成で、APIが自分の公開パスを知るために使う。
+    # 画面のベースパス（VITE_BASE_PATH）と食い違うと、URLが解決できない事故になる。
+    api_root_path: str = ""
+
     # Storage
     storage_backend: str = "local"  # local | s3
     local_storage_dir: str = "./storage"

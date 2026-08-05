@@ -214,15 +214,25 @@ export function toWbsTask(t: CrossTask, wbsById: Map<number, string>, parentIds:
     actualEndAt: t.actual_finish_at,
     precision: (t.schedule_precision as SchedulePrecision) ?? 'day',
     planDays: durationInDays(t.planned_start_at, t.planned_finish_at),
+    planProgress: t.planned_progress,
     progress: t.actual_progress,
     planPeople: t.planned_workers,
     actualPeople: t.actual_workers,
     status: t.status as WbsTask['status'],
     predecessors: t.dependencies.map((id) => wbsById.get(id)).filter((v): v is string => !!v),
+    predecessorIds: t.dependencies.map(String),
+    // 横断工程は一覧表示だけで編集フォームを持たないため、詳細項目は保持しない
+    notes: null,
+    delayReason: null,
+    workTypeId: null,
+    processTypeId: null,
+    teamId: null,
+    managerId: null,
+    companyId: null,
     level: t.parent_task_id ? 1 : 0,
     // 子工程を持つ工程だけを親として扱う（子の無い最上位工程は通常のバーで描く）
+    parentId: t.parent_task_id != null ? String(t.parent_task_id) : null,
     isParent: parentIds.has(t.id),
-    critical: false,
   }
 }
 

@@ -48,6 +48,7 @@ Ver.0.1.1 migration: `93d342db7f58_ver0_1_1_photos_quality_daily_fields`（既�
 Ver.0.1.2 migration: `062aef7de195_ver0_1_2_task_assets_workers_docs_...`（新テーブル10・既存データ非破壊）→ 計40テーブル。
 Ver.0.1.3 migration: `6b1c1111572b_ver0_1_3_materials_test_records_report_...`（`materials`/`project_materials`/`test_records`/`report_exports`・既存非破壊）→ 計44テーブル。帳票生成に `openpyxl`/`reportlab`（日本語CIDフォント）を使用。
 Ver.0.3 migration: `a1c7d3f90b21`（`tasks.schedule_precision`）→ `b3e5a71c2d40`（`tasks.company_id` / `saved_searches`）→ `c4f2a86b1e73`（`milestone_types` / `milestones`）→ `d5a91c3e07b2`（`milestones` に `company_id` / `related_task_id` / `schedule_precision`）→ 計47テーブル。既存 migration は書き換えず、補足 migration を追加する方針。
+Ver.0.5 migration: `e7c4b2f10a93`（`tasks.team_id`＝担当班。責任者・担当会社とは独立。既存行は NULL のままで、データの書き換え・削除は行わない）。
 
 ## 重要な設計判断
 

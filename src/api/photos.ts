@@ -3,9 +3,6 @@ import { api } from '../lib/apiClient'
 import type { Photo, PhotoConfirm } from '../types'
 import type { Detection, RecogBox, Recognition } from '../data/aiPreview'
 
-// 施工写真関連画面が既定で対象とする案件ID（熊本中央局 光設備更改工事）
-export const DEMO_PROJECT_ID = 1
-
 // バックエンド PhotoOut に対応
 export interface ApiPhoto {
   id: number
@@ -75,10 +72,12 @@ export function toPhoto(p: ApiPhoto): Photo {
   }
 }
 
-export function usePhotos(projectId: number = DEMO_PROJECT_ID) {
+/** 選択中の案件の施工写真。未選択のときは取得しない（固定案件へ寄せない）。 */
+export function usePhotos(projectId: number | undefined) {
   return useQuery({
-    queryKey: ['photos', projectId],
+    queryKey: ['photos', projectId ?? null],
     queryFn: async () => (await api<ApiPhoto[]>(`/photos?project_id=${projectId}`)).map(toPhoto),
+    enabled: !!projectId,
   })
 }
 
@@ -146,12 +145,17 @@ export function useReportMissed() {
   })
 }
 
-export function useUploadPhoto(projectId: number = DEMO_PROJECT_ID) {
+/**
+ * 写真アップロード。登録先の案件は呼び出し側が明示する（`project_id` は必須）。
+ * 未選択のまま 0 などの既定値で登録しないため、フックは案件IDを持たない。
+ */
+export function useUploadPhoto() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: { file: File; project_id?: number; site_id?: number; asset_id?: number; task_id?: number; photo_type_id?: number; place?: string; comment?: string }) => {
+    mutationFn: (input: { file: File; project_id: number; site_id?: number; asset_id?: number; task_id?: number; photo_type_id?: number; place?: string; comment?: string }) => {
+      if (!input.project_id) throw new Error('登録先の案件が選択されていません')
       const form = new FormData()
-      form.set('project_id', String(input.project_id ?? projectId))
+      form.set('project_id', String(input.project_id))
       form.set('file', input.file)
       if (input.site_id != null) form.set('site_id', String(input.site_id))
       if (input.asset_id != null) form.set('asset_id', String(input.asset_id))

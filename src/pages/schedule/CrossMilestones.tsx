@@ -7,7 +7,9 @@
  * 件数はすべて /summary の確定計算を使い、画面側で数え直さない。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { FixedProject, projectLabel, useSelectedProject } from '../../components/ui/ProjectSelect'
+import { useProject } from '../../api/projects'
 import {
   AlertTriangle, CalendarClock, Crosshair, FileDown, Filter, Pencil, Plus,
   Printer, RotateCcw, Save, Table2, Trash2,
@@ -119,12 +121,17 @@ export default function CrossMilestones() {
   const { toast, confirm } = useApp()
   const { user } = useAuth()
   const navigate = useNavigate()
-  const { id } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
+  // 案件IDは共通コンテキスト（パスの :id → ?project_id=）だけを正本にする
+  const { projectId: scopedFromContext, fixedByPath } = useSelectedProject()
 
   // 案件詳細ルートではパスの案件IDを優先し、APIにも project_id を渡す。
   // URLクエリや保存検索で別案件へ範囲が広がらない。
-  const scopedProjectId = Number(id) > 0 ? Number(id) : undefined
+  // 案件配下ルートのときだけ案件で絞り込む（横断ルートでは undefined）
+  const scopedProjectId = fixedByPath ? scopedFromContext : undefined
+  // 案件名・工事番号は案件APIから取る（画面で組み立てない）
+  const { data: scopedProject } = useProject(scopedProjectId)
+  const scopedLabel = scopedProject ? projectLabel(scopedProject) : undefined
 
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams])
   const view: ViewKind = searchParams.get('view') === 'timeline' ? 'timeline' : 'table'
@@ -146,7 +153,7 @@ export default function CrossMilestones() {
 
   const { data, isLoading, isError, error } = useCrossMilestones(filters, group, scopedProjectId)
   const { data: summary } = useMilestoneSummary(filters, group, scopedProjectId)
-  const { data: options } = useMilestoneOptions(scopedProjectId)
+  const { data: options, isLoading: optionsLoading, isError: optionsError } = useMilestoneOptions(scopedProjectId)
   const createMs = useCreateMilestone()
   const updateMs = useUpdateMilestone()
   const deleteMs = useDeleteMilestone()
@@ -282,6 +289,8 @@ export default function CrossMilestones() {
           description={`${scopedProjectId ? '対象案件で絞り込み中 ／ ' : ''}複数案件の重要日を1画面で比較します`}
           actions={
             <div className="flex items-center gap-2">
+              {/* 案件配下ルートでは、どの案件で絞り込んでいるかを工事番号まで見せる */}
+              {scopedProjectId && <FixedProject label={scopedLabel} />}
               <div className="flex items-center gap-0.5 rounded border border-line bg-white p-0.5"
                    role="group" aria-label="表示方式">
                 {VIEWS.map((v) => (
@@ -397,6 +406,7 @@ export default function CrossMilestones() {
 
       <MilestoneEditor
         editor={editor} options={options} scopedProjectId={scopedProjectId}
+        optionsLoading={optionsLoading} optionsError={optionsError}
         saving={createMs.isPending || updateMs.isPending}
         onClose={() => setEditor(null)}
         onSubmit={async (input, id) => {
@@ -848,13 +858,15 @@ function SavedSearchBar({
 
 // ===== 登録・編集 =====
 function MilestoneEditor({
-  editor, options, saving, scopedProjectId, onClose, onSubmit,
+  editor, options, optionsLoading, optionsError, saving, scopedProjectId, onClose, onSubmit,
 }: {
   editor:
     | { mode: 'create'; seed?: { projectId: number; typeId: number } }
     | { mode: 'edit'; row: CrossMilestone }
     | null
   options: MilestoneOptions | undefined
+  optionsLoading: boolean
+  optionsError: boolean
   saving: boolean
   scopedProjectId?: number
   onClose: () => void
@@ -953,20 +965,39 @@ function MilestoneEditor({
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <div>
           <label className="label">案件 *</label>
-          <select className="field" value={form.projectId} disabled={editor.mode === 'edit'}
+          <select className="field" data-milestone-project
+            value={form.projectId}
+            disabled={editor.mode === 'edit' || scopedProjectId !== undefined}
             onChange={(e) => setForm({ ...form, projectId: e.target.value, relatedTaskId: '' })}>
             <option value="">選択してください</option>
             {(options?.projects ?? []).map((p) => (
               <option key={p.id} value={p.id}>{p.construction_number} {p.name}</option>
             ))}
           </select>
+          {/* 候補が無いとき、通信失敗・権限不足・本当に0件を区別して伝える */}
+          {!optionsLoading && (options?.projects ?? []).length === 0 && (
+            <p className="mt-1 text-[11px] text-ng" data-milestone-project-empty>
+              {optionsError
+                ? '案件の候補を取得できませんでした。通信状態を確認して開き直してください。'
+                : '登録できる案件がありません。担当案件の割当を管理者へご確認ください。'}
+            </p>
+          )}
+          {scopedProjectId !== undefined && (
+            <p className="mt-1 text-[11px] text-ink-soft">この画面の案件に登録します（変更するには横断マイルストーンから開いてください）</p>
+          )}
         </div>
         <div>
           <label className="label">区分</label>
-          <select className="field" value={form.typeId} onChange={(e) => setForm({ ...form, typeId: e.target.value })}>
+          <select className="field" data-milestone-type value={form.typeId}
+            onChange={(e) => setForm({ ...form, typeId: e.target.value })}>
             <option value="">未指定</option>
             {(options?.milestone_types ?? []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
+          {!optionsLoading && (options?.milestone_types ?? []).length === 0 && (
+            <p className="mt-1 text-[11px] text-ng">
+              {optionsError ? '区分マスタを取得できませんでした。' : '区分マスタが登録されていません。'}
+            </p>
+          )}
         </div>
         <div>
           <label className="label">名称 *</label>

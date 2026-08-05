@@ -47,6 +47,15 @@ export default function App() {
           <Route path="/schedule/cross" element={<CrossSchedule />} />
           <Route path="/schedule/milestones" element={<CrossMilestones />} />
           <Route path="/schedule/calendar" element={<ScheduleCalendar />} />
+          {/* 案件配下ルート（対象案件はパスの :id が正本。画面上で別案件へ変えられない） */}
+          <Route path="/projects/:id/photos" element={<Photos />} />
+          <Route path="/projects/:id/drawings" element={<Drawings />} />
+          <Route path="/projects/:id/quality" element={<Quality />} />
+          <Route path="/projects/:id/daily-report" element={<DailyReport />} />
+          <Route path="/projects/:id/personnel" element={<Personnel />} />
+          <Route path="/projects/:id/ledger" element={<Ledger />} />
+          <Route path="/projects/:id/reports" element={<Reports />} />
+          {/* 横断ルート（対象案件は ?project_id= で選ぶ） */}
           <Route path="/photos" element={<Photos />} />
           <Route path="/drawings" element={<Drawings />} />
           <Route path="/quality" element={<Quality />} />

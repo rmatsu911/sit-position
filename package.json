@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "engines": {
-    "node": ">=18"
+    "node": ">=20.19"
   },
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,9 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsc -b --force",
-    "test:timeline": "esbuild src/lib/timeline.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/timeline.test.mjs --log-level=error && node scripts/timeline.test.mjs"
+    "test:timeline": "esbuild src/lib/timeline.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/timeline.test.mjs --log-level=error && node scripts/timeline.test.mjs",
+    "test:cpm": "esbuild src/lib/cpm.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/cpm.test.mjs --log-level=error && node scripts/cpm.test.mjs",
+    "verify:all": "node scripts/verify-all.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
@@ -25,6 +27,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/node": "^26.1.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
@@ -33,6 +36,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^17.7.0",
+    "playwright": "^1.62.1",
     "postcss": "^8.4.49",
     "serve": "^14.2.6",
     "tailwindcss": "^3.4.17",

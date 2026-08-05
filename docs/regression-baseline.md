@@ -1,17 +1,46 @@
-# 回帰確認の基準（Ver.0.3）
+# 回帰確認の基準（Ver.0.5 時点）
 
 大きな改修（横断工程表・カレンダー・現場連絡など）の前後で、既存機能が
 壊れていないことを同じ手順で確認するための基準。
+
+## 0. まとめて実行する
+
+```bash
+scripts/dev-stack.sh start                    # PostgreSQL → migration → backend(:8000) → preview(:4173)
+PW_CHROME=<chromium> npm run verify:all       # 全ゲートを順に実行し、1枚にまとめて表示
+```
+
+`verify:all` は、スタックが起動していないとブラウザ回帰を **skipped** として残す。
+skipped は成功ではない。起動して実行し直すこと。
+
+Ver.0.5 時点の基準値（すべて 0 failed）:
+
+| ゲート | 基準値 |
+|---|---|
+| typecheck / build | 成功 |
+| ESLint | エラー 0（警告13件は react-refresh の既知） |
+| timeline | 130 passed |
+| cpm | 49 passed |
+| 固定案件参照の監査 | 残存 0 件 |
+| pytest | 144 passed |
+| Phase 4 回帰 | 172 passed |
+| Phase 5 工程フォーム | 59 passed |
+| Phase 5 状態表示 | 53 passed |
+| Phase 5 全画面監査 | 136 passed |
+
+CI（`.github/workflows/ci.yml`）は、このうち実行環境を用意せずに判定できるもの
+（typecheck / lint / build / timeline / cpm / 固定案件参照 / pytest / migration の往復）
+を PR ごとに動かす。ブラウザ回帰は含めていないので、手元で実行する。
 
 ## 1. 品質ゲート（コマンド）
 
 | ゲート | コマンド | 基準値（Phase 0 時点） |
 |---|---|---|
 | TypeScript | `npm run typecheck` | エラー 0（**`npx tsc --noEmit` はソリューション構成のため何も検査しない。必ず `-b` を使う**） |
-| ESLint | `npm run lint` | **エラー 0**（警告は Badge.tsx の HMR 警告 1件のみ） |
+| ESLint | `npm run lint` | **エラー 0**（警告13件は react-refresh の既知） |
 | production build | `npm run build` | 成功（bundle 500kB超の警告は既知） |
-| 時間軸エンジン | `npm run test:timeline` | **113 passed / 0 failed** |
-| Backend テスト | `cd backend && python -m pytest` | **102 passed**（Phase 3 で +46） |
+| 時間軸エンジン | `npm run test:timeline` | **130 passed / 0 failed**（Ver.0.5 で時間単位を追加） |
+| Backend テスト | `cd backend && python -m pytest` | **144 passed**（Ver.0.5 時点） |
 | 横断工程の座標実測 | `PW_CHROME=<chrome> node scripts/cross-schedule-measure.mjs` | **25 passed / 0 failed** |
 | 横断工程の完了確認 | `PW_CHROME=<chrome> node scripts/cross-schedule-final.mjs` | **39 passed / 0 failed** |
 | 表示単位の検証 | `PW_CHROME=<chrome> node scripts/scale-selector-verify.mjs` | **50 passed / 0 failed** |
@@ -20,6 +49,12 @@
 | 工程画面へのマイルストーン統合 | `PW_CHROME=<chrome> node scripts/milestone-integration-verify.mjs` | **71 passed / 0 failed** |
 | 表示名依存の監査 | `node scripts/milestone-source-audit.mjs` | 業務判定に表示名依存 0 件 |
 | カレンダー | `PW_CHROME=<chrome> node scripts/calendar-verify.mjs` | **61 passed / 0 failed** |
+| クリティカルパス | `npm run test:cpm` | **49 passed / 0 failed** |
+| Phase 4 回帰 | `PW_CHROME=<chrome> node scripts/phase4-verify.mjs` | **172 passed / 0 failed** |
+| Phase 5 工程フォーム | `PW_CHROME=<chrome> node scripts/phase5-task-form-verify.mjs` | **59 passed / 0 failed** |
+| Phase 5 状態表示 | `PW_CHROME=<chrome> node scripts/phase5-status-verify.mjs` | **53 passed / 0 failed** |
+| Phase 5 全画面監査 | `PW_CHROME=<chrome> node scripts/phase5-screen-audit.mjs` | **136 passed / 0 failed** |
+| 固定案件参照の監査 | `node scripts/fixed-project-audit.mjs` | 残存 0 件 |
 
 ## 2. 画面の回帰確認（実ブラウザ）
 
@@ -369,3 +404,77 @@ PW_CHROME=<chromeのパス> node scripts/e2e-regression.mjs --out /tmp/after
 | 5権限 | ADMIN / PROJECT_MANAGER / QUALITY_MANAGER / VIEWER は全案件、FIELD_WORKER（割当あり）は1案件 |
 | 案件詳細ルート | 対象案件のみ。URLクエリで別案件を足しても広がらない |
 | コンソールエラー / 失敗リクエスト | **0 / 0** |
+
+## Ver.0.4 Phase 4（案件ライフサイクルと工程への業務導線）
+
+`node scripts/phase4-verify.mjs`（前提: backend :8000 / vite preview :4173）。
+一意な工事番号で新規案件を1件だけ作り、その同じ案件で13ステップを通しで確認する。
+検証で作った案件・工程は削除しない（本番相当データを物理削除しない）。
+
+### 実測結果（92項目すべて一致）
+
+| 検証 | 実測値 |
+|---|---|
+| 登録 | 一意な工事番号で201。成功時だけ「案件を登録しました」を出す |
+| 1ページ目で強調 | `?new=<id>` が付き、1ページ目の先頭・強調表示・「新規」バッジは1行だけ |
+| 件数 | 一覧の件数表示はAPIの `total` をそのまま使用（登録で 11 → 12 件） |
+| 詳細 | 一覧の行から遷移し、登録した工事番号・工事名・予定期間が一致 |
+| 更新→再読込 | 工事名・ステータスの更新が保存され、再読込後も維持 |
+| 工程追加 | 工程0件は「登録されていません」と明示。親工程＋子工程を追加して2行 |
+| 工程編集 | 工程名の変更が一覧へ反映 |
+| ドラッグ | 日単位の列幅 34px を実測し1列分ドラッグ → 予定開始日が 08-03 → 08-04 |
+| 進捗更新 | 右クリック→進捗を更新で 60%。トーストと一覧の値が一致 |
+| 工程の再読込 | 工程名・ドラッグ結果・進捗のいずれも維持 |
+| 横断工程へ反映 | 新規案件の工程と案件名が横断工程に出る |
+| 戻る／進む | 条件の付与・解除・復元がURLと表示の両方で一致 |
+| 別タブ更新 | 開いたままの画面は自動更新しない。条件変更・再読込・詳細遷移で取り直す |
+| 条件で隠れる場合 | 「登録済みだが現在の条件では非表示」と案内し、「条件を解除して表示」で強調表示に復帰 |
+| 2ページ目 | `per_page=5&page=2` で5行・「12件中 6〜10件を表示」・現在ページが選択状態 |
+| 全ページ合計 | 4ページ分の行数合計 12 = `total` 12。ページ間の重複 0 |
+| 複数ページの絞り込み | `q=KM` で3ページ・合計8 = `total` 8。`total` 自体が 12 → 8 に減る |
+| 5権限 | 一覧: ADMIN/PM/QM/VIEWER は12件、FIELD_WORKER は割当1件 |
+| 5権限（操作） | 「新規案件登録」「基本情報を編集」は ADMIN / PROJECT_MANAGER のみ表示 |
+| 割当外案件 | FIELD_WORKER は403として表示され、APIも403（0件の200とは別） |
+| 未選択の4画面 | 施工写真・品質管理・現場日報・報告書のすべてで、既定は未選択・空状態・選択はURLへ保存・再読込で復元 |
+| コンソールエラー / 想定外の失敗リクエスト | **0 / 0**（権限テストで想定どおり拒否された通信は4件） |
+
+### この回帰で検知して修正した不具合
+
+| 事象 | 原因 | 対応 |
+|---|---|---|
+| 右クリックメニューが開かない | メニューを開いた `contextmenu` が window へ伝わり切る前に「外側クリックで閉じる」購読を開始していた | 購読を1ティック遅らせる（`ContextMenu.tsx`） |
+| 更新できない権限に「基本情報を編集」が出る | 権限で出し分けていなかった | ADMIN / PROJECT_MANAGER のみ表示（拒否の最終判断はAPI） |
+| 報告書が選択案件と無関係な内容を表示 | 工事名・作成日・作成者と工程行が固定値 | 選択案件の工程を下書きにし、見出しも選択案件・当日・ログイン利用者に変更 |
+
+### 追補：案件切替時のデータ分離（ソースレビュー指摘への対応）
+
+`scripts/phase4-verify.mjs` に40項目を追加（92 → 132項目）。「未選択画面が出ること」ではなく
+**以前選択していた案件のデータが残っていないこと**まで確認する。
+
+| 検証 | 実測値 |
+|---|---|
+| 施工写真 A→B | 案件A（27枚）から写真0件の案件Bへ切替え、案件Aの写真ID残存 0 |
+| 施工写真 切替直後 | URLが案件Bになった時点から連続サンプリングし、読み込み中も案件Aの写真は 0 件 |
+| 施工写真 A→未選択（直接） | 0件の案件を経由しない経路でも残存 0。アップロード・一括操作の入口も出ない |
+| 施工写真 未選択→A | 元の27枚に戻る（クリアが片道でない） |
+| 現場日報 A→B | 案件A（2件）から日報0件の案件Bへ切替え、一覧・編集フォームとも残存 0 |
+| 現場日報 切替直後 | 読み込み中も案件Aの日報を描画しない（サンプリング 0 件） |
+| 現場日報 未選択 | 日報を保持・表示しない |
+| 品質管理 未選択 | 空状態のみ。試験記録追加・AI品質チェック・品質確認フローを出さない |
+| 品質管理 案件名 | 一覧の案件名が案件セレクタの選択内容と一致（固定分岐ではない） |
+| 報告書 未選択 | 行追加・プレビュー・PDF・Excel・CSV・印刷の入口をすべて出さない |
+| 報告書 プレビュー | 選択案件の工事番号・工事名を表示 |
+| 固定案件参照 | `scripts/fixed-project-audit.mjs` で残存 0 件 |
+
+**変異テスト**: 施工写真の初期化（描画前リセット・未選択時の早期リターン・取得前のクリア）を
+意図的に無効化すると、上記のうち9項目が落ちることを確認済み（`案件Aから直接未選択へ戻しても
+案件Aの写真を描画しない` が27件検知）。
+
+**期待値を変更したゲート（1件）**: `scripts/cross-schedule-final.mjs` が開く案件工程の
+ルートを `/schedule` から `/projects/1/schedule` へ変更。Ver.0.4 で `/schedule` が先頭案件を
+自動選択しなくなったため、この計測が従来見ていた対象（自動選択されていた先頭案件）を
+明示して開くようにした。**計測値・判定内容は変更していない**（39項目すべて同じ値で PASS）。
+
+**この環境の既知条件**: シードは `storage/photos/seed/P-XXX.jpg` を参照するが、`storage/` は
+git 管理外で実ファイルが無いため、写真画像の取得は 404 になる。アプリの不具合ではないため
+回帰スクリプトでは対象を限定して別枠で数えている（想定外の失敗リクエストは 0）。

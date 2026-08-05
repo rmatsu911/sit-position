@@ -1,6 +1,9 @@
 // アプリ実行環境・バージョンの一元管理。
 
 declare const __APP_VERSION__: string
+declare const __APP_COMMIT__: string
+declare const __BUILD_TIME__: string
+declare const __BASE_PATH__: string
 
 export type AppEnv = 'development' | 'staging' | 'production'
 
@@ -21,3 +24,26 @@ export const ENV_LABEL: Record<AppEnv, string> = {
   staging: '検証環境',
   production: '本番環境',
 }
+
+/** ビルドしたコードのコミットSHA。実環境の世代確認に使う。 */
+export const APP_COMMIT: string =
+  typeof __APP_COMMIT__ !== 'undefined' ? __APP_COMMIT__ : 'unknown'
+
+/** ビルド日時（ISO8601）。 */
+export const BUILD_TIME: string =
+  typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : 'unknown'
+
+/** 表示用に短縮したSHA。 */
+export const shortSha = (sha: string): string =>
+  sha && sha !== 'unknown' ? sha.slice(0, 7) : 'unknown'
+
+/**
+ * 配信のベースパス。サブパス配信（例 `/sysken/`）でビルドしたときに設定される。
+ * ルーターの basename に使い、`/sysken/login` のようなURLでも同じ画面が開くようにする。
+ */
+export const BASE_PATH: string =
+  typeof __BASE_PATH__ !== 'undefined' ? __BASE_PATH__ : '/'
+
+/** react-router の basename（末尾のスラッシュを除く。ルート配信なら空文字） */
+export const ROUTER_BASENAME: string =
+  BASE_PATH === '/' ? '' : BASE_PATH.replace(/\/$/, '')

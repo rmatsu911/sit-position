@@ -49,9 +49,13 @@ export function toLedgerRow(r: ApiLedgerRow): LedgerRow {
   }
 }
 
-export function useLedger() {
+/** 工事台帳。案件を指定すると、その案件だけを取得する。 */
+export function useLedger(projectId?: number) {
   return useQuery({
-    queryKey: ['ledger'],
-    queryFn: async () => (await api<ApiLedgerRow[]>('/ledger')).map(toLedgerRow),
+    queryKey: ['ledger', projectId ?? 'all'],
+    queryFn: async () => {
+      const qs = projectId ? `?project_id=${projectId}` : ''
+      return (await api<ApiLedgerRow[]>(`/ledger${qs}`)).map(toLedgerRow)
+    },
   })
 }

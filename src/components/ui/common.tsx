@@ -1,5 +1,5 @@
 import { Loader2, Inbox } from 'lucide-react'
-import type { ReactNode } from 'react'
+import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 
 export function Spinner({ size = 16 }: { size?: number }) {
   return <Loader2 size={size} className="animate-spin text-sysken-500" />
@@ -29,15 +29,17 @@ export function Panel({
   children,
   className = '',
   bodyClassName = 'p-4',
+  ...rest
 }: {
   title?: string
   action?: ReactNode
   children: ReactNode
   className?: string
   bodyClassName?: string
-}) {
+} & Omit<ComponentPropsWithoutRef<'section'>, 'title' | 'children' | 'className'>) {
   return (
-    <section className={`panel ${className}`}>
+    // data-* などの属性をそのまま外側の section へ渡す（テストの目印を落とさない）
+    <section className={`panel ${className}`} {...rest}>
       {title && (
         <header className="flex items-center justify-between border-b border-line px-4 py-3">
           <h2 className="text-[15px] font-semibold text-ink">{title}</h2>

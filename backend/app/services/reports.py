@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import csv
 import io
 
 from openpyxl import Workbook
@@ -113,8 +114,27 @@ def build_table_pdf(spec: ReportSpec) -> bytes:
     return buf.getvalue()
 
 
+def build_table_csv(spec: ReportSpec) -> bytes:
+    """CSV。Excel で開くことを前提に UTF-8 BOM 付きで返す。
+
+    画面・PDF・Excel と同じ `ReportSpec` から作るため、行の順序も内容も一致する。
+    """
+    buf = io.StringIO(newline="")
+    w = csv.writer(buf, lineterminator="\r\n")
+    w.writerow([spec.title])
+    for label, value in spec.meta:
+        w.writerow([label, value])
+    w.writerow([])
+    w.writerow(spec.columns)
+    for row in spec.rows:
+        w.writerow(list(row))
+    return b"\xef\xbb\xbf" + buf.getvalue().encode("utf-8")
+
+
 def render(spec: ReportSpec, fmt: str) -> tuple[bytes, str]:
     """(bytes, content_type) を返す。"""
     if fmt == "xlsx":
         return build_table_xlsx(spec), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    if fmt == "csv":
+        return build_table_csv(spec), "text/csv; charset=utf-8"
     return build_table_pdf(spec), "application/pdf"

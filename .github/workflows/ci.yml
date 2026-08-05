@@ -1,0 +1,119 @@
+# 最小のCI。手元で通したものが壊れていないかを、PRごとに機械的に確かめる。
+#
+# ここで動かすのは「実行環境を用意せずに判定できるもの」だけ。
+# 実ブラウザ回帰（scripts/*-verify.mjs）は backend と preview の同時起動が要るため
+# 含めていない。手元で scripts/dev-stack.sh start してから実行する。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同じブランチへ続けて push したときは、古い実行を打ち切る
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (typecheck / lint / build / timeline / cpm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # Playwright と Vite 6 が Node 20.19+ を要求する（package.json の engines と揃える）
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # 型検査はルートの tsconfig（files: []）では何も見ないため、
+      # `tsc -b --force` を使う npm run typecheck を必ず経由する。
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+        env:
+          # 画面から稼働中のコード世代を確認できるようにする
+          GIT_COMMIT: ${{ github.sha }}
+      - run: npm run test:timeline
+      - run: npm run test:cpm
+      # 固定の案件名・案件IDが画面へ書き戻っていないかを機械的に見る
+      - run: node scripts/fixed-project-audit.mjs
+      # 公開環境へ架空データ・既知パスワードの利用者を作る設定へ戻っていないか
+      - run: node scripts/deploy-config-audit.mjs
+      # 配布用ビルドが、そのまま置いて動く状態か（サブパス配信で検証）
+      - name: release build (subpath)
+        run: scripts/build-release.sh --base /sysken/ --api-url https://api.example.com/api
+
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: install
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]'
+      # テストは一時ファイルの SQLite を使うため PostgreSQL は不要
+      - name: pytest
+        working-directory: backend
+        run: python -m pytest -q
+
+  migration:
+    name: Migration (PostgreSQL で upgrade → downgrade → upgrade)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sysken
+          POSTGRES_PASSWORD: sysken
+          POSTGRES_DB: sysken
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: install
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]'
+      # head が1本であること（分岐した migration を作っていないこと）
+      - name: single head
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+          heads = ScriptDirectory.from_config(Config('alembic.ini')).get_heads()
+          assert len(heads) == 1, f'migration の head が複数あります: {heads}'
+          print('head:', heads[0])
+          PY
+      # 空のDBに対して往復させ、downgrade が壊れていないことを確かめる
+      - name: upgrade / downgrade / upgrade
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg2://sysken:sysken@localhost:5432/sysken
+        run: |
+          python -m alembic upgrade head
+          python -m alembic downgrade -1
+          python -m alembic upgrade head
+          python -m alembic current
+      # 本番の初期投入が業務データを作らないこと（架空の案件を公開環境に出さない）
+      - name: bootstrap は業務データを作らない
+        env:
+          PGHOST: localhost
+          PGUSER: sysken
+          PGPASSWORD: sysken
+        run: scripts/check-bootstrap.sh

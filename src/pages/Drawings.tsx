@@ -8,10 +8,15 @@ import { Panel } from '../components/ui/common'
 import { StatusBadge } from '../components/ui/Badge'
 import { useApp } from '../context/AppContext'
 import { useDocuments, useDocument } from '../api/documents'
+import { useProject } from '../api/projects'
+import { FixedProject, NoProjectSelected, ProjectSelect, projectLabel, useSelectedProject } from '../components/ui/ProjectSelect'
 
 export default function Drawings() {
   const { toast } = useApp()
-  const { data: drawings = [], isLoading } = useDocuments()
+  // 対象案件の正本は URL（案件配下ルートはパスの :id、横断ルートは ?project_id=）
+  const { projectId, setProjectId, fixedByPath } = useSelectedProject()
+  const { data: project } = useProject(projectId)
+  const { data: drawings = [], isLoading } = useDocuments(projectId)
   const [current, setCurrent] = useState<string | null>(null)
   const [zoom, setZoom] = useState(1)
   const [rotate, setRotate] = useState(0)
@@ -42,7 +47,20 @@ export default function Drawings() {
 
   return (
     <div>
-      <PageHeader breadcrumb={[{ label: '図面' }]} title="図面" description="図面ビューア（PDF風・ピン/コメント付き）" />
+      <PageHeader breadcrumb={[{ label: '図面' }]} title="図面"
+        description={projectId ? '選択した案件の図面・書類' : '対象案件を選ぶと、その案件の図面に絞り込みます'}
+        actions={
+          <div className="flex items-center gap-2">
+            <span className="text-[12px] text-ink-soft">対象案件</span>
+            {fixedByPath
+              ? <FixedProject label={project ? projectLabel(project) : undefined} />
+              : <ProjectSelect projectId={projectId} onChange={setProjectId} />}
+          </div>
+        } />
+      {/* 案件が決まらないと図面を絞り込めない。
+          「図面が登録されていません」と出すと、未選択なのか0件なのか区別できない。 */}
+      {!projectId && <Panel><NoProjectSelected what="この案件の図面・書類" /></Panel>}
+      {projectId && (
       <div className="flex gap-4">
         {/* 左：図面一覧 */}
         <div className="w-72 shrink-0">
@@ -113,6 +131,7 @@ export default function Drawings() {
           )}
         </div>
       </div>
+      )}
     </div>
   )
 }
