@@ -13,15 +13,18 @@ import { StatusBadge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
 import { ContextMenu, type MenuItem } from '../components/ui/ContextMenu'
 import { useApp } from '../context/AppContext'
-import { useCreateTask, useDeleteTask, useProjectTasks, useUpdateTask, type TaskWriteInput } from '../api/tasks'
+import {
+  useCreateTask, useDeleteTask, useProjectTasks, useTaskFormOptions, useUpdateTask,
+  type IdName, type TaskWriteInput,
+} from '../api/tasks'
 import { EMPTY_MILESTONE_FILTERS, useCrossMilestones } from '../api/crossMilestones'
 import { useProject } from '../api/projects'
 import { ApiError } from '../lib/apiClient'
 import type { WbsTask } from '../types'
 
 import {
-  createTimeline, DEFAULT_SLOT_WIDTH, durationInDays, endAtOf, formatPeriod, jstDateKey, nowJst,
-  rangeForScale, shiftDays, snapDelta, splitEndAt, splitStartAt, startAtOf,
+  atTime, createTimeline, DEFAULT_SLOT_WIDTH, durationInDays, endAtOf, formatPeriod, jstDateKey,
+  nowJst, rangeForScale, shiftDays, snapDelta, splitDateTime, splitEndAt, splitStartAt, startAtOf,
   type HalfDay, type SchedulePrecision, type TimeScale, type Timeline,
 } from '../lib/timeline'
 import { JP_HOLIDAYS } from '../lib/holidays'
@@ -168,9 +171,16 @@ function ScheduleBody({ projectId }: { projectId: number }) {
       const d = dragRef.current
       const p = preview
       if (d && p && (p.ds !== 0 || p.de !== 0)) {
-        // ISO日時のまま日数をずらすため、午前/午後の区分は保たれる
+        // ISO日時のまま日数をずらすため、午前/午後の区分・時刻は保たれる
         const planStartAt = shiftDays(d.s, p.ds)
         const planEndAt = shiftDays(d.e, p.de)
+        // リサイズは終了だけを動かすため、開始より前へ縮められる。保存せずに戻す。
+        if (durationInDays(planStartAt, planEndAt) <= 0) {
+          toast('終了は開始より後にしてください', 'ng')
+          dragRef.current = null
+          setPreview(null)
+          return
+        }
         try {
           await updateTaskMutation.mutateAsync({
             id: Number(d.id), name: tasks.find((t) => t.id === d.id)?.name ?? '',
@@ -490,7 +500,7 @@ function ScheduleBody({ projectId }: { projectId: number }) {
                       <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{t.planEndAt ? edgeLabel(t.planEndAt, 'end', t.precision) : '未設定'}</td>
                       <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{t.actualStartAt ? edgeLabel(t.actualStartAt, 'start', t.precision) : '—'}</td>
                       <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{t.actualEndAt ? edgeLabel(t.actualEndAt, 'end', t.precision) : '—'}</td>
-                      <td className="border-r border-line px-2 text-center tabular-nums text-ink-soft" style={{ width: 44 }}>{t.planDays}</td>
+                      <td className="border-r border-line px-2 text-center tabular-nums text-ink-soft" style={{ width: 44 }}>{t.planDays ?? '—'}</td>
                       <td className="border-r border-line px-2 text-right tabular-nums font-medium" style={{ width: 52 }}>{t.progress}%</td>
                       <td className="border-r border-line px-2 text-center tabular-nums text-ink-soft" style={{ width: 52 }}>{t.planPeople}</td>
                       <td className="border-r border-line px-2 text-center tabular-nums text-ink-soft" style={{ width: 52 }}>{t.actualPeople || '—'}</td>
@@ -608,13 +618,18 @@ function ScheduleBody({ projectId }: { projectId: number }) {
         open={!!editor}
         editor={editor}
         tasks={tasks}
+        projectId={projectId}
         saving={createTaskMutation.isPending || updateTaskMutation.isPending}
         onClose={() => setEditor(null)}
         onSave={async (input) => {
           if (!projectId || !editor) return
           try {
             if (editor.mode === 'edit' && editor.task) {
-              await updateTaskMutation.mutateAsync({ id: Number(editor.task.id), ...input, change_reason: '工程編集' })
+              // 変更理由はフォームの入力を優先し、未入力なら操作元がわかる既定値を残す
+              await updateTaskMutation.mutateAsync({
+                id: Number(editor.task.id), ...input,
+                change_reason: input.change_reason ?? '工程管理画面から編集',
+              })
             } else {
               await createTaskMutation.mutateAsync(input)
             }
@@ -629,58 +644,128 @@ function ScheduleBody({ projectId }: { projectId: number }) {
   )
 }
 
-/** 工程の期間入力（1日単位／0.5日単位）。日時が正で、precision は入力粒度の判定に使う。 */
-type ScheduleUnit = 'day' | 'half'
+/**
+ * 工程の期間入力（1日単位／0.5日単位／時間単位）。
+ * 日時（[開始, 終了) の半開区間・Asia/Tokyo）が正で、precision は入力粒度の記録。
+ * 単位を切り替えても日付は保持し、時刻だけを単位に合わせて解釈し直す。
+ */
+type ScheduleUnit = 'day' | 'half' | 'time'
+
+const UNIT_TO_PRECISION: Record<ScheduleUnit, SchedulePrecision> = {
+  day: 'day', half: 'half_day', time: 'time',
+}
+
+const UNIT_LABELS: [ScheduleUnit, string][] = [
+  ['day', '1日単位'], ['half', '0.5日単位'], ['time', '時間単位'],
+]
 
 /** 既存工程の日時から、フォームの初期値（日付＋区分）を作る。 */
+const unitOf = (p: SchedulePrecision | undefined): ScheduleUnit =>
+  p === 'half_day' ? 'half' : p === 'time' ? 'time' : 'day'
+
 function periodFormOf(task?: WbsTask, parent?: WbsTask) {
   const src = task ?? parent
   const todayKey = jstDateKey(nowJst())
+  const blank = {
+    planStartHalf: 'AM' as HalfDay, planEndHalf: 'PM' as HalfDay,
+    planStartTime: '09:00', planEndTime: '17:00',
+  }
   if (!src) {
-    return {
-      unit: 'day' as ScheduleUnit,
-      planStartDate: todayKey, planStartHalf: 'AM' as HalfDay,
-      planEndDate: todayKey, planEndHalf: 'PM' as HalfDay,
-    }
+    return { unit: 'day' as ScheduleUnit, planStartDate: todayKey, planEndDate: todayKey, ...blank }
   }
   // 日程未設定の工程を編集するときは、入力欄を空のままにする（今日で埋めない）
   if (!src.planStartAt || !src.planEndAt) {
-    return {
-      unit: (src.precision === 'half_day' ? 'half' : 'day') as ScheduleUnit,
-      planStartDate: '', planStartHalf: 'AM' as HalfDay,
-      planEndDate: '', planEndHalf: 'PM' as HalfDay,
-    }
+    return { unit: unitOf(src.precision), planStartDate: '', planEndDate: '', ...blank }
   }
   const s0 = splitStartAt(src.planStartAt)
   const e0 = splitEndAt(src.planEndAt)
+  const st = splitDateTime(src.planStartAt)
+  const et = splitDateTime(src.planEndAt)
   return {
-    unit: (src.precision === 'half_day' ? 'half' : 'day') as ScheduleUnit,
-    planStartDate: s0.dateKey, planStartHalf: s0.half,
-    planEndDate: e0.dateKey, planEndHalf: e0.half,
+    unit: unitOf(src.precision),
+    // 日単位・0.5日単位は「日付＋区分」、時間単位は「日付＋時刻」で編集する。
+    // どちらの表現も同じ日時から作るので、単位を切り替えても日付は壊れない。
+    planStartDate: src.precision === 'time' ? st.dateKey : s0.dateKey,
+    planEndDate: src.precision === 'time' ? et.dateKey : e0.dateKey,
+    planStartHalf: s0.half, planEndHalf: e0.half,
+    planStartTime: st.time, planEndTime: et.time,
   }
 }
 
 function actualFormOf(task?: WbsTask) {
   const s0 = task?.actualStartAt ? splitStartAt(task.actualStartAt) : null
   const e0 = task?.actualEndAt ? splitEndAt(task.actualEndAt) : null
+  const st = task?.actualStartAt ? splitDateTime(task.actualStartAt) : null
+  const et = task?.actualEndAt ? splitDateTime(task.actualEndAt) : null
+  const timeUnit = task?.precision === 'time'
   return {
-    actualStartDate: s0?.dateKey ?? '', actualStartHalf: (s0?.half ?? 'AM') as HalfDay,
-    actualEndDate: e0?.dateKey ?? '', actualEndHalf: (e0?.half ?? 'PM') as HalfDay,
+    actualStartDate: (timeUnit ? st?.dateKey : s0?.dateKey) ?? '',
+    actualStartHalf: (s0?.half ?? 'AM') as HalfDay,
+    actualStartTime: st?.time ?? '09:00',
+    actualEndDate: (timeUnit ? et?.dateKey : e0?.dateKey) ?? '',
+    actualEndHalf: (e0?.half ?? 'PM') as HalfDay,
+    actualEndTime: et?.time ?? '17:00',
   }
 }
 
+/**
+ * 単位に応じて「日付＋区分／時刻」から開始日時を作る。
+ * 日付が空なら null（＝日程未設定。今日で埋めない）。
+ */
+function startOf(unit: ScheduleUnit, dateKey: string, half: HalfDay, time: string): string | null {
+  if (!dateKey) return null
+  return unit === 'time' ? atTime(dateKey, time) : startAtOf(dateKey, unit === 'half' ? half : 'AM')
+}
+
+/** 終了日時。日・0.5日単位は exclusive（翌0時・12時）に、時間単位は指定時刻そのもの。 */
+function endOf(unit: ScheduleUnit, dateKey: string, half: HalfDay, time: string): string | null {
+  if (!dateKey) return null
+  return unit === 'time' ? atTime(dateKey, time) : endAtOf(dateKey, unit === 'half' ? half : 'PM')
+}
+
+/** 選択肢。マスタが空のときは空であることを示し、仮の選択肢を作らない。 */
+function MasterSelect({
+  label, value, options, empty, onChange,
+}: {
+  label: string
+  value: number | ''
+  options: IdName[]
+  empty: string
+  onChange: (id: number | undefined) => void
+}) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      <select
+        className="field"
+        aria-label={label}
+        disabled={options.length === 0}
+        value={value}
+        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : undefined)}
+      >
+        <option value="">{options.length === 0 ? empty : '未設定'}</option>
+        {options.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+      </select>
+    </div>
+  )
+}
+
 function TaskEditor({
-  open, editor, tasks, saving, onClose, onSave,
+  open, editor, tasks, projectId, saving, onClose, onSave,
 }: {
   open: boolean
   editor: { mode: 'create' | 'edit' | 'copy'; parent?: WbsTask; task?: WbsTask } | null
   tasks: WbsTask[]
+  projectId: number | undefined
   saving: boolean
   onClose: () => void
   onSave: (input: TaskWriteInput) => Promise<void>
 }) {
   const source = editor?.task
   const parent = editor?.parent
+  const { data: options } = useTaskFormOptions(open ? projectId : undefined)
+  const empty = { work_types: [], process_types: [], teams: [], managers: [], companies: [] }
+  const opts = options ?? empty
   // 次のWBS番号は「最上位の工程」から決める（isParent は子の有無なので使わない）
   const nextRoot = Math.max(0, ...tasks.filter((t) => t.level === 0).map((t) => Number(t.wbs) || 0)) + 1
   // 子の数は parent_task_id で数える（WBSの文字列では数えない）
@@ -688,15 +773,26 @@ function TaskEditor({
   const initial = () => ({
     wbs: source ? (editor?.mode === 'copy' ? `${source.wbs}-copy` : source.wbs) : parent ? `${parent.wbs}.${childCount + 1}` : String(nextRoot),
     name: source ? `${source.name}${editor?.mode === 'copy' ? '（コピー）' : ''}` : '',
+    // 親工程は、子工程追加なら指定された親、編集・コピーなら元の工程の親を引き継ぐ
+    parentId: (parent ? parent.id : source?.parentId) ?? '',
     ...periodFormOf(source, parent),
     ...actualFormOf(source),
-    plannedProgress: source?.progress ?? 0,
+    plannedProgress: source?.planProgress ?? 0,
     actualProgress: source?.progress ?? 0,
     plannedWorkers: source?.planPeople ?? 0,
     actualWorkers: source?.actualPeople ?? 0,
     status: source?.status ?? '未着手',
-    notes: '',
-    predecessor: source?.predecessors[0] ?? '',
+    workTypeId: source?.workTypeId ?? undefined,
+    processTypeId: source?.processTypeId ?? undefined,
+    teamId: source?.teamId ?? undefined,
+    managerId: source?.managerId ?? undefined,
+    companyId: source?.companyId ?? undefined,
+    // 備考・遅延理由は既存の内容を引き継ぐ（編集で消さない）
+    notes: source?.notes ?? '',
+    delayReason: source?.delayReason ?? '',
+    changeReason: '',
+    // 先行工程は複数。コピー時も同じ先行工程から始める。
+    predecessorIds: source?.predecessorIds ?? [],
   })
   const [form, setForm] = useState(initial)
   const [error, setError] = useState<string | null>(null)
@@ -707,60 +803,106 @@ function TaskEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, source, parent, editor?.mode, childCount, nextRoot])
 
-  const half = form.unit === 'half'
-  // 0.5日単位でないときは 午前開始〜午後終了（＝丸1日）に固定する
-  const startAt = startAtOf(form.planStartDate, half ? form.planStartHalf : 'AM')
-  const endAt = endAtOf(form.planEndDate, half ? form.planEndHalf : 'PM')
-  const days = durationInDays(startAt, endAt)
+  const unit = form.unit
+  const startAt = startOf(unit, form.planStartDate, form.planStartHalf, form.planStartTime)
+  const endAt = endOf(unit, form.planEndDate, form.planEndHalf, form.planEndTime)
+  const days = startAt && endAt ? durationInDays(startAt, endAt) : null
+  const actualStartAt = startOf(unit, form.actualStartDate, form.actualStartHalf, form.actualStartTime)
+  const actualEndAt = endOf(unit, form.actualEndDate, form.actualEndHalf, form.actualEndTime)
+
+  // 自分自身と自分の子孫は親にできない（循環になる）。サーバー側でも 422 で拒否する。
+  const descendantIds = useMemo(() => {
+    if (!source) return new Set<string>()
+    const found = new Set<string>([source.id])
+    for (let i = 0; i < 20; i += 1) {
+      const before = found.size
+      for (const t of tasks) if (t.parentId && found.has(t.parentId)) found.add(t.id)
+      if (found.size === before) break
+    }
+    return found
+  }, [tasks, source])
+  const parentChoices = tasks.filter((t) => !descendantIds.has(t.id))
+  const predecessorChoices = tasks.filter((t) => t.id !== source?.id)
 
   async function submit() {
     if (!form.name.trim() || !form.wbs.trim()) return
-    if (days <= 0) {
+    // 日程は「両方入力」か「両方空」のどちらか（片側だけの期間は作らない）
+    if (!!startAt !== !!endAt) {
+      setError('予定期間は開始と終了の両方を入力してください')
+      return
+    }
+    if (days !== null && days <= 0) {
       setError('終了は開始より後にしてください')
       return
     }
+    if (!!actualStartAt !== !!actualEndAt && actualEndAt) {
+      setError('実績期間は開始を先に入力してください')
+      return
+    }
+    if (actualStartAt && actualEndAt && durationInDays(actualStartAt, actualEndAt) <= 0) {
+      setError('実績の終了は開始より後にしてください')
+      return
+    }
     setError(null)
-    const predecessor = tasks.find((t) => t.wbs === form.predecessor)
     await onSave({
-      parent_task_id: parent ? Number(parent.id) : source?.isParent ? null : undefined,
+      parent_task_id: form.parentId ? Number(form.parentId) : null,
       wbs_code: form.wbs.trim(), name: form.name.trim(),
       // 日時（開始=inclusive / 終了=exclusive）が正。precision は入力粒度の記録。
       planned_start_at: startAt,
       planned_finish_at: endAt,
-      actual_start_at: form.actualStartDate ? startAtOf(form.actualStartDate, half ? form.actualStartHalf : 'AM') : null,
-      actual_finish_at: form.actualEndDate ? endAtOf(form.actualEndDate, half ? form.actualEndHalf : 'PM') : null,
-      schedule_precision: half ? 'half_day' : 'day',
+      actual_start_at: actualStartAt,
+      actual_finish_at: actualEndAt,
+      schedule_precision: UNIT_TO_PRECISION[unit],
       planned_progress: form.plannedProgress, actual_progress: form.actualProgress,
       planned_workers: form.plannedWorkers, actual_workers: form.actualWorkers,
+      work_type_id: form.workTypeId ?? null,
+      process_type_id: form.processTypeId ?? null,
+      team_id: form.teamId ?? null,
+      manager_id: form.managerId ?? null,
+      company_id: form.companyId ?? null,
       status: form.status, notes: form.notes || null,
-      dependency_ids: predecessor ? [Number(predecessor.id)] : [],
+      delay_reason: form.delayReason || null,
+      change_reason: form.changeReason.trim() || undefined,
+      dependency_ids: form.predecessorIds.map(Number),
     })
   }
 
   const halfSelect = (value: HalfDay, onChange: (v: HalfDay) => void) => (
-    <select className="field !w-20" value={value} onChange={(e) => onChange(e.target.value as HalfDay)}>
+    <select className="field !w-20" aria-label="午前/午後" value={value} onChange={(e) => onChange(e.target.value as HalfDay)}>
       <option value="AM">午前</option>
       <option value="PM">午後</option>
     </select>
+  )
+  const timeInput = (value: string, onChange: (v: string) => void) => (
+    <input type="time" className="field !w-28" value={value} onChange={(e) => onChange(e.target.value)} />
   )
 
   return (
     <Modal open={open} onClose={onClose} title={editor?.mode === 'edit' ? '工程を編集' : editor?.mode === 'copy' ? '工程をコピー' : parent ? '子工程を追加' : '工程を追加'} size="lg"
       footer={<><button className="btn-default" onClick={onClose}>キャンセル</button><button className="btn-primary" disabled={saving || !form.name.trim()} onClick={submit}>{saving ? '保存中…' : '保存'}</button></>}>
       {error && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-ng">{error}</div>}
-      <div className="grid grid-cols-3 gap-3">
-        <div><label className="label">WBS *</label><input className="field" value={form.wbs} onChange={(e) => setForm({ ...form, wbs: e.target.value })} /></div>
-        <div className="col-span-2"><label className="label">工程名 *</label><input className="field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+      <div className="grid grid-cols-3 gap-3" data-task-editor>
+        <div><label className="label">WBS *</label><input className="field" aria-label="WBS" value={form.wbs} onChange={(e) => setForm({ ...form, wbs: e.target.value })} /></div>
+        <div className="col-span-2"><label className="label">工程名 *</label><input className="field" aria-label="工程名" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
 
-        {/* 期間の単位。既定は1日単位で、0.5日を選んだときだけ午前/午後を出す */}
+        <div className="col-span-3">
+          <label className="label">親工程</label>
+          <select className="field" aria-label="親工程" value={form.parentId ?? ''}
+            onChange={(e) => setForm({ ...form, parentId: e.target.value })}>
+            <option value="">最上位（親なし）</option>
+            {parentChoices.map((t) => <option key={t.id} value={t.id}>{t.wbs} {t.name}</option>)}
+          </select>
+        </div>
+
+        {/* 期間の単位。0.5日なら午前/午後、時間単位なら時刻を出す */}
         <div className="col-span-3 rounded border border-line bg-canvas px-3 py-2">
           <div className="flex flex-wrap items-end gap-3">
             <div>
               <label className="label">期間の単位</label>
-              <div className="flex items-center gap-0.5 rounded border border-line bg-white p-0.5">
-                {([['day', '1日単位'], ['half', '0.5日単位']] as const).map(([v, label]) => (
+              <div className="flex items-center gap-0.5 rounded border border-line bg-white p-0.5" data-schedule-unit={unit}>
+                {UNIT_LABELS.map(([v, label]) => (
                   <button key={v} type="button" onClick={() => setForm({ ...form, unit: v })}
-                    className={`rounded px-2.5 py-1 text-xs font-medium ${form.unit === v ? 'bg-sysken-500 text-white' : 'text-ink hover:bg-canvas'}`}>
+                    className={`rounded px-2.5 py-1 text-xs font-medium ${unit === v ? 'bg-sysken-500 text-white' : 'text-ink hover:bg-canvas'}`}>
                     {label}
                   </button>
                 ))}
@@ -769,44 +911,100 @@ function TaskEditor({
             <div>
               <label className="label">開始予定</label>
               <div className="flex items-center gap-1">
-                <input type="date" className="field !w-36" value={form.planStartDate} onChange={(e) => setForm({ ...form, planStartDate: e.target.value })} />
-                {half && halfSelect(form.planStartHalf, (v) => setForm({ ...form, planStartHalf: v }))}
+                <input type="date" className="field !w-36" aria-label="開始予定日" value={form.planStartDate} onChange={(e) => setForm({ ...form, planStartDate: e.target.value })} />
+                {unit === 'half' && halfSelect(form.planStartHalf, (v) => setForm({ ...form, planStartHalf: v }))}
+                {unit === 'time' && timeInput(form.planStartTime, (v) => setForm({ ...form, planStartTime: v }))}
               </div>
             </div>
             <div>
               <label className="label">終了予定</label>
               <div className="flex items-center gap-1">
-                <input type="date" className="field !w-36" value={form.planEndDate} onChange={(e) => setForm({ ...form, planEndDate: e.target.value })} />
-                {half && halfSelect(form.planEndHalf, (v) => setForm({ ...form, planEndHalf: v }))}
+                <input type="date" className="field !w-36" aria-label="終了予定日" value={form.planEndDate} onChange={(e) => setForm({ ...form, planEndDate: e.target.value })} />
+                {unit === 'half' && halfSelect(form.planEndHalf, (v) => setForm({ ...form, planEndHalf: v }))}
+                {unit === 'time' && timeInput(form.planEndTime, (v) => setForm({ ...form, planEndTime: v }))}
               </div>
             </div>
             <div className="pb-2 text-[13px] text-ink-soft">
-              期間：<span className="font-semibold text-ink">{days > 0 ? `${days}日` : '—'}</span>
+              期間：<span className="font-semibold text-ink">{days === null ? '未設定' : days > 0 ? `${days}日` : '—'}</span>
             </div>
           </div>
         </div>
 
-        <div><label className="label">先行工程</label><select className="field" value={form.predecessor} onChange={(e) => setForm({ ...form, predecessor: e.target.value })}><option value="">なし</option>{tasks.filter((t) => t.id !== source?.id).map((t) => <option key={t.id} value={t.wbs}>{t.wbs} {t.name}</option>)}</select></div>
         <div>
           <label className="label">開始実績</label>
           <div className="flex items-center gap-1">
-            <input type="date" className="field" value={form.actualStartDate} onChange={(e) => setForm({ ...form, actualStartDate: e.target.value })} />
-            {half && form.actualStartDate && halfSelect(form.actualStartHalf, (v) => setForm({ ...form, actualStartHalf: v }))}
+            <input type="date" className="field" aria-label="開始実績日" value={form.actualStartDate} onChange={(e) => setForm({ ...form, actualStartDate: e.target.value })} />
+            {unit === 'half' && form.actualStartDate && halfSelect(form.actualStartHalf, (v) => setForm({ ...form, actualStartHalf: v }))}
+            {unit === 'time' && form.actualStartDate && timeInput(form.actualStartTime, (v) => setForm({ ...form, actualStartTime: v }))}
           </div>
         </div>
         <div>
           <label className="label">終了実績</label>
           <div className="flex items-center gap-1">
-            <input type="date" className="field" value={form.actualEndDate} onChange={(e) => setForm({ ...form, actualEndDate: e.target.value })} />
-            {half && form.actualEndDate && halfSelect(form.actualEndHalf, (v) => setForm({ ...form, actualEndHalf: v }))}
+            <input type="date" className="field" aria-label="終了実績日" value={form.actualEndDate} onChange={(e) => setForm({ ...form, actualEndDate: e.target.value })} />
+            {unit === 'half' && form.actualEndDate && halfSelect(form.actualEndHalf, (v) => setForm({ ...form, actualEndHalf: v }))}
+            {unit === 'time' && form.actualEndDate && timeInput(form.actualEndTime, (v) => setForm({ ...form, actualEndTime: v }))}
           </div>
         </div>
-        <div><label className="label">ステータス</label><select className="field" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as WbsTask['status'] })}>{['未着手','施工中','完了','一時停止','遅延'].map((s) => <option key={s}>{s}</option>)}</select></div>
-        <div><label className="label">予定進捗 (%)</label><input type="number" min="0" max="100" className="field" value={form.plannedProgress} onChange={(e) => setForm({ ...form, plannedProgress: Number(e.target.value) })} /></div>
-        <div><label className="label">実績進捗 (%)</label><input type="number" min="0" max="100" className="field" value={form.actualProgress} onChange={(e) => setForm({ ...form, actualProgress: Number(e.target.value) })} /></div>
-        <div><label className="label">予定人数</label><input type="number" min="0" className="field" value={form.plannedWorkers} onChange={(e) => setForm({ ...form, plannedWorkers: Number(e.target.value) })} /></div>
-        <div><label className="label">実績人数</label><input type="number" min="0" className="field" value={form.actualWorkers} onChange={(e) => setForm({ ...form, actualWorkers: Number(e.target.value) })} /></div>
-        <div className="col-span-3"><label className="label">備考</label><textarea className="field min-h-20" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
+        <div><label className="label">ステータス</label><select className="field" aria-label="ステータス" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as WbsTask['status'] })}>{['未着手','施工中','完了','一時停止','遅延'].map((s) => <option key={s}>{s}</option>)}</select></div>
+
+        <MasterSelect label="工種" value={form.workTypeId ?? ''} options={opts.work_types}
+          empty="工種マスタが登録されていません" onChange={(v) => setForm({ ...form, workTypeId: v })} />
+        <MasterSelect label="工程種別" value={form.processTypeId ?? ''} options={opts.process_types}
+          empty="工程種別マスタが登録されていません" onChange={(v) => setForm({ ...form, processTypeId: v })} />
+        <MasterSelect label="担当班" value={form.teamId ?? ''} options={opts.teams}
+          empty="班が登録されていません" onChange={(v) => setForm({ ...form, teamId: v })} />
+        <MasterSelect label="責任者" value={form.managerId ?? ''} options={opts.managers}
+          empty="利用者が登録されていません" onChange={(v) => setForm({ ...form, managerId: v })} />
+        <MasterSelect label="担当会社" value={form.companyId ?? ''} options={opts.companies}
+          empty="会社が登録されていません" onChange={(v) => setForm({ ...form, companyId: v })} />
+        <div />
+
+        <div><label className="label">予定進捗 (%)</label><input type="number" min="0" max="100" className="field" aria-label="予定進捗" value={form.plannedProgress} onChange={(e) => setForm({ ...form, plannedProgress: Number(e.target.value) })} /></div>
+        <div><label className="label">実績進捗 (%)</label><input type="number" min="0" max="100" className="field" aria-label="実績進捗" value={form.actualProgress} onChange={(e) => setForm({ ...form, actualProgress: Number(e.target.value) })} /></div>
+        <div />
+        <div><label className="label">予定人数</label><input type="number" min="0" className="field" aria-label="予定人数" value={form.plannedWorkers} onChange={(e) => setForm({ ...form, plannedWorkers: Number(e.target.value) })} /></div>
+        <div><label className="label">実績人数</label><input type="number" min="0" className="field" aria-label="実績人数" value={form.actualWorkers} onChange={(e) => setForm({ ...form, actualWorkers: Number(e.target.value) })} /></div>
+        <div />
+
+        {/* 先行工程は複数指定できる。自分自身は選べず、循環はサーバーが 422 で拒否する。 */}
+        <div className="col-span-3">
+          <label className="label">先行工程（複数選択可）</label>
+          {predecessorChoices.length === 0 ? (
+            <p className="rounded border border-line bg-canvas px-3 py-2 text-[13px] text-ink-soft">
+              他に工程がないため、先行工程は指定できません。
+            </p>
+          ) : (
+            <div className="max-h-40 space-y-1 overflow-y-auto rounded border border-line bg-white p-2" data-predecessors>
+              {predecessorChoices.map((t) => (
+                <label key={t.id} className="flex items-center gap-2 text-[13px] text-ink">
+                  <input
+                    type="checkbox"
+                    className="accent-sysken-500"
+                    checked={form.predecessorIds.includes(t.id)}
+                    onChange={(e) => setForm({
+                      ...form,
+                      predecessorIds: e.target.checked
+                        ? [...form.predecessorIds, t.id]
+                        : form.predecessorIds.filter((id) => id !== t.id),
+                    })}
+                  />
+                  <span className="text-ink-soft">{t.wbs}</span> {t.name}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="col-span-3"><label className="label">備考</label><textarea className="field min-h-20" aria-label="備考" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
+        <div className="col-span-3"><label className="label">遅延理由</label><input className="field" aria-label="遅延理由" value={form.delayReason} onChange={(e) => setForm({ ...form, delayReason: e.target.value })} /></div>
+        {editor?.mode === 'edit' && (
+          <div className="col-span-3">
+            <label className="label">変更理由</label>
+            <input className="field" aria-label="変更理由" placeholder="変更履歴に残す理由（任意）"
+              value={form.changeReason} onChange={(e) => setForm({ ...form, changeReason: e.target.value })} />
+          </div>
+        )}
       </div>
     </Modal>
   )

@@ -127,6 +127,21 @@ export function endAtOf(dateKey: string, half: HalfDay = 'PM'): string {
   return `${format(addDays(toJst(dateKey), 1), 'yyyy-MM-dd')}T00:00:00+09:00`
 }
 
+/**
+ * JSTの日付（`yyyy-MM-dd`）＋時刻（`HH:mm`）から ISO 文字列を作る。
+ * 時間単位（schedule_precision='time'）の入力で使う。
+ */
+export function atTime(dateKey: string, time: string): string {
+  const hhmm = /^\d{2}:\d{2}$/.test(time) ? time : '00:00'
+  return `${dateKey}T${hhmm}:00+09:00`
+}
+
+/** ISO日時を JST の日付と時刻（`HH:mm`）へ分解する。時間単位の入力欄で使う。 */
+export function splitDateTime(value: DateInput): { dateKey: string; time: string } {
+  const d = toJst(value)
+  return { dateKey: format(d, 'yyyy-MM-dd'), time: format(d, 'HH:mm') }
+}
+
 /** 開始日時（inclusive）から、日付と区分へ戻す。 */
 export function splitStartAt(value: DateInput): { dateKey: string; half: HalfDay } {
   const d = toJst(value)
@@ -162,9 +177,18 @@ export function shiftDays(value: DateInput, n: number): string {
   return toJstIsoString(d)
 }
 
-/** 粒度に応じたドラッグの刻み（日）。day = 1日 / half_day = 0.5日。 */
+/**
+ * 粒度に応じたドラッグの刻み（日）。
+ * day = 1日 / half_day = 0.5日 / time = 1時間（= 1/24日）。
+ *
+ * 時間単位の工程を日単位で動かすと、時刻を指定した意味が失われる。
+ * 刻みを1時間にしても `shiftDays` は端数を時間として加算するため、
+ * 開始・終了の時刻はそのまま保たれる。
+ */
 export function snapStepOf(precision: SchedulePrecision): number {
-  return precision === 'half_day' ? 0.5 : 1
+  if (precision === 'half_day') return 0.5
+  if (precision === 'time') return 1 / 24
+  return 1
 }
 
 /**
@@ -205,6 +229,16 @@ export function formatPeriod(
   precision: SchedulePrecision,
   pattern = 'MM-dd',
 ): string {
+  // 時間単位は時刻まで見せる（終了は exclusive ではなく指定した時刻そのもの）
+  if (precision === 'time') {
+    const s0 = splitDateTime(startAt)
+    const e0 = splitDateTime(endAt)
+    const sd0 = format(toJst(s0.dateKey), pattern)
+    const ed0 = format(toJst(e0.dateKey), pattern)
+    return sd0 === ed0
+      ? `${sd0} ${s0.time}〜${e0.time}`
+      : `${sd0} ${s0.time}〜${ed0} ${e0.time}`
+  }
   const s = splitStartAt(startAt)
   const e = splitEndAt(endAt)
   const sd = format(toJst(s.dateKey), pattern)

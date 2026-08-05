@@ -11,10 +11,15 @@ export interface ApiTask {
   wbs_code: string | null
   name: string
   work_type: string | null
+  work_type_id: number | null
   process_type: string | null
+  process_type_id: number | null
   crew: string | null
+  team_id: number | null
   manager: string | null
   manager_id: number | null
+  company: string | null
+  company_id: number | null
   site_id: number | null
   planned_start_at: string | null
   planned_finish_at: string | null
@@ -82,11 +87,20 @@ export function toWbsTasks(rows: ApiTask[]): WbsTask[] {
       precision: (t.schedule_precision as WbsTask['precision']) ?? 'day',
       // 日程が揃っている工程だけ日数を出す（未設定を0日や1日に丸めない）
       planDays: planStartAt && planEndAt ? durationInDays(planStartAt, planEndAt) : null,
+      planProgress: t.planned_progress,
       progress: t.actual_progress,
       planPeople: t.planned_workers,
       actualPeople: t.actual_workers,
       status: t.status as WbsTask['status'],
       predecessors,
+      predecessorIds: t.dependencies.map(String),
+      notes: t.notes,
+      delayReason: t.delay_reason,
+      workTypeId: t.work_type_id,
+      processTypeId: t.process_type_id,
+      teamId: t.team_id,
+      managerId: t.manager_id,
+      companyId: t.company_id,
       parentId: t.parent_task_id != null ? String(t.parent_task_id) : null,
       level: depthOf(t),
       isParent: childIds.has(t.id),
@@ -108,6 +122,9 @@ export interface TaskWriteInput {
   site_id?: number | null
   wbs_code?: string | null
   name: string
+  work_type_id?: number | null
+  process_type_id?: number | null
+  team_id?: number | null
   planned_start_at?: string | null
   planned_finish_at?: string | null
   actual_start_at?: string | null
@@ -169,6 +186,25 @@ export function useDeleteTask(projectId: number | undefined) {
   return useMutation({
     mutationFn: (id: number) => api<void>(`/tasks/${id}`, { method: 'DELETE' }),
     onSuccess: async () => { if (projectId) await invalidateTasks(qc, projectId) },
+  })
+}
+
+export interface IdName { id: number; name: string }
+
+/** 工程フォームの選択肢。画面に固定の一覧を持たず、APIの実データだけを使う。 */
+export interface TaskFormOptions {
+  work_types: IdName[]
+  process_types: IdName[]
+  teams: IdName[]
+  managers: IdName[]
+  companies: IdName[]
+}
+
+export function useTaskFormOptions(projectId: number | undefined) {
+  return useQuery({
+    queryKey: ['task-form-options', projectId],
+    enabled: !!projectId,
+    queryFn: () => api<TaskFormOptions>(`/projects/${projectId}/task-form-options`),
   })
 }
 

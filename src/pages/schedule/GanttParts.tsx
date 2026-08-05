@@ -7,7 +7,8 @@
  */
 import { ZoomIn, ZoomOut } from 'lucide-react'
 import {
-  formatJst, formatPeriod, groupSlots, nowJst, shiftDays, splitEndAt, splitStartAt, toJst,
+  formatJst, formatPeriod, groupSlots, nowJst, shiftDays, splitDateTime, splitEndAt, splitStartAt,
+  toJst,
   toJstIsoString, type TimeScale, type Timeline,
 } from '../../lib/timeline'
 import type { CrossMilestone } from '../../api/crossMilestones'
@@ -87,6 +88,11 @@ export const statusColor: Record<string, string> = {
  * 終了は exclusive のため、表示用に日付＋区分へ戻してから整形する。
  */
 export function edgeLabel(iso: string, edge: 'start' | 'end', precision: WbsTask['precision']): string {
+  // 時間単位は日時をそのまま見せる（時刻を指定した意味が消えないように）
+  if (precision === 'time') {
+    const { dateKey, time } = splitDateTime(iso)
+    return `${formatJst(dateKey, 'MM-dd')} ${time}`
+  }
   const { dateKey, half } = edge === 'start' ? splitStartAt(iso) : splitEndAt(iso)
   const date = formatJst(dateKey, 'MM-dd')
   return precision === 'half_day' ? `${date} ${half === 'AM' ? '午前' : '午後'}` : date
@@ -341,6 +347,7 @@ export function GanttRow({
       <div
         className={`group absolute flex items-center rounded-sm ${t.status === '遅延' ? 'ring-1 ring-ng' : ''}`}
         style={{ top: top + 6, left: planLeft, width: planW, height: 11, background: color, opacity: 0.9, cursor: 'grab' }}
+        data-task-bar={t.id}
         onPointerDown={(e) => onStartDrag(e, t, 'move')}
         onContextMenu={onContext}
         onClick={onSelect}

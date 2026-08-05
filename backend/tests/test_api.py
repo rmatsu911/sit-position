@@ -2812,6 +2812,22 @@ def _p5_task(client, project_id, head, **body):
     return r
 
 
+def _p5_jst(value: str | None) -> str | None:
+    """APIが返した日時を JST 表記に揃える（保存時と同じ瞬間かどうかを比べるため）。
+
+    本番の PostgreSQL は timestamptz なのでタイムゾーン付きで返る。
+    テストの SQLite はタイムゾーンを保存できず、JSTで渡した時刻の壁時計だけが
+    そのまま返るため、タイムゾーンが無い値は JST として読む。
+    """
+    if value is None:
+        return None
+    from datetime import datetime as _dt
+    from datetime import timedelta, timezone as _tz
+    jst = _tz(timedelta(hours=9))
+    d = _dt.fromisoformat(value)
+    return (d.replace(tzinfo=jst) if d.tzinfo is None else d.astimezone(jst)).isoformat()
+
+
 def test_p5_parent_child_uses_parent_task_id(client, p4):
     """親子は parent_task_id が正本で、WBSのドット有無に依存しないこと。"""
     head = _p4_head(client, "pm@test.jp")
@@ -2901,3 +2917,228 @@ def test_p5_unscheduled_task_keeps_null_dates(client, p4):
     # 予定期間・実績期間ともに「—」（架空の日付を出さない）
     assert preview["rows"][0][2] == "—", preview["rows"][0]
     assert preview["rows"][0][3] == "—", preview["rows"][0]
+
+
+def test_p5_multiple_predecessors_are_kept(client, p4):
+    """複数の先行工程を設定・入れ替え・全解除できること。重複指定は1件にまとめる。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5DEP"), "name": "先行工程"},
+                      headers=head).json()["id"]
+    a = _p5_task(client, pid, head, name="A", wbs_code="1").json()
+    b = _p5_task(client, pid, head, name="B", wbs_code="2").json()
+    c = _p5_task(client, pid, head, name="C", wbs_code="3",
+                 dependency_ids=[a["id"], b["id"], a["id"]]).json()
+    # 重複を渡しても1件ずつになる
+    assert sorted(c["dependencies"]) == sorted([a["id"], b["id"]]), c
+
+    # 入れ替え（B だけにする）
+    r = client.put(f"/api/tasks/{c['id']}", json={"dependency_ids": [b["id"]]}, headers=head)
+    assert r.status_code == 200, r.text
+    assert r.json()["dependencies"] == [b["id"]]
+
+    # 全解除
+    r = client.put(f"/api/tasks/{c['id']}", json={"dependency_ids": []}, headers=head)
+    assert r.status_code == 200, r.text
+    assert r.json()["dependencies"] == []
+
+    # 再読込しても同じ（保存されている）
+    r = client.put(f"/api/tasks/{c['id']}", json={"dependency_ids": [a["id"], b["id"]]}, headers=head)
+    assert r.status_code == 200, r.text
+    rows = {t["id"]: t for t in client.get(f"/api/projects/{pid}/tasks", headers=head).json()}
+    assert sorted(rows[c["id"]]["dependencies"]) == sorted([a["id"], b["id"]])
+
+
+def test_p5_self_and_circular_dependencies_are_rejected(client, p4):
+    """自己依存・循環依存・別案件の先行工程を 422 で拒否すること。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5CYC"), "name": "循環依存"},
+                      headers=head).json()["id"]
+    other = client.post("/api/projects", json={"construction_number": _p4_number("P5CYO"), "name": "別案件"},
+                        headers=head).json()["id"]
+    a = _p5_task(client, pid, head, name="A", wbs_code="1").json()
+    b = _p5_task(client, pid, head, name="B", wbs_code="2", dependency_ids=[a["id"]]).json()
+    c = _p5_task(client, pid, head, name="C", wbs_code="3", dependency_ids=[b["id"]]).json()
+    foreign = _p5_task(client, other, head, name="他案件", wbs_code="1").json()
+
+    # 自己依存
+    r = client.put(f"/api/tasks/{a['id']}", json={"dependency_ids": [a["id"]]}, headers=head)
+    assert r.status_code == 422, r.text
+    # 循環（A→C→B→A）
+    r = client.put(f"/api/tasks/{a['id']}", json={"dependency_ids": [c["id"]]}, headers=head)
+    assert r.status_code == 422, r.text
+    # 別案件の工程
+    r = client.put(f"/api/tasks/{a['id']}", json={"dependency_ids": [foreign["id"]]}, headers=head)
+    assert r.status_code == 422, r.text
+    # 存在しない工程
+    r = client.put(f"/api/tasks/{a['id']}", json={"dependency_ids": [99999999]}, headers=head)
+    assert r.status_code == 422, r.text
+
+    # 拒否されても既存の依存は壊れていない
+    rows = {t["id"]: t for t in client.get(f"/api/projects/{pid}/tasks", headers=head).json()}
+    assert rows[a["id"]]["dependencies"] == []
+    assert rows[b["id"]]["dependencies"] == [a["id"]]
+    assert rows[c["id"]]["dependencies"] == [b["id"]]
+
+
+def test_p5_schedule_precision_round_trips(client, p4):
+    """日／半日／時間の粒度と日時が、保存・再読込で変わらないこと。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5PRC"), "name": "入力粒度"},
+                      headers=head).json()["id"]
+
+    cases = [
+        ("day", "2026-05-11T00:00:00+09:00", "2026-05-13T00:00:00+09:00"),
+        ("half_day", "2026-05-11T12:00:00+09:00", "2026-05-12T12:00:00+09:00"),
+        ("time", "2026-05-11T09:30:00+09:00", "2026-05-11T17:15:00+09:00"),
+    ]
+    for i, (precision, start, finish) in enumerate(cases):
+        created = _p5_task(client, pid, head, name=f"粒度{precision}", wbs_code=str(i + 1),
+                           schedule_precision=precision,
+                           planned_start_at=start, planned_finish_at=finish)
+        assert created.status_code in (200, 201), created.text
+        got = created.json()
+        assert got["schedule_precision"] == precision
+        # 保存した時刻がそのまま返る（丸められない）
+        assert _p5_jst(got["planned_start_at"]) == start
+        assert _p5_jst(got["planned_finish_at"]) == finish
+
+    # 再読込しても同じ
+    rows = {t["name"]: t for t in client.get(f"/api/projects/{pid}/tasks", headers=head).json()}
+    for precision, start, finish in cases:
+        row = rows[f"粒度{precision}"]
+        assert row["schedule_precision"] == precision
+        assert _p5_jst(row["planned_start_at"]) == start
+        assert _p5_jst(row["planned_finish_at"]) == finish
+
+
+def test_p5_precision_change_keeps_datetime(client, p4):
+    """粒度だけを変えたとき、日時が書き換わらないこと（二重管理にしない）。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5PCH"), "name": "粒度変更"},
+                      headers=head).json()["id"]
+    t = _p5_task(client, pid, head, name="工程", wbs_code="1", schedule_precision="time",
+                 planned_start_at="2026-06-01T09:30:00+09:00",
+                 planned_finish_at="2026-06-01T17:15:00+09:00").json()
+
+    r = client.put(f"/api/tasks/{t['id']}", json={"schedule_precision": "day"}, headers=head)
+    assert r.status_code == 200, r.text
+    assert r.json()["schedule_precision"] == "day"
+    assert _p5_jst(r.json()["planned_start_at"]) == "2026-06-01T09:30:00+09:00"
+    assert _p5_jst(r.json()["planned_finish_at"]) == "2026-06-01T17:15:00+09:00"
+
+
+def test_p5_task_form_options_come_from_masters(client, p4):
+    """工程フォームの選択肢が、画面固定ではなく実データから返ること。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5OPT"), "name": "工程フォーム"},
+                      headers=head).json()["id"]
+    r = client.get(f"/api/projects/{pid}/task-form-options", headers=head)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for key in ("work_types", "process_types", "teams", "managers", "companies"):
+        assert key in body and isinstance(body[key], list), body
+    # 責任者はログイン可能な利用者から作る（少なくともテスト利用者が含まれる）
+    assert any(m["name"] == "PM" for m in body["managers"]), body["managers"]
+    # 権限の無い案件では見られない
+    other = client.get("/api/projects/999999/task-form-options", headers=head)
+    assert other.status_code in (403, 404), other.text
+
+
+def test_p5_task_assignment_fields_are_saved(client, p4):
+    """担当班・責任者・担当会社・工種が保存され、名前付きで返ること。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5ASG"), "name": "担当情報"},
+                      headers=head).json()["id"]
+    opts = client.get(f"/api/projects/{pid}/task-form-options", headers=head).json()
+    manager = opts["managers"][0]
+
+    created = _p5_task(client, pid, head, name="担当あり", wbs_code="1", manager_id=manager["id"])
+    assert created.status_code in (200, 201), created.text
+    assert created.json()["manager"] == manager["name"]
+    assert created.json()["manager_id"] == manager["id"]
+
+    if opts["teams"]:
+        team = opts["teams"][0]
+        r = client.put(f"/api/tasks/{created.json()['id']}", json={"team_id": team["id"]}, headers=head)
+        assert r.status_code == 200, r.text
+        # 担当班は teams の実データ（固定文字列ではない）
+        assert r.json()["crew"] == team["name"]
+        assert r.json()["team_id"] == team["id"]
+
+    # 存在しないマスタIDは 422（FK違反の500にしない・黙って捨てない）
+    for field in ("team_id", "manager_id", "company_id", "work_type_id"):
+        r = client.put(f"/api/tasks/{created.json()['id']}", json={field: 99999999}, headers=head)
+        assert r.status_code == 422, (field, r.text)
+
+
+def test_p5_dependency_change_is_recorded(client, p4):
+    """先行工程の変更が、他の項目と同じように変更履歴へ残ること。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5HIS"), "name": "依存の履歴"},
+                      headers=head).json()["id"]
+    a = _p5_task(client, pid, head, name="A", wbs_code="1").json()
+    b = _p5_task(client, pid, head, name="B", wbs_code="2").json()
+
+    r = client.put(f"/api/tasks/{b['id']}",
+                   json={"dependency_ids": [a["id"]], "change_reason": "先行工程を追加"}, headers=head)
+    assert r.status_code == 200, r.text
+
+    from app.models import TaskChangeHistory
+    from tests.conftest import TestingSessionLocal
+    with TestingSessionLocal() as s:
+        rows = s.query(TaskChangeHistory).filter(
+            TaskChangeHistory.task_id == b["id"], TaskChangeHistory.field == "dependencies"
+        ).all()
+    assert len(rows) == 1, rows
+    assert rows[0].old_value is None
+    assert rows[0].new_value == str(a["id"])
+    assert rows[0].change_reason == "先行工程を追加"
+
+
+def test_p5_reversed_period_is_rejected(client, p4):
+    """終了が開始以前になる保存を拒否すること（ドラッグ・リサイズも含む）。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5REV"), "name": "期間の検証"},
+                      headers=head).json()["id"]
+
+    # 登録時から逆転している期間は作れない
+    bad = _p5_task(client, pid, head, name="逆転", wbs_code="1",
+                   planned_start_at="2026-07-10T00:00:00+09:00",
+                   planned_finish_at="2026-07-09T00:00:00+09:00")
+    assert bad.status_code == 422, bad.text
+
+    t = _p5_task(client, pid, head, name="正常", wbs_code="1",
+                 planned_start_at="2026-07-10T00:00:00+09:00",
+                 planned_finish_at="2026-07-13T00:00:00+09:00").json()
+
+    # リサイズ相当（終了だけを開始より前へ動かす）
+    r = client.put(f"/api/tasks/{t['id']}",
+                   json={"planned_finish_at": "2026-07-09T00:00:00+09:00"}, headers=head)
+    assert r.status_code == 422, r.text
+    # 開始と同時刻（長さ0）も拒否する
+    r = client.put(f"/api/tasks/{t['id']}",
+                   json={"planned_finish_at": "2026-07-10T00:00:00+09:00"}, headers=head)
+    assert r.status_code == 422, r.text
+    # ドラッグ相当（開始だけを終了より後へ動かす）
+    r = client.put(f"/api/tasks/{t['id']}",
+                   json={"planned_start_at": "2026-07-20T00:00:00+09:00"}, headers=head)
+    assert r.status_code == 422, r.text
+    # 実績期間も同じ判定
+    r = client.put(f"/api/tasks/{t['id']}",
+                   json={"actual_start_at": "2026-07-11T00:00:00+09:00",
+                         "actual_finish_at": "2026-07-10T00:00:00+09:00"}, headers=head)
+    assert r.status_code == 422, r.text
+
+    # 拒否されても元の期間は変わっていない
+    rows = {x["id"]: x for x in client.get(f"/api/projects/{pid}/tasks", headers=head).json()}
+    assert _p5_jst(rows[t["id"]]["planned_start_at"]) == "2026-07-10T00:00:00+09:00"
+    assert _p5_jst(rows[t["id"]]["planned_finish_at"]) == "2026-07-13T00:00:00+09:00"
+
+    # 両方をまとめてずらす（正しい向きのまま）のは通る
+    r = client.put(f"/api/tasks/{t['id']}",
+                   json={"planned_start_at": "2026-07-20T00:00:00+09:00",
+                         "planned_finish_at": "2026-07-23T00:00:00+09:00"}, headers=head)
+    assert r.status_code == 200, r.text
+    # 日程未設定（片側だけ）は「まだ決まっていない」として許容する
+    r = client.put(f"/api/tasks/{t['id']}", json={"planned_finish_at": None}, headers=head)
+    assert r.status_code == 200, r.text

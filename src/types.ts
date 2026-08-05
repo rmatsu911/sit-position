@@ -62,11 +62,22 @@ export interface WbsTask {
   /** 入力・表示の粒度（日単位 / 0.5日単位 / 任意時刻） */
   precision: SchedulePrecision
   planDays: number | null // 予定日数（0.5刻み）。日程未設定なら null
-  progress: number // 0-100
+  planProgress: number // 予定進捗 0-100
+  progress: number // 実績進捗 0-100
   planPeople: number
   actualPeople: number
   status: TaskStatus
   predecessors: string[] // 先行工程 WBS
+  predecessorIds: string[] // 先行工程のID（正本。WBSは表示用）
+  notes: string | null
+  delayReason: string | null
+  // 担当情報の参照先。表示名（workType/crew/manager）はAPIが解決した値で、
+  // 編集時はこちらのIDを送る。未設定は null のまま。
+  workTypeId: number | null
+  processTypeId: number | null
+  teamId: number | null
+  managerId: number | null
+  companyId: number | null
   /** 親工程のID（parent_task_id が正本。WBSの文字列では判定しない） */
   parentId: string | null
   /** 階層の深さ（0=最上位）。2階層に限定しない */

@@ -79,7 +79,7 @@ Render の無料アカウント（https://render.com/）。
 |---|---|
 | 参照ブランチ | Render 管理画面 → 各サービス → Settings → Build & Deploy → Branch が `main` |
 | 実環境のリビジョン | 各サービスの Events / Deploys 画面で、最新デプロイのコミットSHA |
-| migration の適用 | backend の起動ログに `alembic upgrade head` が成功して出ているか。現在の head は `d5a91c3e07b2` |
+| migration の適用 | backend の起動ログに `alembic upgrade head` が成功して出ているか。現在の head は `e7c4b2f10a93` |
 | API とフロントのリビジョン一致 | backend と frontend の最新デプロイが同じコミットSHAか |
 | 疎通 | `<backend>/health` が `{"status":"ok",...}`、frontend のログイン後に主要画面が開く |
 

@@ -117,8 +117,21 @@ UNIQUE 制約と一致させるため）。
 ## 工程
 
 | GET | `/projects/{id}/tasks?site_id=` | 一覧（read。`site_id` で現場配下の工程に絞り込み＝Site→Task 連動） |
+| GET | `/projects/{id}/task-form-options` | 工程フォームの選択肢（工種・工程種別・担当班・責任者・担当会社）。画面は固定の一覧を持たない |
 | POST | `/projects/{id}/tasks` | 追加 |
 | PUT | `/tasks/{id}` | 更新（差分を `task_change_history` に記録） |
+
+**親子・WBS・先行工程の検証**（Ver.0.5 Phase 5）
+
+- 親子は `parent_task_id` が正本。自己参照・子孫を親にする指定・別案件の親は 422。
+- WBSコードは案件内で一意。重複は 422。
+- 先行工程（`dependency_ids`）は複数指定でき、重複指定は1件にまとめる。
+  自己依存とたどって自分へ戻る循環は 422。先行工程の入れ替えも
+  `task_change_history`（`field = "dependencies"`）へ残る。
+- 工種・工程種別・担当班・責任者・担当会社に存在しないIDを渡すと 422
+  （FK違反の500にせず、黙って値を捨てることもしない）。
+- 入力粒度 `schedule_precision`（`day` / `half_day` / `time`）は「どの粒度で入力・
+  表示するか」の記録で、日時が正。粒度だけを変えても日時は書き換えない。
 
 ## 施工写真（Ver.0.1.1）
 

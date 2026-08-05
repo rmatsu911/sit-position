@@ -12,6 +12,7 @@ import {
   createTimeline, groupSlots, toJst, rangeFromPeriods, MIN_BAR_WIDTH,
   startAtOf, endAtOf, splitStartAt, splitEndAt, durationInDays, isHalfDayPeriod, formatPeriod,
   shiftDays, snapDelta, snapStepOf, rangeForScale, DEFAULT_SLOT_WIDTH,
+  atTime, splitDateTime,
 } from '../node_modules/.cache/timeline.test.mjs'
 let pass = 0, fail = 0
 const ok = (cond, name, extra='') => { if (cond) { pass++; console.log(`  PASS ${name}`) } else { fail++; console.log(`  FAIL ${name} ${extra}`) } }
@@ -123,7 +124,7 @@ ok(near(barB.width, 34), '午後開始〜翌午前終了 = 1日幅', barB.width)
 console.log('== 12. ドラッグのスナップ（Phase 2: 横断工程表） ==')
 ok(snapStepOf('day') === 1, '日単位の刻みは1日')
 ok(snapStepOf('half_day') === 0.5, '0.5日単位の刻みは0.5日')
-ok(snapStepOf('time') === 1, '時刻指定は Phase 2 では日単位扱い')
+ok(snapStepOf('time') === 1 / 24, '時間単位の刻みは1時間')
 // 列幅34pxで 20px 動かした場合
 ok(snapDelta(20, 34, 'day') === 1, '日単位: 20px → 1日', snapDelta(20,34,'day'))
 ok(snapDelta(20, 34, 'half_day') === 0.5, '0.5日単位: 20px → 0.5日', snapDelta(20,34,'half_day'))
@@ -241,6 +242,50 @@ for (const scale of ['hour3','day','week','month','year']) {
 // 片側だけの指定でも、3時間表示はその日を基準にする
 const oneSide = rangeForScale('hour3', periods, { now:'2026-12-01T00:00:00+09:00', explicit:{ from:'2026-06-15' } })
 ok(oneSide.from.startsWith('2026-06-15'), '開始だけの指定はその日から', oneSide.from)
+
+console.log('== 19. 時間単位（Phase 5）: 日付＋時刻の相互変換 ==')
+ok(atTime('2026-06-10', '09:30') === '2026-06-10T09:30:00+09:00', '日付＋時刻からJSTの日時', atTime('2026-06-10','09:30'))
+ok(atTime('2026-06-10', '') === '2026-06-10T00:00:00+09:00', '時刻が空なら00:00', atTime('2026-06-10',''))
+ok(atTime('2026-06-10', '9:5') === '2026-06-10T00:00:00+09:00', '不正な時刻は00:00として扱う', atTime('2026-06-10','9:5'))
+{
+  const d = splitDateTime('2026-06-10T09:30:00+09:00')
+  ok(d.dateKey === '2026-06-10' && d.time === '09:30', '日時を日付と時刻へ分解', JSON.stringify(d))
+  // UTC表記で渡ってきてもJSTの壁時計へ揃える
+  const u = splitDateTime('2026-06-10T00:30:00Z')
+  ok(u.dateKey === '2026-06-10' && u.time === '09:30', 'UTC表記でもJSTの日付・時刻になる', JSON.stringify(u))
+  ok(atTime(d.dateKey, d.time) === '2026-06-10T09:30:00+09:00', '分解→再構成で同じ日時')
+}
+// 0.5日単位の午前/午後と、時間単位の時刻は同じ日時から作れる（単位を切り替えても日付は壊れない）
+{
+  const iso = '2026-06-10T12:00:00+09:00'
+  ok(splitStartAt(iso).dateKey === '2026-06-10' && splitStartAt(iso).half === 'PM', '同じ日時を午前/午後として読む')
+  ok(splitDateTime(iso).dateKey === '2026-06-10' && splitDateTime(iso).time === '12:00', '同じ日時を時刻として読む')
+}
+
+// 表示ラベルも時刻まで見せる（時刻を指定した意味が消えないこと）
+ok(formatPeriod('2026-06-10T09:30:00+09:00', '2026-06-10T17:15:00+09:00', 'time') === '06-10 09:30〜17:15',
+   '時間単位: 同日は 日付＋時刻〜時刻', formatPeriod('2026-06-10T09:30:00+09:00','2026-06-10T17:15:00+09:00','time'))
+ok(formatPeriod('2026-06-10T22:00:00+09:00', '2026-06-11T06:00:00+09:00', 'time') === '06-10 22:00〜06-11 06:00',
+   '時間単位: 日をまたぐと両方の日付', formatPeriod('2026-06-10T22:00:00+09:00','2026-06-11T06:00:00+09:00','time'))
+// 日単位・0.5日単位の表示は変わらない
+ok(formatPeriod(startAtOf('2026-06-10'), endAtOf('2026-06-11'), 'day') === '06-10〜06-11', '日単位の表示は従来どおり')
+ok(formatPeriod(startAtOf('2026-06-10','PM'), endAtOf('2026-06-10','PM'), 'half_day') === '06-10 午後', '0.5日単位の表示は従来どおり')
+
+console.log('== 20. 時間単位のドラッグは時刻を保つ ==')
+{
+  const px = 34 // pxPerDay
+  ok(snapDelta(px / 24, px, 'time') === 1 / 24, '時間単位: 1時間分の移動 = 1時間', snapDelta(px/24, px, 'time'))
+  ok(snapDelta(px / 48 - 0.01, px, 'time') === 0, '時間単位: 30分未満は動かない')
+  const moved = shiftDays('2026-06-10T09:30:00+09:00', 1 / 24)
+  ok(moved === '2026-06-10T10:30:00+09:00', '1時間ずらすと時刻だけ進む', moved)
+  const movedDay = shiftDays('2026-06-10T09:30:00+09:00', 2)
+  ok(movedDay === '2026-06-12T09:30:00+09:00', '日をまたいでも時刻は保たれる', movedDay)
+  // 期間の長さはドラッグ後も変わらない
+  const s0 = '2026-06-10T09:30:00+09:00', e0 = '2026-06-10T17:15:00+09:00'
+  const d0 = durationInDays(s0, e0)
+  const d1 = durationInDays(shiftDays(s0, 1 / 24), shiftDays(e0, 1 / 24))
+  ok(near(d0, d1), '移動しても期間の長さは変わらない', `${d0}/${d1}`)
+}
 
 console.log(`\n結果: ${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

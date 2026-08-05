@@ -162,8 +162,11 @@ class TaskOut(BaseModel):
     wbs_code: str | None = None
     name: str
     work_type: str | None = None
+    work_type_id: int | None = None
     process_type: str | None = None
+    process_type_id: int | None = None
     crew: str | None = None
+    team_id: int | None = None
     manager: str | None = None
     manager_id: int | None = None
     company: str | None = None
@@ -193,10 +196,14 @@ class TaskCreate(BaseModel):
     process_type_id: int | None = None
     planned_start_at: datetime | None = None
     planned_finish_at: datetime | None = None
+    # 実績は登録時から入力できる（着手済みの工程を後から登録する運用があるため）
+    actual_start_at: datetime | None = None
+    actual_finish_at: datetime | None = None
     planned_progress: int = 0
     actual_progress: int = 0
     planned_workers: int = 0
     actual_workers: int = 0
+    team_id: int | None = None
     manager_id: int | None = None
     company_id: int | None = None
     status: str = "未着手"
@@ -221,6 +228,7 @@ class TaskUpdate(BaseModel):
     actual_progress: int | None = None
     planned_workers: int | None = None
     actual_workers: int | None = None
+    team_id: int | None = None
     manager_id: int | None = None
     company_id: int | None = None
     status: str | None = None
@@ -708,6 +716,20 @@ class CrossScheduleOut(BaseModel):
 class IdNameOut(BaseModel):
     id: int
     name: str
+
+
+class TaskFormOptions(BaseModel):
+    """工程フォームの選択肢。画面が固定の一覧を持たないよう、実データから作る。
+
+    候補が空のときも空配列を返す。画面はそれを「マスタ未登録」として示し、
+    仮の選択肢を作らない。
+    """
+
+    work_types: list[IdNameOut]
+    process_types: list[IdNameOut]
+    teams: list[IdNameOut]
+    managers: list[IdNameOut]
+    companies: list[IdNameOut]
 
 
 class CrossProjectOption(BaseModel):
