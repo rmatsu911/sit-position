@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
@@ -22,18 +22,64 @@ FORMATS = ("pdf", "xlsx", "csv")
 _EXT = {"pdf": "pdf", "xlsx": "xlsx", "csv": "csv"}
 
 
+# 帳票の日付は画面と同じ規則で出す。
+#
+# ここがずれると「画面では 08-10 開始、印刷すると 08-09 開始」という状態になる。
+# 規則は src/lib/timeline.ts の formatPeriod と同じ:
+#   - 日時は Asia/Tokyo で読む（DBは UTC で持つので、そのまま整形すると1日ずれる）
+#   - 期間は [開始, 終了) の半開区間。終了が 0:00 なら「前日まで」を表示する
+#   - 入力粒度が half_day なら午前/午後、time なら時刻まで出す
+JST = timezone(timedelta(hours=9))
+
+
+def _jst(dt: datetime) -> datetime:
+    """日本時間として読む。タイムゾーンが無い値（SQLite）は既に日本時間の壁時計。"""
+    return dt if dt.tzinfo is None else dt.astimezone(JST)
+
+
 def _ymd(dt) -> str:
     if not dt:
         return "—"
     if isinstance(dt, datetime):
-        return dt.strftime("%m/%d")
+        return _jst(dt).strftime("%m/%d")
     return str(dt)[5:10].replace("-", "/")
 
 
-def _period(start, finish) -> str:
+def _half(dt: datetime) -> str:
+    return "午後" if _jst(dt).hour >= 12 else "午前"
+
+
+def _period(start, finish, precision: str = "day") -> str:
+    """画面と同じ表記の期間。終了は exclusive として扱う。"""
     if not start and not finish:
         return "—"
-    return f"{_ymd(start)}〜{_ymd(finish)}"
+    if precision == "time":
+        # 時刻を指定した工程は、時刻まで出す（終了はそのままの時刻）
+        s = f"{_ymd(start)} {_jst(start).strftime('%H:%M')}" if start else "—"
+        e = f"{_ymd(finish)} {_jst(finish).strftime('%H:%M')}" if finish else "—"
+        if start and finish and _jst(start).date() == _jst(finish).date():
+            return f"{s}〜{_jst(finish).strftime('%H:%M')}"
+        return f"{s}〜{e}"
+
+    def end_label(dt: datetime) -> tuple[str, str]:
+        """終了(exclusive)を「最後の日」へ戻す。翌0:00 = 前日の午後まで。"""
+        d = _jst(dt)
+        if d.hour == 0 and d.minute == 0:
+            return (d - timedelta(days=1)).strftime("%m/%d"), "午後"
+        return d.strftime("%m/%d"), "午前"
+
+    if precision == "half_day":
+        s = f"{_ymd(start)} {_half(start)}" if start else "—"
+        if finish:
+            ed, eh = end_label(finish)
+            e = f"{ed} {eh}"
+        else:
+            e = "—"
+        return f"{s}〜{e}"
+
+    s = _ymd(start) if start else "—"
+    e = end_label(finish)[0] if finish else "—"
+    return f"{s}〜{e}"
 
 
 def _wbs_key(code: str | None) -> list:
@@ -72,8 +118,8 @@ def _build_construction_management(db: Session, project: Project, user: User) ->
         [
             t.wbs_code or "—",
             t.name,
-            _period(t.planned_start_at, t.planned_finish_at),
-            _period(t.actual_start_at, t.actual_finish_at),
+            _period(t.planned_start_at, t.planned_finish_at, t.schedule_precision or "day"),
+            _period(t.actual_start_at, t.actual_finish_at, t.schedule_precision or "day"),
             str(t.planned_workers or 0),
             str(t.actual_workers or 0),
             f"{t.actual_progress}%",
@@ -87,7 +133,7 @@ def _build_construction_management(db: Session, project: Project, user: User) ->
         ("工事番号", project.construction_number),
         ("進捗", f"実績 {project.actual_progress}% / 予定 {project.planned_progress}%"),
         ("工程件数", f"{len(rows)} 件"),
-        ("出力日時", datetime.now(timezone.utc).astimezone().strftime("%Y/%m/%d %H:%M")),
+        ("出力日時", datetime.now(JST).strftime("%Y/%m/%d %H:%M")),
         ("出力者", user.name or user.email),
     ]
     return ReportSpec(title="施工管理表", meta=meta, columns=columns, rows=rows)

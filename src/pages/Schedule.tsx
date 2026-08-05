@@ -672,7 +672,11 @@ function floatLabel(cpm: CpmResult, t: WbsTask) {
   if (node.critical) {
     return <span className="font-semibold text-ng" title="クリティカル工程（遅れると全体が遅れます）">0日</span>
   }
-  // 0.5日刻みまで見せる（1日未満の余裕を0日に丸めない）
+  // 余裕があるのに「0日」と出すと、クリティカル（本当に0日）と区別できない。
+  // 1日未満は時間で見せ、丸めて0にはしない。
+  if (node.totalFloat < 1) {
+    return <span className="text-ink-soft">{Math.max(1, Math.round(node.totalFloat * 24))}時間</span>
+  }
   return <span className="text-ink-soft">{Math.round(node.totalFloat * 2) / 2}日</span>
 }
 

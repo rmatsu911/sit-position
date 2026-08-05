@@ -3288,3 +3288,77 @@ def test_p5_ai_status_reflects_model_and_jobs(client, p4):
     final = client.get("/api/ai/status", headers=head).json()
     assert final["pending_jobs"] == 0
     assert final["last_successful_job_at"] is not None
+
+
+def test_p5_report_dates_match_screen(client, p4):
+    """帳票の日付が画面と同じ規則で出ること（UTCで整形して1日ずれない）。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5RDT"), "name": "帳票の日付"},
+                      headers=head).json()["id"]
+
+    # 日単位: 8/10 00:00 〜 8/13 00:00（exclusive）＝ 8/10〜8/12
+    _p5_task(client, pid, head, name="日単位", wbs_code="1",
+             planned_start_at="2026-08-10T00:00:00+09:00",
+             planned_finish_at="2026-08-13T00:00:00+09:00")
+    # 0.5日単位: 8/21 午後 〜 8/24 午前
+    _p5_task(client, pid, head, name="半日", wbs_code="2", schedule_precision="half_day",
+             planned_start_at="2026-08-21T12:00:00+09:00",
+             planned_finish_at="2026-08-24T12:00:00+09:00")
+    # 時間単位: 日をまたぐ夜間作業
+    _p5_task(client, pid, head, name="時間", wbs_code="3", schedule_precision="time",
+             planned_start_at="2026-08-25T22:00:00+09:00",
+             planned_finish_at="2026-08-26T05:00:00+09:00")
+    # 時間単位: 同じ日に収まる作業（終了は時刻だけ出す）
+    _p5_task(client, pid, head, name="同日時間", wbs_code="4", schedule_precision="time",
+             planned_start_at="2026-08-27T09:30:00+09:00",
+             planned_finish_at="2026-08-27T17:15:00+09:00")
+
+    rows = {r[1]: r for r in client.get(
+        f"/api/reports/construction-management/preview?project_id={pid}", headers=head).json()["rows"]}
+
+    # 日単位: 開始は当日、終了は exclusive を1日戻した日
+    assert rows["日単位"][2] == "08/10〜08/12", rows["日単位"]
+    # 0.5日単位: 午前/午後まで出す
+    assert rows["半日"][2] == "08/21 午後〜08/24 午前", rows["半日"]
+    # 時間単位: 時刻まで出す
+    assert rows["時間"][2] == "08/25 22:00〜08/26 05:00", rows["時間"]
+    assert rows["同日時間"][2] == "08/27 09:30〜17:15", rows["同日時間"]
+    # 日程未設定は「—」
+    assert rows["日単位"][3] == "—", rows["日単位"]
+
+    # CSV / Excel / PDF もプレビューと同じ文字列を含む
+    csv = client.get(f"/api/reports/construction-management?project_id={pid}&format=csv", headers=head)
+    assert csv.status_code == 200
+    text = csv.content.decode("utf-8-sig")
+    for expected in ("08/10〜08/12", "08/21 午後〜08/24 午前", "08/25 22:00〜08/26 05:00"):
+        assert expected in text, f"{expected} が CSV に無い"
+
+
+def test_p5_report_period_reads_utc_as_jst():
+    """帳票の期間が、DBから来る UTC の日時を日本時間として読むこと。
+
+    このテストは DB を通さない。テスト用の SQLite はタイムゾーンを保存できず
+    naive な値を返すため、**SQLite 経由では UTC のまま整形する不具合を再現できない**。
+    本番の PostgreSQL は timestamptz を UTC の aware な値で返すので、
+    その形をそのまま関数へ渡して確かめる。
+    """
+    from datetime import datetime, timezone
+
+    from app.api.reports import _period
+
+    utc = timezone.utc
+    # 8/10 00:00 JST = 8/9 15:00 UTC ／ 8/13 00:00 JST = 8/12 15:00 UTC（終了は exclusive）
+    assert _period(datetime(2026, 8, 9, 15, tzinfo=utc),
+                   datetime(2026, 8, 12, 15, tzinfo=utc), "day") == "08/10〜08/12"
+    # 0.5日単位: 8/21 12:00 JST = 8/21 03:00 UTC ／ 8/24 12:00 JST = 8/24 03:00 UTC
+    assert _period(datetime(2026, 8, 21, 3, tzinfo=utc),
+                   datetime(2026, 8, 24, 3, tzinfo=utc), "half_day") == "08/21 午後〜08/24 午前"
+    # 時間単位: 8/25 22:00 JST = 8/25 13:00 UTC ／ 8/26 05:00 JST = 8/25 20:00 UTC
+    assert _period(datetime(2026, 8, 25, 13, tzinfo=utc),
+                   datetime(2026, 8, 25, 20, tzinfo=utc), "time") == "08/25 22:00〜08/26 05:00"
+    # 同じ日に収まる時間単位は、終了を時刻だけにする
+    assert _period(datetime(2026, 8, 27, 0, 30, tzinfo=utc),
+                   datetime(2026, 8, 27, 8, 15, tzinfo=utc), "time") == "08/27 09:30〜17:15"
+    # 片側だけ・未設定
+    assert _period(datetime(2026, 8, 9, 15, tzinfo=utc), None, "day") == "08/10〜—"
+    assert _period(None, None, "day") == "—"
