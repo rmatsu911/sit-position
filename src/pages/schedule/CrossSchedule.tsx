@@ -7,7 +7,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useSelectedProject } from '../../components/ui/ProjectSelect'
+import { FixedProject, projectLabel, useSelectedProject } from '../../components/ui/ProjectSelect'
+import { useProject } from '../../api/projects'
 import {
   AlertTriangle, Building2, ChevronDown, ChevronRight, Crosshair, ExternalLink, Eye, FileDown,
   Filter, Printer, RotateCcw, Save, SlidersHorizontal, Trash2, TrendingUp, UserPlus,
@@ -140,6 +141,9 @@ export default function CrossSchedule() {
   // 案件指定つきルート（/projects/:id/schedule/cross）は対象案件で絞り込んだ状態で開く
   // 案件配下ルートのときだけ案件で絞り込む（横断ルートでは undefined）
   const scopedProjectId = fixedByPath ? scopedFromContext : undefined
+  // 案件名・工事番号は案件APIから取る（画面で組み立てない）
+  const { data: scopedProject } = useProject(scopedProjectId)
+  const scopedLabel = scopedProject ? projectLabel(scopedProject) : undefined
 
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams])
   const group = (searchParams.get('group') as GroupKey) || 'project'
@@ -458,6 +462,9 @@ export default function CrossSchedule() {
         description={`${scopedProjectId ? '対象案件で絞り込み中 ／ ' : ''}複数案件の工程を1画面で確認します${isFetching ? '（更新中...）' : ''}`}
         actions={
           <div className="flex items-center gap-2">
+            {/* 案件配下ルートでは、どの案件で絞り込んでいるかを工事番号まで見せる
+                （「対象案件で絞り込み中」だけでは、どの案件か分からない） */}
+            {scopedProjectId && <FixedProject label={scopedLabel} />}
             <div className="flex items-center gap-0.5 rounded border border-line bg-white p-0.5">
               {GROUPS.map((g) => (
                 <button

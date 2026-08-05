@@ -9,7 +9,7 @@ import { StatusBadge } from '../components/ui/Badge'
 import { useApp } from '../context/AppContext'
 import { useDocuments, useDocument } from '../api/documents'
 import { useProject } from '../api/projects'
-import { FixedProject, ProjectSelect, projectLabel, useSelectedProject } from '../components/ui/ProjectSelect'
+import { FixedProject, NoProjectSelected, ProjectSelect, projectLabel, useSelectedProject } from '../components/ui/ProjectSelect'
 
 export default function Drawings() {
   const { toast } = useApp()
@@ -57,6 +57,10 @@ export default function Drawings() {
               : <ProjectSelect projectId={projectId} onChange={setProjectId} />}
           </div>
         } />
+      {/* 案件が決まらないと図面を絞り込めない。
+          「図面が登録されていません」と出すと、未選択なのか0件なのか区別できない。 */}
+      {!projectId && <Panel><NoProjectSelected what="この案件の図面・書類" /></Panel>}
+      {projectId && (
       <div className="flex gap-4">
         {/* 左：図面一覧 */}
         <div className="w-72 shrink-0">
@@ -127,6 +131,7 @@ export default function Drawings() {
           )}
         </div>
       </div>
+      )}
     </div>
   )
 }

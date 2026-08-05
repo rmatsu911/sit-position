@@ -306,9 +306,10 @@ function ScheduleBody({ projectId }: { projectId: number }) {
         { label: '工程を編集', icon: Pencil, onClick: () => setEditor({ mode: 'edit', task: menuTask }) },
         { label: '工程をコピー', icon: Copy, onClick: () => setEditor({ mode: 'copy', task: menuTask }) },
         { label: '', onClick: () => {}, divider: true },
-        { label: '担当者を割り当て', icon: UserPlus, onClick: () => toast('この操作は現在準備中です') },
-        { label: '前工程と関連付け', icon: Link2, onClick: () => toast('この操作は現在準備中です') },
-        { label: '後工程と関連付け', icon: Link2, onClick: () => toast('この操作は現在準備中です') },
+        // 担当情報・先行工程は工程フォームで設定できるので、そこへ開く
+        // （「準備中」と書いていたが、実際には設定できる）
+        { label: '担当者・担当会社を設定', icon: UserPlus, onClick: () => setEditor({ mode: 'edit', task: menuTask }) },
+        { label: '先行工程を設定', icon: Link2, onClick: () => setEditor({ mode: 'edit', task: menuTask }) },
         { label: '進捗を更新', icon: TrendingUp, onClick: () => { setProgressModal(menuTask); setProgressVal(menuTask.progress) } },
         { label: '完了にする', icon: CheckCircle2, onClick: () => { updateTaskMutation.mutate({ id: Number(menuTask.id), name: menuTask.name, actual_progress: 100, status: '完了', change_reason: '右クリックメニューから完了' }, { onSuccess: () => toast(`「${menuTask.name}」を完了にしました`, 'ok'), onError: () => toast('完了状態を保存できませんでした', 'ng') }) } },
         { label: '詳細を表示', icon: Eye, onClick: () => { setProgressModal(menuTask); setProgressVal(menuTask.progress) } },
@@ -360,8 +361,8 @@ function ScheduleBody({ projectId }: { projectId: number }) {
       { icon: Redo2, label: 'やり直す', onClick: () => toast('この操作は現在準備中です') },
     ],
     [
-      { icon: UserPlus, label: '担当者割当', onClick: () => toast('この操作は現在準備中です') },
-      { icon: Users2, label: '要員割当', onClick: () => toast('この操作は現在準備中です') },
+      { icon: UserPlus, label: '担当者割当', onClick: () => { const t = tasks.find((x) => selected.has(x.id)); t ? setEditor({ mode: 'edit', task: t }) : toast('工程を選択してください') } },
+      { icon: Users2, label: '要員割当', onClick: () => navigate(`/projects/${projectId}/personnel`) },
       { icon: TrendingUp, label: '進捗更新', onClick: () => toast('工程を右クリックして進捗更新できます') },
       { icon: Save, label: '基準工程保存', onClick: () => toast('この操作は現在準備中です', 'info') },
     ],

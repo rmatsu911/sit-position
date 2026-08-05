@@ -34,10 +34,18 @@ export default function DailyReportPage() {
         ? <DailyReportBody key={projectId} projectId={projectId} />
         : (
       <div>
-        <div className="mb-3 flex items-center gap-2 rounded border border-line bg-white px-3 py-2">
-          <span className="text-[12px] text-ink-soft">対象案件</span>
-          <ProjectSelect projectId={undefined} onChange={setProjectId} />
-        </div>
+        {/* 未選択でも画面の見出しを出す（どの画面にいるか分かるように） */}
+        <PageHeader
+          breadcrumb={[{ label: '現場日報' }]}
+          title="現場日報"
+          description="対象案件を選択してください"
+          actions={
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-ink-soft">対象案件</span>
+              <ProjectSelect projectId={undefined} onChange={setProjectId} />
+            </div>
+          }
+        />
         <Panel><NoProjectSelected what="現場日報" /></Panel>
       </div>
         )}
@@ -143,13 +151,23 @@ function DailyReportBody({ projectId }: { projectId: number }) {
   }
 
   // 対象案件の表示は常に画面へ出す。案件配下ルートでは固定表示（変更不可）。
+  // 読み込み中・エラー・0件のときも画面の見出しを出す（どの画面にいるか分かるように）。
   const selector = (
-    <div className="mb-3 flex items-center gap-2 rounded border border-line bg-white px-3 py-2">
-      <span className="text-[12px] text-ink-soft">対象案件</span>
-      {fixedByPath
-        ? <FixedProject label={project ? projectLabel(project) : undefined} />
-        : <ProjectSelect projectId={projectId} onChange={setProjectId} />}
-    </div>
+    <>
+      <PageHeader
+        breadcrumb={[{ label: '現場日報' }]}
+        title="現場日報"
+        description="日々の作業実績・安全・品質の記録"
+        actions={
+          <>
+            <span className="text-[12px] text-ink-soft">対象案件</span>
+            {fixedByPath
+              ? <FixedProject label={project ? projectLabel(project) : undefined} />
+              : <ProjectSelect projectId={projectId} onChange={setProjectId} />}
+          </>
+        }
+      />
+    </>
   )
   if (isLoading) return <div>{selector}<div className="rounded border border-line bg-white px-4 py-16 text-center text-[13px] text-ink-soft">日報を読み込んでいます…</div></div>
   if (isError) return <div>{selector}<div className="rounded border border-red-200 bg-red-50 px-4 py-10 text-center text-[13px] text-ng">日報の取得に失敗しました。<button className="ml-2 underline" onClick={() => refetch()}>再試行</button></div></div>

@@ -7,7 +7,8 @@
  */
 import { useCallback, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useSelectedProject } from '../../components/ui/ProjectSelect'
+import { FixedProject, projectLabel, useSelectedProject } from '../../components/ui/ProjectSelect'
+import { useProject } from '../../api/projects'
 import {
   AlertTriangle, ChevronLeft, ChevronRight, Filter, RotateCcw, Save, Trash2,
 } from 'lucide-react'
@@ -76,6 +77,9 @@ export default function ScheduleCalendar() {
   // 案件詳細ルートではパスの案件IDを優先する（URLクエリで別案件へ広がらない）
   // 案件配下ルートのときだけ案件で絞り込む（横断ルートでは undefined）
   const scopedProjectId = fixedByPath ? scopedFromContext : undefined
+  // 案件名・工事番号は案件APIから取る（画面で組み立てない）
+  const { data: scopedProject } = useProject(scopedProjectId)
+  const scopedLabel = scopedProject ? projectLabel(scopedProject) : undefined
 
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams])
   const view: CalendarView = searchParams.get('view') === 'week' ? 'week' : 'month'
@@ -124,6 +128,8 @@ export default function ScheduleCalendar() {
         description={`${scopedProjectId ? '対象案件で絞り込み中 ／ ' : ''}工程・マイルストーン・期限を1画面で確認します`}
         actions={
           <div className="flex items-center gap-2">
+            {/* 案件配下ルートでは、どの案件で絞り込んでいるかを工事番号まで見せる */}
+            {scopedProjectId && <FixedProject label={scopedLabel} />}
             <div className="flex items-center gap-0.5 rounded border border-line bg-white p-0.5"
                  role="group" aria-label="表示方式">
               {VIEWS.map((v) => (

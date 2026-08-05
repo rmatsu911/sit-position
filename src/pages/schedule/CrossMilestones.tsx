@@ -8,7 +8,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useSelectedProject } from '../../components/ui/ProjectSelect'
+import { FixedProject, projectLabel, useSelectedProject } from '../../components/ui/ProjectSelect'
+import { useProject } from '../../api/projects'
 import {
   AlertTriangle, CalendarClock, Crosshair, FileDown, Filter, Pencil, Plus,
   Printer, RotateCcw, Save, Table2, Trash2,
@@ -128,6 +129,9 @@ export default function CrossMilestones() {
   // URLクエリや保存検索で別案件へ範囲が広がらない。
   // 案件配下ルートのときだけ案件で絞り込む（横断ルートでは undefined）
   const scopedProjectId = fixedByPath ? scopedFromContext : undefined
+  // 案件名・工事番号は案件APIから取る（画面で組み立てない）
+  const { data: scopedProject } = useProject(scopedProjectId)
+  const scopedLabel = scopedProject ? projectLabel(scopedProject) : undefined
 
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams])
   const view: ViewKind = searchParams.get('view') === 'timeline' ? 'timeline' : 'table'
@@ -285,6 +289,8 @@ export default function CrossMilestones() {
           description={`${scopedProjectId ? '対象案件で絞り込み中 ／ ' : ''}複数案件の重要日を1画面で比較します`}
           actions={
             <div className="flex items-center gap-2">
+              {/* 案件配下ルートでは、どの案件で絞り込んでいるかを工事番号まで見せる */}
+              {scopedProjectId && <FixedProject label={scopedLabel} />}
               <div className="flex items-center gap-0.5 rounded border border-line bg-white p-0.5"
                    role="group" aria-label="表示方式">
                 {VIEWS.map((v) => (
