@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsc -b --force",
-    "test:timeline": "esbuild src/lib/timeline.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/timeline.test.mjs --log-level=error && node scripts/timeline.test.mjs"
+    "test:timeline": "esbuild src/lib/timeline.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/timeline.test.mjs --log-level=error && node scripts/timeline.test.mjs",
+    "test:cpm": "esbuild src/lib/cpm.ts --bundle --format=esm --platform=node --outfile=node_modules/.cache/cpm.test.mjs --log-level=error && node scripts/cpm.test.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",

@@ -367,10 +367,17 @@ export function GanttRow({
 }
 
 /** 依存線（先行工程のバー右端 → 後続工程の開始位置）。 */
+/**
+ * 工程間の依存線。
+ *
+ * `emphasized` は「赤で強調するか」だけを表す。何を強調するかは画面ごとに違い
+ * （案件工程＝クリティカルパス、横断工程＝遅延）、凡例でそれぞれ明示する。
+ * ここでは意味を決めない（片方の意味の名前を付けて誤解させない）。
+ */
 export function DependencyLines({
   lines, width, height,
 }: {
-  lines: { x1: number; y1: number; x2: number; y2: number; critical: boolean }[]
+  lines: { x1: number; y1: number; x2: number; y2: number; emphasized: boolean }[]
   width: number
   height: number
 }) {
@@ -383,10 +390,10 @@ export function DependencyLines({
             <path
               d={`M${l.x1},${l.y1} L${midX},${l.y1} L${midX},${l.y2} L${l.x2},${l.y2}`}
               fill="none"
-              stroke={l.critical ? '#d64545' : '#94a3b8'}
+              stroke={l.emphasized ? '#d64545' : '#94a3b8'}
               strokeWidth={1.2}
             />
-            <path d={`M${l.x2},${l.y2} l-5,-3 l0,6 z`} fill={l.critical ? '#d64545' : '#94a3b8'} />
+            <path d={`M${l.x2},${l.y2} l-5,-3 l0,6 z`} fill={l.emphasized ? '#d64545' : '#94a3b8'} />
           </g>
         )
       })}

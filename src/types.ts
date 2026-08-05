@@ -84,7 +84,6 @@ export interface WbsTask {
   level: number
   /** 子工程を持つか（WBSにドットがあるかでは判定しない） */
   isParent: boolean
-  critical?: boolean
 }
 
 // ============ 施工写真 ============

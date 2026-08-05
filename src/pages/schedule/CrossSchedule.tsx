@@ -312,7 +312,7 @@ export default function CrossSchedule() {
 
   // 依存線は工程IDで結ぶ（案件をまたぐとWBS番号が重複するため名前では判定しない）
   const depLines = useMemo(() => {
-    const lines: { x1: number; y1: number; x2: number; y2: number; critical: boolean }[] = []
+    const lines: { x1: number; y1: number; x2: number; y2: number; emphasized: boolean }[] = []
     for (const r of rows) {
       if (r.kind !== 'task' || !r.bar) continue
       const sr = rowIndexByTaskId.get(r.task.id)
@@ -328,7 +328,8 @@ export default function CrossSchedule() {
           y1: pr * ROW_H + 11,
           x2: timeline.xOf(r.bar.planStartAt),
           y2: sr * ROW_H + 11,
-          critical: r.task.is_delayed || pred.is_delayed,
+          // 横断工程で赤くするのは「遅延」。クリティカルパスは案件ごとの工程表で示す。
+          emphasized: r.task.is_delayed || pred.is_delayed,
         })
       }
     }
@@ -691,7 +692,7 @@ export default function CrossSchedule() {
           </div>
         </div>
         <div data-print="hide">
-          <GanttLegend note="工程バーはドラッグで移動（0.5日単位の工程は0.5日刻み）／右端で期間変更 ／ 右クリックで操作メニュー" />
+          <GanttLegend note="遅延している工程の依存線を赤で表示 ／ 工程バーはドラッグで移動（0.5日単位の工程は0.5日刻み）／右端で期間変更 ／ 右クリックで操作メニュー" />
         </div>
       </Panel>
 

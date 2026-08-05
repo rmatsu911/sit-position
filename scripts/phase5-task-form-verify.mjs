@@ -397,6 +397,79 @@ await openSchedule()
   ok(rows >= 3, '再読込後も工程行が描画される', String(rows))
 }
 
+section('13. クリティカルパスは工程名ではなく期間と先行工程で決まる')
+{
+  // 検証用に独立した案件を作り、A(3日)→C(4日)→D(1日) と、A→B(1日)→D の分岐を作る
+  const cp = await api('/projects', {
+    method: 'POST',
+    body: JSON.stringify({ construction_number: `${NUMBER}-CPM`, name: `${NAME} CPM` }),
+  })
+  const mk = (name, wbs, startDay, days, deps = []) => api(`/projects/${cp.id}/tasks`, {
+    method: 'POST',
+    body: JSON.stringify({
+      name, wbs_code: wbs,
+      planned_start_at: `2026-10-${String(startDay).padStart(2, '0')}T00:00:00+09:00`,
+      planned_finish_at: `2026-10-${String(startDay + days).padStart(2, '0')}T00:00:00+09:00`,
+      dependency_ids: deps,
+    }),
+  })
+  const A = await mk('準備工', '1', 1, 3)
+  const B = await mk('引き渡し', '2', 4, 1, [A.id])       // 短い分岐（名前は「引き渡し」）
+  const C = await mk('付帯工事', '3', 4, 4, [A.id])       // 長い分岐
+  const D = await mk('完成検査', '4', 8, 1, [B.id, C.id])
+
+  await page.goto(`${BASE}/projects/${cp.id}/schedule`, { waitUntil: 'networkidle' })
+  await page.waitForSelector('[data-fixed-project]')
+  const criticalOf = async (id) =>
+    await page.locator(`[data-task-row="${id}"]`).getAttribute('data-critical')
+  const floatOf = async (id) =>
+    (await page.locator(`[data-float="${id}"]`).innerText()).trim()
+
+  ok(await criticalOf(A.id) === 'true', 'A（起点）はクリティカル')
+  ok(await criticalOf(C.id) === 'true', '長い分岐 C はクリティカル')
+  ok(await criticalOf(D.id) === 'true', 'D（終点）はクリティカル')
+  ok(await criticalOf(B.id) === 'false',
+     '「引き渡し」という名前でも、短い分岐はクリティカルではない', await floatOf(B.id))
+  ok(await floatOf(B.id) === '3日', 'B の余裕は3日', await floatOf(B.id))
+  ok(await floatOf(C.id) === '0日', 'C の余裕は0日', await floatOf(C.id))
+
+  // 工程名を入れ替えても結果は変わらない
+  await api(`/tasks/${B.id}`, { method: 'PUT', body: JSON.stringify({ name: '光ケーブル敷設' }) })
+  await api(`/tasks/${C.id}`, { method: 'PUT', body: JSON.stringify({ name: '準備' }) })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('[data-fixed-project]')
+  ok(await criticalOf(B.id) === 'false', '工程名を変えても B はクリティカルにならない')
+  ok(await criticalOf(C.id) === 'true', '工程名を変えても C はクリティカルのまま')
+
+  // 期間を変えるとクリティカルが移る。
+  // C を1日へ縮め、B を D の開始（10/08）まで伸ばして隙間を無くす。
+  await api(`/tasks/${C.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ planned_finish_at: '2026-10-05T00:00:00+09:00' }),
+  })
+  await api(`/tasks/${B.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ planned_finish_at: '2026-10-08T00:00:00+09:00' }),
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('[data-fixed-project]')
+  ok(await criticalOf(B.id) === 'true', '期間を変えると B がクリティカルになる', await floatOf(B.id))
+  ok(await criticalOf(C.id) === 'false', '期間を変えると C はクリティカルから外れる', await floatOf(C.id))
+
+  // 日程未設定の工程は「未設定」と示し、クリティカルにしない
+  const none = await mk('日程未設定', '5', 1, 1)
+  await api(`/tasks/${none.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ planned_start_at: null, planned_finish_at: null }),
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('[data-fixed-project]')
+  ok(await floatOf(none.id) === '未設定', '日程未設定は「未設定」と示す', await floatOf(none.id))
+  ok(await criticalOf(none.id) === 'false', '日程未設定をクリティカルにしない')
+
+  console.log(`  検証で作成した案件: ${NUMBER}-CPM / id=${cp.id}（削除しない）`)
+}
+
 section('コンソール')
 ok(consoleErrors.length === 0, 'コンソールエラー 0', consoleErrors.slice(0, 3).join(' | '))
 

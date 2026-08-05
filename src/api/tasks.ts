@@ -36,11 +36,6 @@ export interface ApiTask {
   dependencies: number[]
 }
 
-const CRITICAL_NAMES = new Set([
-  '敷設・設置工', '光ケーブル敷設', 'クロージャ設置', '接続・試験工', '光ファイバ融着',
-  '接続損失測定', '光成端', '切替工', '切替作業', '通信試験', '完成検査', '引き渡し',
-])
-
 /**
  * API のタスクを既存ガント用 WbsTask 形式へ変換する。
  *
@@ -104,7 +99,6 @@ export function toWbsTasks(rows: ApiTask[]): WbsTask[] {
       parentId: t.parent_task_id != null ? String(t.parent_task_id) : null,
       level: depthOf(t),
       isParent: childIds.has(t.id),
-      critical: CRITICAL_NAMES.has(t.name),
     }
   })
 }

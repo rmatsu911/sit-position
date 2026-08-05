@@ -27,6 +27,7 @@ import {
   nowJst, rangeForScale, shiftDays, snapDelta, splitDateTime, splitEndAt, splitStartAt, startAtOf,
   type HalfDay, type SchedulePrecision, type TimeScale, type Timeline,
 } from '../lib/timeline'
+import { computeCpm, type CpmResult } from '../lib/cpm'
 import { JP_HOLIDAYS } from '../lib/holidays'
 import { ScheduleTabs } from './schedule/ScheduleTabs'
 import {
@@ -45,6 +46,8 @@ const LEFT_COLS = [
   { key: 'actualStart', label: '開始実績', w: 82 },
   { key: 'actualEnd', label: '終了実績', w: 82 },
   { key: 'planDays', label: '予定', w: 44 },
+  // 余裕（total float）はCPMの計算結果。工程名ではなく期間と先行工程から決まる。
+  { key: 'float', label: '余裕', w: 52 },
   { key: 'progress', label: '進捗', w: 52 },
   { key: 'planPeople', label: '予定人', w: 52 },
   { key: 'actualPeople', label: '実績人', w: 52 },
@@ -314,9 +317,13 @@ function ScheduleBody({ projectId }: { projectId: number }) {
       ]
     : []
 
+  // クリティカルパス。工程名ではなく、期間と先行工程から計算する。
+  // 期間や依存を変えれば結果が変わり、工程名を変えても変わらない。
+  const cpm = useMemo(() => computeCpm(tasks), [tasks])
+
   // 依存線
   const depLines = useMemo(() => {
-    const lines: { x1: number; y1: number; x2: number; y2: number; critical: boolean }[] = []
+    const lines: { x1: number; y1: number; x2: number; y2: number; emphasized: boolean }[] = []
     for (const t of visible) {
       if (t.isParent) continue
       for (const pw of t.predecessors) {
@@ -331,11 +338,12 @@ function ScheduleBody({ projectId }: { projectId: number }) {
         const y1 = pr * ROW_H + 11
         const x2 = timeline.xOf(t.planStartAt)
         const y2 = sr * ROW_H + 11
-        lines.push({ x1, y1, x2, y2, critical: !!(t.critical && pred.critical) })
+        // 両端がクリティカルな経路だけを赤で示す
+        lines.push({ x1, y1, x2, y2, emphasized: cpm.criticalIds.has(t.id) && cpm.criticalIds.has(pred.id) })
       }
     }
     return lines
-  }, [visible, rowIndexById, timeline])
+  }, [visible, rowIndexById, timeline, cpm])
 
   const toolbarGroups: { icon: typeof Plus; label: string; onClick: () => void }[][] = [
     [
@@ -472,10 +480,13 @@ function ScheduleBody({ projectId }: { projectId: number }) {
               <tbody>
                 {visible.map((t) => {
                   const isParent = t.isParent
+                  const critical = cpm.criticalIds.has(t.id)
                   return (
                     <tr
                       key={t.id}
                       style={{ height: ROW_H }}
+                      data-task-row={t.id}
+                      data-critical={critical ? 'true' : 'false'}
                       className={`cursor-pointer ${selected.has(t.id) ? 'bg-sysken-50' : isParent ? 'bg-slate-50' : 'hover:bg-canvas'}`}
                       onClick={() => setSelected(new Set([t.id]))}
                       onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, id: t.id }) }}
@@ -501,6 +512,9 @@ function ScheduleBody({ projectId }: { projectId: number }) {
                       <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{t.actualStartAt ? edgeLabel(t.actualStartAt, 'start', t.precision) : '—'}</td>
                       <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{t.actualEndAt ? edgeLabel(t.actualEndAt, 'end', t.precision) : '—'}</td>
                       <td className="border-r border-line px-2 text-center tabular-nums text-ink-soft" style={{ width: 44 }}>{t.planDays ?? '—'}</td>
+                      <td className="border-r border-line px-2 text-center tabular-nums" style={{ width: 52 }} data-float={t.id}>
+                        {floatLabel(cpm, t)}
+                      </td>
                       <td className="border-r border-line px-2 text-right tabular-nums font-medium" style={{ width: 52 }}>{t.progress}%</td>
                       <td className="border-r border-line px-2 text-center tabular-nums text-ink-soft" style={{ width: 52 }}>{t.planPeople}</td>
                       <td className="border-r border-line px-2 text-center tabular-nums text-ink-soft" style={{ width: 52 }}>{t.actualPeople || '—'}</td>
@@ -576,7 +590,7 @@ function ScheduleBody({ projectId }: { projectId: number }) {
         </div>
 
         {/* 凡例 */}
-        <GanttLegend note="クリティカル工程は赤の依存線で表示 ／ 工程バーはドラッグで移動・右端で期間変更" />
+        <GanttLegend note="クリティカル工程（余裕0日）は赤の依存線で表示 ／ 工程バーはドラッグで移動・右端で期間変更" />
       </Panel>
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
@@ -642,6 +656,23 @@ function ScheduleBody({ projectId }: { projectId: number }) {
       />
     </div>
   )
+}
+
+/**
+ * 「余裕」列の表示。CPMの計算結果をそのまま出し、計算できないものは理由を示す。
+ * 数字が出ない箇所に0や「—」だけを並べて、計算できたように見せない。
+ */
+function floatLabel(cpm: CpmResult, t: WbsTask) {
+  if (t.isParent) return <span className="text-ink-soft">—</span>
+  if (cpm.cycleIds.has(t.id)) return <span className="text-ng" title="先行工程が循環しているため計算できません">循環</span>
+  if (cpm.unscheduledIds.has(t.id)) return <span className="text-ink-soft" title="日程が未設定のため計算できません">未設定</span>
+  const node = cpm.nodes.get(t.id)
+  if (!node) return <span className="text-ink-soft">—</span>
+  if (node.critical) {
+    return <span className="font-semibold text-ng" title="クリティカル工程（遅れると全体が遅れます）">0日</span>
+  }
+  // 0.5日刻みまで見せる（1日未満の余裕を0日に丸めない）
+  return <span className="text-ink-soft">{Math.round(node.totalFloat * 2) / 2}日</span>
 }
 
 /**
