@@ -11,7 +11,7 @@ import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, CheckCircle2, MinusCircle } from 'lucide-react'
 import { Panel } from '../ui/common'
 import { api, ApiError } from '../../lib/apiClient'
-import { APP_COMMIT, APP_VERSION, BUILD_TIME, ENV_LABEL, APP_ENV, shortSha } from '../../lib/env'
+import { APP_COMMIT, APP_VERSION, BASE_PATH, BUILD_TIME, ENV_LABEL, APP_ENV, shortSha } from '../../lib/env'
 
 export interface SystemInfoOut {
   environment: string
@@ -23,7 +23,16 @@ export interface SystemInfoOut {
   database: string
   storage: string
   storage_backend: string
-  ai_service: string
+  /** APIが認識している公開パス（サブパス配信の確認用） */
+  api_root_path: string
+  /** AIは1語にまとめず、意味ごとに分けて受け取る */
+  ai: {
+    registered_models: number | null
+    trained_models: number | null
+    pending_jobs: number | null
+    last_successful_job_at: string | null
+    worker: string
+  }
 }
 
 export function useSystemInfo(enabled: boolean) {
@@ -42,6 +51,18 @@ const STATUS_LABEL: Record<string, string> = {
   read_only: '書き込み不可',
   disconnected: '未接続',
   error: '接続失敗',
+  unknown: '未確認',
+}
+
+/**
+ * AI Worker の稼働状態。
+ * 待ちが1件も無い状態は「稼働中」とは書かない（起動していなくても同じ見え方に
+ * なるため）。滞留しているときだけ「動いていない」と断定する。
+ */
+const WORKER_LABEL: Record<string, string> = {
+  processing: '処理中',
+  not_running: '動いていません（ジョブが滞留）',
+  idle: '待ちジョブなし（稼働は未確認）',
   unknown: '未確認',
 }
 
@@ -112,11 +133,52 @@ export function SystemInfo({ isAdmin }: { isAdmin: boolean }) {
               <Row label="migration" value={<span className="font-mono" data-alembic-revision>{data.alembic_revision}</span>} />
               <Row label="データベース" value={<StatusMark value={data.database} />} />
               <Row label="ファイル保存" value={<><StatusMark value={data.storage} /> <span className="text-ink-soft">（{data.storage_backend}）</span></>} />
-              <Row label="AIサービス" value={<StatusMark value={data.ai_service} />} />
+              <Row label="APIの公開パス" value={<span className="font-mono" data-api-root-path>{data.api_root_path}</span>} />
             </>
           ) : null}
         </div>
       </div>
+
+      {isAdmin && data && (
+        <div className="mt-4 border-t border-line pt-3" data-ai-runtime>
+          <p className="mb-1 text-[12px] font-semibold text-ink">AI推論の稼働状況</p>
+          <p className="mb-2 text-[12px] text-ink-soft">
+            「モデルが置かれているか」と「Worker が動いているか」は別のことなので、分けて表示します。
+          </p>
+          <div className="grid gap-x-8 md:grid-cols-2">
+            <div>
+              <Row label="登録済みモデル" value={count(data.ai.registered_models)} />
+              <Row label="うち学習済み" value={count(data.ai.trained_models)} />
+            </div>
+            <div>
+              <Row label="AI Worker" value={<span data-ai-worker>{WORKER_LABEL[data.ai.worker] ?? data.ai.worker}</span>} />
+              <Row label="処理待ちジョブ" value={count(data.ai.pending_jobs)} />
+              <Row
+                label="最後に成功した推論"
+                value={data.ai.last_successful_job_at
+                  ? data.ai.last_successful_job_at.replace('T', ' ').slice(0, 16)
+                  : '成功した推論はまだありません'}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-4 border-t border-line pt-3">
+        <p className="mb-1 text-[12px] font-semibold text-ink">画面のベースパス</p>
+        <Row label="配信パス" value={<span className="font-mono" data-frontend-base-path>{BASE_PATH}</span>} />
+        <p className="mt-1 text-[12px] text-ink-soft">
+          サブパス配信（例: <span className="font-mono">/sysken/</span>）では、この値と
+          「APIの公開パス」が配信構成と一致している必要があります。
+          ビルド時の <span className="font-mono">VITE_BASE_PATH</span> と、
+          APIの <span className="font-mono">API_ROOT_PATH</span> で指定します。
+        </p>
+      </div>
     </Panel>
   )
+}
+
+/** 件数。取得できなかったときは0を出さず「未確認」と書く。 */
+function count(v: number | null): string {
+  return v === null ? '未確認' : `${v}件`
 }

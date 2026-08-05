@@ -6,20 +6,23 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import inspect, select, text
+from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.deps import get_current_user, require_roles
-from app.models import AiModel, User
+from app.models import AiAnalysisJob, AiModel, User
 
 router = APIRouter()
 
 UNKNOWN = "unknown"
+
+# 推論ジョブがこれ以上待たされていたら、Worker が動いていないとみなす
+STALE_JOB_MINUTES = 15
 
 
 def _commit() -> str:
@@ -63,17 +66,55 @@ def storage_status() -> str:
         return "error"
 
 
-def ai_status(db: Session) -> str:
-    """AI推論の接続状態。学習済みモデルが登録されていなければ未接続。"""
+def ai_state(db: Session) -> dict:
+    """AI関連の状態。ひとつの「AIサービス」にまとめず、意味ごとに分けて返す。
+
+    「学習済みモデルが置かれているか」「Worker が動いているか」「最後に成功したのは
+    いつか」は別のことで、1つの状態にまとめると障害の切り分けができない。
+    """
+    unknown = {
+        "registered_models": None, "trained_models": None,
+        "pending_jobs": None, "last_successful_job_at": None,
+        "worker": UNKNOWN,
+    }
     try:
         models = db.execute(select(AiModel)).scalars().all()
+        trained = [m for m in models if m.trained_at and (m.status or "").upper() in ("ACTIVE", "READY")]
+        pending = db.execute(
+            select(func.count(AiAnalysisJob.id))
+            .where(AiAnalysisJob.status.in_(("QUEUED", "RUNNING")))
+        ).scalar_one()
+        last_done = db.execute(
+            select(AiAnalysisJob.completed_at).where(AiAnalysisJob.status == "DONE")
+            .order_by(AiAnalysisJob.completed_at.desc()).limit(1)
+        ).scalar_one_or_none()
+        oldest_pending = db.execute(
+            select(AiAnalysisJob.queued_at)
+            .where(AiAnalysisJob.status.in_(("QUEUED", "RUNNING")))
+            .order_by(AiAnalysisJob.queued_at).limit(1)
+        ).scalar_one_or_none()
     except Exception:
-        return "unknown"
-    if not models:
-        return "disconnected"
-    # 学習済み（trained_at あり）で有効なモデルがあるときだけ「接続済み」
-    ready = [m for m in models if m.trained_at and (m.status or "").upper() in ("ACTIVE", "READY")]
-    return "connected" if ready else "disconnected"
+        return unknown
+
+    # Worker の稼働は「待ちが滞留していないか」で判断する。
+    # 待ちが1件も無い状態は動いているとも止まっているとも言えないため idle とする
+    # （「稼働中」と書いて、実際には起動していない状態を隠さない）。
+    worker = "idle"
+    if oldest_pending is not None:
+        queued_at = oldest_pending
+        if queued_at.tzinfo is None:
+            queued_at = queued_at.replace(tzinfo=timezone.utc)
+        stale = (datetime.now(timezone.utc) - queued_at) > timedelta(minutes=STALE_JOB_MINUTES)
+        worker = "not_running" if stale else "processing"
+
+    return {
+        "registered_models": len(models),
+        # 登録されているだけのモデルと、学習済みのモデルを混同しない
+        "trained_models": len(trained),
+        "pending_jobs": pending,
+        "last_successful_job_at": last_done.isoformat() if last_done else None,
+        "worker": worker,
+    }
 
 
 @router.get("/system/info")
@@ -92,7 +133,11 @@ def system_info(
         "database": db_status(db),
         "storage": storage_status(),
         "storage_backend": settings.storage_backend,
-        "ai_service": ai_status(db),
+        # 「AIサービス」という1語にまとめず、意味ごとに分けて返す
+        "ai": ai_state(db),
+        # サブパス配信（例: /sysken/api）でAPIが自分の公開パスをどう認識しているか。
+        # 画面側のベースパスと突き合わせて、URL解決の食い違いに気づけるようにする。
+        "api_root_path": settings.api_root_path or "/",
     }
 
 

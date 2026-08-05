@@ -2774,9 +2774,15 @@ def test_p5_system_info_shows_revision_without_secrets(client, p4):
     assert r.status_code == 200, r.text
     body = r.json()
     for key in ("environment", "api_version", "backend_commit", "backend_built_at",
-                "alembic_revision", "database", "storage", "ai_service", "server_time"):
+                "alembic_revision", "database", "storage", "ai", "server_time",
+                "api_root_path"):
         assert key in body, f"{key} が返っていない"
     assert body["database"] == "ok"
+    # AIは1語にまとめず、意味ごとに分けて返す
+    assert set(body["ai"]) == {
+        "registered_models", "trained_models", "pending_jobs",
+        "last_successful_job_at", "worker",
+    }, body["ai"]
     # 秘密情報・接続先を返さない
     dumped = str(body).lower()
     for leaked in ("password", "secret", "token", "postgresql://", "sqlite://", "jwt", "key="):
@@ -3192,3 +3198,93 @@ def test_p5_audit_log_comes_from_real_records(client, p4):
     limited = client.get(f"/api/projects/{pid}/audit-logs?limit=1", headers=head).json()
     assert limited["returned"] == 1 and limited["limit"] == 1
     assert limited["entries"][0]["at"] >= body["entries"][-1]["at"]
+
+
+def test_p5_ai_status_separates_implemented_and_connected(client, p4):
+    """AI機能の状態が、実データから判定した値で返ること。"""
+    head = _p4_head(client, "pm@test.jp")
+    r = client.get("/api/ai/status", headers=head)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    keys = [f["key"] for f in body["features"]]
+    assert len(keys) == 7, keys
+    by_key = {f["key"]: f for f in body["features"]}
+
+    # 実装が無い機能は「未実装」。推論ジョブの種別も持たない。
+    for key in ("quality_check", "completion_compare", "duration_forecast",
+                "staffing_forecast", "construction_advice", "report_generation"):
+        assert by_key[key]["status"] == "not_implemented", by_key[key]
+        assert by_key[key]["job_type"] is None, by_key[key]
+
+    # 実装がある機能は、モデルが無ければ「モデル未配置」（未実装とは区別する）
+    photo = by_key["photo_classification"]
+    assert photo["job_type"] == "detection"
+    assert photo["status"] in ("model_missing", "service_down", "processing", "failed", "connected")
+    assert photo["status"] != "not_implemented"
+
+    # 説明文（構想）は状態とは別に必ず入っている
+    assert all(f["note"] for f in body["features"])
+
+    # モデルとジョブの状況は分けて返す
+    assert body["trained_model_count"] == 0
+    assert body["pending_jobs"] == 0
+    assert body["last_successful_job_at"] is None
+
+
+def test_p5_ai_status_reflects_model_and_jobs(client, p4):
+    """モデルを配置し、ジョブを登録すると状態が変わること（固定値ではない）。"""
+    from datetime import datetime, timezone
+
+    from app.models import AiAnalysisJob, AiModel
+    from tests.conftest import TestingSessionLocal
+
+    head = _p4_head(client, "pm@test.jp")
+    key = lambda: {f["key"]: f for f in client.get("/api/ai/status", headers=head).json()["features"]}
+
+    before = key()["photo_classification"]
+    assert before["status"] == "model_missing", before
+
+    with TestingSessionLocal() as s:
+        # 未学習のモデルは「配置済み」と数えない
+        s.add(AiModel(name="未学習", model_type="YOLO", version="v0", status="ACTIVE"))
+        s.commit()
+    assert key()["photo_classification"]["status"] == "model_missing"
+
+    with TestingSessionLocal() as s:
+        s.add(AiModel(name="学習済み", model_type="YOLO", version="v1", status="ACTIVE",
+                      trained_at=datetime.now(timezone.utc)))
+        s.commit()
+    # モデルはあるが推論の実績が無い → 未接続（「接続済み」とは書かない）
+    after_model = key()["photo_classification"]
+    assert after_model["status"] == "service_down", after_model
+
+    body = client.get("/api/ai/status", headers=head).json()
+    assert body["trained_model_count"] == 1
+    assert len(body["models"]) == 2
+    assert [m["trained"] for m in sorted(body["models"], key=lambda m: m["id"])] == [False, True]
+
+    # 直近のジョブが処理中なら「処理中」
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5AI"), "name": "AI状態"},
+                      headers=head).json()["id"]
+    with TestingSessionLocal() as s:
+        from app.models import Photo
+        photo = Photo(project_id=pid, photo_no="AI-1", original_file_path="ai/test.jpg")
+        s.add(photo)
+        s.flush()
+        photo_id = photo.id
+        s.add(AiAnalysisJob(photo_id=photo_id, job_type="detection", status="QUEUED"))
+        s.commit()
+    assert key()["photo_classification"]["status"] == "processing"
+
+    # 成功したジョブがあれば「接続済み」
+    with TestingSessionLocal() as s:
+        job = s.query(AiAnalysisJob).filter(AiAnalysisJob.photo_id == photo_id).first()
+        job.status = "DONE"
+        job.completed_at = datetime.now(timezone.utc)
+        s.commit()
+    assert key()["photo_classification"]["status"] == "connected"
+
+    final = client.get("/api/ai/status", headers=head).json()
+    assert final["pending_jobs"] == 0
+    assert final["last_successful_job_at"] is not None

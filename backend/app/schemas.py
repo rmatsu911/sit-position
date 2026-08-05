@@ -736,6 +736,42 @@ class AuditLogOut(BaseModel):
     limit: int
 
 
+class AiFeatureStatusOut(BaseModel):
+    """AI機能1つの状態。構想（note）と実際の状態（status）を分けて返す。"""
+
+    key: str
+    title: str
+    #: not_implemented / model_missing / service_down / failed / processing / connected
+    status: str
+    #: 状態の補足（件数・エラー内容など）。無いときは None
+    detail: str | None = None
+    #: その機能が何をするものか。実装済みかどうかとは別の情報
+    note: str
+    #: 推論ジョブの種別。未実装の機能は None
+    job_type: str | None = None
+
+
+class AiModelStatusOut(BaseModel):
+    id: int
+    name: str
+    model_type: str
+    version: str
+    status: str
+    trained_at: datetime | None = None
+    #: 学習済みか。「登録されている」だけのモデルと区別する
+    trained: bool
+
+
+class AiStatusOut(BaseModel):
+    features: list[AiFeatureStatusOut]
+    models: list[AiModelStatusOut]
+    trained_model_count: int
+    #: 処理待ち・処理中のジョブ数（AI Worker が動いているかの手がかり）
+    pending_jobs: int
+    #: 最後に成功した推論ジョブの完了時刻。1件も無ければ None
+    last_successful_job_at: datetime | None = None
+
+
 class TaskFormOptions(BaseModel):
     """工程フォームの選択肢。画面が固定の一覧を持たないよう、実データから作る。
 

@@ -108,8 +108,55 @@ npm ci && npm run build
 
 ## 稼働中のコード世代の確認
 
-- `GET /health` … 認証不要。`backend_commit` と `backend_built_at` を返す。
-- `GET /api/system/info` … ADMIN のみ。Alembic revision・DB・ファイル保存・AI接続状態も返す。
+3つのエンドポイントは目的が違う。用途に合わないものを使うと、
+「動いていない」ことに気づけないので使い分ける。
+
+| エンドポイント | 認証 | 用途 | 返すもの |
+| --- | --- | --- | --- |
+| `GET /health` | 不要 | ロードバランサ・外形監視の死活確認 | `status` / `version` / `environment` / `backend_commit` / `backend_built_at` |
+| `GET /api/system/ping` | 全ロール | ログイン済み画面から「APIが自分と同じ世代か」を確かめる | `environment` / `api_version` / `backend_commit` |
+| `GET /api/system/info` | ADMIN のみ | 障害の切り分け | 上記＋`alembic_revision` / `database` / `storage` / `api_root_path` / `ai`（内訳） |
+
+`/health` は **DBを見ない**。DBが落ちていても 200 を返すので、疎通確認だけに使う。
+DB・ファイル保存・migration の状態を見たいときは `/api/system/info`。
+
+### AIの状態は1語にまとめない
+
+`system/info` の `ai` は次を**別々に**返す。まとめると障害の切り分けができない。
+
+| 項目 | 意味 |
+| --- | --- |
+| `registered_models` | `ai_models` に登録されているモデル数（未学習を含む） |
+| `trained_models` | そのうち学習済み（`trained_at` あり・ACTIVE/READY）の数 |
+| `pending_jobs` | 処理待ち・処理中の推論ジョブ数 |
+| `last_successful_job_at` | 最後に成功した推論ジョブの完了時刻。1件も無ければ `null` |
+| `worker` | `processing`（処理中）/ `not_running`（15分以上滞留＝Workerが動いていない）/ `idle`（待ちジョブが無く稼働は未確認）/ `unknown` |
+
+`idle` を「稼働中」とは書かない。待ちジョブが無い状態は、Worker が起動していなくても
+同じ見え方になるため。
+
+機能ごとの状態は `GET /api/ai/status`（全ロール）が返す。
+`not_implemented` / `model_missing` / `service_down` / `failed` / `processing` / `connected`
+の6状態で、画面（右側の「AI機能」パネル）はこの値だけを表示する。
+
+### SHA とベースパス
+
 - 画面では「設定 ＞ システム情報」。フロントとバックエンドのSHAが違うときは警告が出る。
 - フロントのSHAはビルド時に埋め込む。CI/Render では `GIT_COMMIT`（または
   `RENDER_GIT_COMMIT`）を渡す。バックエンドも同じ環境変数を読む。
+- **Xserver など、CIを通さず手元でビルドして配置する場合**は、ビルド時に
+  `GIT_COMMIT=$(git rev-parse HEAD)` を明示的に渡す。渡さないと `unknown` になり、
+  「どのコードが動いているか」を画面から確認できない。
+
+  ```bash
+  GIT_COMMIT=$(git rev-parse HEAD) VITE_BASE_PATH=/sysken/ npm run build
+  ```
+
+- サブパス配信では、画面の `VITE_BASE_PATH` と API の `API_ROOT_PATH` を
+  配信構成に合わせる。両方の値は「設定 ＞ システム情報」に出るので、
+  実環境で食い違っていないか目視で確認できる。
+
+  | 配信構成 | `VITE_BASE_PATH` | `API_ROOT_PATH` |
+  | --- | --- | --- |
+  | `https://example.com/` ＋ API が別ホスト | `/`（既定） | 空（既定） |
+  | `https://example.com/sysken/` ＋ API が `/sysken/api` | `/sysken/` | `/sysken/api` |

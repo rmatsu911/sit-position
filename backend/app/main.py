@@ -6,7 +6,13 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 
-app = FastAPI(title="株式会社SYSKEN AI施工管理システム API", version=settings.app_version)
+app = FastAPI(
+    title="株式会社SYSKEN AI施工管理システム API",
+    version=settings.app_version,
+    # サブパス配信（例: https://example.com/sysken/api）で、リバースプロキシが
+    # 前置きパスを切り落とす構成に対応する。空なら従来どおりルート直下。
+    root_path=settings.api_root_path,
+)
 
 app.add_middleware(
     CORSMiddleware,
