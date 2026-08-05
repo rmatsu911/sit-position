@@ -251,7 +251,9 @@ function WorkContent({ projectId }: { projectId: number }) {
               <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sysken-500 text-[11px] text-white">{i + 1}</span>
               <span className="text-ink">{t.name}</span>
               <span className="ml-auto shrink-0 text-[12px] text-ink-soft">
-                {formatPeriod(t.planStartAt, t.planEndAt, t.precision)} ／ 進捗 {t.progress}%
+                {t.planStartAt && t.planEndAt
+                  ? formatPeriod(t.planStartAt, t.planEndAt, t.precision)
+                  : '日程未設定'} ／ 進捗 {t.progress}%
               </span>
             </li>
           ))}

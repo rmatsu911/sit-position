@@ -286,6 +286,9 @@ def _cross(client, email: str, qs: str = ""):
     return r.json()
 
 
+_cross_seq = [0]
+
+
 def _make_cross_fixture(client):
     """横断工程表の検証用に、2案件へ工程を作る（担当者・担当会社・未割当を含む）。"""
     t = token(client, "pm@test.jp")
@@ -308,6 +311,9 @@ def _make_cross_fixture(client):
         pm_id = me.json()["id"]
 
     created = []
+    # WBSは案件内で一意なので、呼び出しごとに衝突しない接尾辞を付ける
+    _cross_seq[0] += 1
+    sfx = f"-{_cross_seq[0]}"
     specs = [
         ("cx-1", "横断 親工程", None, "2026-09-01", "2026-09-11", company_a1, pm_id),
         ("cx-1.1", "横断 子工程A", "cx-1", "2026-09-01", "2026-09-06", company_a1, pm_id),
@@ -317,7 +323,7 @@ def _make_cross_fixture(client):
     parents: dict[str, int] = {}
     for wbs, name, parent, ps, pe, company, manager in specs:
         body = {
-            "wbs_code": wbs, "name": name,
+            "wbs_code": f"{wbs}{sfx}", "name": name,
             "planned_start_at": f"{ps}T00:00:00+09:00",
             "planned_finish_at": f"{pe}T00:00:00+09:00",
             "company_id": company, "manager_id": manager,
@@ -404,7 +410,7 @@ def test_cross_schedule_half_day_roundtrip(client):
     t = token(client, "pm@test.jp")
     headers = {"Authorization": f"Bearer {t}"}
     r = client.post("/api/projects/2/tasks", headers=headers, json={
-        "wbs_code": "cx-9", "name": "横断 半日工程",
+        "wbs_code": f"cx-9-{_cross_seq[0]}", "name": "横断 半日工程",
         "planned_start_at": "2026-09-21T12:00:00+09:00",
         "planned_finish_at": "2026-09-22T00:00:00+09:00",
         "schedule_precision": "half_day",
@@ -2795,3 +2801,103 @@ def test_p5_health_exposes_code_generation(client):
     for key in ("version", "environment", "backend_commit", "backend_built_at"):
         assert key in body
     assert "password" not in str(body).lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: 親子工程（parent_task_id が正本）と日程未設定
+# ---------------------------------------------------------------------------
+
+def _p5_task(client, project_id, head, **body):
+    r = client.post(f"/api/projects/{project_id}/tasks", json={"name": "工程", **body}, headers=head)
+    return r
+
+
+def test_p5_parent_child_uses_parent_task_id(client, p4):
+    """親子は parent_task_id が正本で、WBSのドット有無に依存しないこと。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5WBS"), "name": "親子判定"},
+                      headers=head).json()["id"]
+
+    # WBS にドットが無くても親子にできる
+    parent = _p5_task(client, pid, head, name="親", wbs_code="A")
+    assert parent.status_code in (200, 201), parent.text
+    child = _p5_task(client, pid, head, name="子", wbs_code="B", parent_task_id=parent.json()["id"])
+    assert child.status_code in (200, 201), child.text
+    grand = _p5_task(client, pid, head, name="孫", wbs_code="C", parent_task_id=child.json()["id"])
+    assert grand.status_code in (200, 201), grand.text
+
+    rows = client.get(f"/api/projects/{pid}/tasks", headers=head).json()
+    by_name = {t["name"]: t for t in rows}
+    assert by_name["子"]["parent_task_id"] == by_name["親"]["id"]
+    assert by_name["孫"]["parent_task_id"] == by_name["子"]["id"]
+
+    # 帳票の末端工程は「子を持たない工程」＝孫だけ（WBSのドットでは判定しない）
+    preview = client.get(f"/api/reports/construction-management/preview?project_id={pid}", headers=head).json()
+    assert [r[1] for r in preview["rows"]] == ["孫"], preview["rows"]
+
+
+def test_p5_invalid_parent_is_rejected(client, p4):
+    """不正な親（自己参照・子孫・別案件・存在しない）を 422 で拒否すること。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5PAR"), "name": "親の検証"},
+                      headers=head).json()["id"]
+    other = client.post("/api/projects", json={"construction_number": _p4_number("P5OTH"), "name": "別案件"},
+                        headers=head).json()["id"]
+
+    a = _p5_task(client, pid, head, name="A", wbs_code="1").json()
+    b = _p5_task(client, pid, head, name="B", wbs_code="2", parent_task_id=a["id"]).json()
+    c = _p5_task(client, pid, head, name="C", wbs_code="3", parent_task_id=b["id"]).json()
+    foreign = _p5_task(client, other, head, name="他案件の工程", wbs_code="1").json()
+
+    # 自己参照
+    r = client.put(f"/api/tasks/{a['id']}", json={"name": "A", "parent_task_id": a["id"]}, headers=head)
+    assert r.status_code == 422, r.text
+    # 子孫を親にする（循環）
+    r = client.put(f"/api/tasks/{a['id']}", json={"name": "A", "parent_task_id": c["id"]}, headers=head)
+    assert r.status_code == 422, r.text
+    # 別案件の工程を親にする
+    r = client.put(f"/api/tasks/{b['id']}", json={"name": "B", "parent_task_id": foreign["id"]}, headers=head)
+    assert r.status_code == 422, r.text
+    # 存在しない親
+    r = client.put(f"/api/tasks/{b['id']}", json={"name": "B", "parent_task_id": 99999999}, headers=head)
+    assert r.status_code == 422, r.text
+    # 正当な付け替え（孫を最上位へ）は通る
+    r = client.put(f"/api/tasks/{c['id']}", json={"name": "C", "parent_task_id": None}, headers=head)
+    assert r.status_code == 200, r.text
+
+
+def test_p5_wbs_duplicate_is_rejected(client, p4):
+    """同じ案件でWBSコードが重複しないこと。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5DUP"), "name": "WBS重複"},
+                      headers=head).json()["id"]
+    first = _p5_task(client, pid, head, name="A", wbs_code="1")
+    assert first.status_code in (200, 201)
+    dup = _p5_task(client, pid, head, name="B", wbs_code="1")
+    assert dup.status_code == 422, dup.text
+    second = _p5_task(client, pid, head, name="B", wbs_code="2")
+    assert second.status_code in (200, 201)
+    # 更新でも重複は拒否
+    r = client.put(f"/api/tasks/{second.json()['id']}", json={"name": "B", "wbs_code": "1"}, headers=head)
+    assert r.status_code == 422, r.text
+    # 自分自身のWBSはそのまま保存できる
+    r = client.put(f"/api/tasks/{second.json()['id']}", json={"name": "B2", "wbs_code": "2"}, headers=head)
+    assert r.status_code == 200, r.text
+
+
+def test_p5_unscheduled_task_keeps_null_dates(client, p4):
+    """日程未設定の工程が、APIでも帳票でも「今日」に置き換えられないこと。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5NUL"), "name": "日程未設定"},
+                      headers=head).json()["id"]
+    created = _p5_task(client, pid, head, name="日程未設定の工程", wbs_code="1")
+    assert created.status_code in (200, 201), created.text
+
+    rows = client.get(f"/api/projects/{pid}/tasks", headers=head).json()
+    assert rows[0]["planned_start_at"] is None and rows[0]["planned_finish_at"] is None
+
+    preview = client.get(f"/api/reports/construction-management/preview?project_id={pid}", headers=head).json()
+    assert preview["row_count"] == 1
+    # 予定期間・実績期間ともに「—」（架空の日付を出さない）
+    assert preview["rows"][0][2] == "—", preview["rows"][0]
+    assert preview["rows"][0][3] == "—", preview["rows"][0]

@@ -221,6 +221,7 @@ export function toWbsTask(t: CrossTask, wbsById: Map<number, string>, parentIds:
     predecessors: t.dependencies.map((id) => wbsById.get(id)).filter((v): v is string => !!v),
     level: t.parent_task_id ? 1 : 0,
     // 子工程を持つ工程だけを親として扱う（子の無い最上位工程は通常のバーで描く）
+    parentId: t.parent_task_id != null ? String(t.parent_task_id) : null,
     isParent: parentIds.has(t.id),
     critical: false,
   }

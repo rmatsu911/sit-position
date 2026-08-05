@@ -299,6 +299,9 @@ export function GanttRow({
 }) {
   const ds = preview?.ds ?? 0
   const de = preview?.de ?? 0
+  // 日程が未設定の工程はガント上にバーを描かない（架空の日付で描かない）。
+  // 左の工程表には「日程未設定」として行が残る。
+  if (!t.planStartAt || !t.planEndAt) return null
   // ドラッグ中はプレビュー分だけ日付をずらしてから座標化する（区分=午前/午後は保たれる）
   const planBar = timeline.spanOf(shiftDays(t.planStartAt, ds), shiftDays(t.planEndAt, de))
   const baseBar = timeline.spanOf(t.planStartAt, t.planEndAt)
@@ -342,7 +345,7 @@ export function GanttRow({
         onContextMenu={onContext}
         onClick={onSelect}
         onDoubleClick={onOpenProgress}
-        title={`${t.name} ｜ 予定 ${formatPeriod(t.planStartAt, t.planEndAt, t.precision)}（${t.planDays}日） ｜ 進捗${t.progress}% ｜ ${t.actualPeople || t.planPeople}名`}
+        title={`${t.name} ｜ 予定 ${formatPeriod(t.planStartAt, t.planEndAt, t.precision)}（${t.planDays ?? '—'}日） ｜ 進捗${t.progress}% ｜ ${t.actualPeople || t.planPeople}名`}
       >
         {/* 進捗塗り */}
         <div className="absolute left-0 top-0 h-full rounded-l-sm bg-black/25" style={{ width: `${t.progress}%` }} />

@@ -80,6 +80,53 @@ def list_tasks(
     return [build_out(db, t) for t in db.execute(stmt.order_by(Task.wbs_code)).scalars().all()]
 
 
+def _descendant_ids(db: Session, task_id: int) -> set[int]:
+    """その工程の子孫すべて（親子は parent_task_id が正本。WBSの文字列では判定しない）。"""
+    seen: set[int] = set()
+    frontier = [task_id]
+    while frontier:
+        rows = db.execute(
+            select(Task.id).where(Task.parent_task_id.in_(frontier), Task.deleted_at.is_(None))
+        ).scalars().all()
+        rows = [r for r in rows if r not in seen]
+        if not rows:
+            break
+        seen.update(rows)
+        frontier = rows
+    return seen
+
+
+def _check_parent(db: Session, project_id: int, task_id: int | None, parent_id: int | None) -> None:
+    """親工程の指定を検証する。
+
+    - 存在しない／削除済み／別案件の親は 422
+    - 自分自身を親にはできない
+    - 自分の子孫を親にすると循環するため 422
+    """
+    if parent_id is None:
+        return
+    parent = db.get(Task, parent_id)
+    if not parent or parent.deleted_at is not None or parent.project_id != project_id:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "親工程が同じ案件に存在しません")
+    if task_id is not None:
+        if parent_id == task_id:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "自分自身を親工程にはできません")
+        if parent_id in _descendant_ids(db, task_id):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "自分の子孫を親工程にはできません")
+
+
+def _check_wbs_unique(db: Session, project_id: int, wbs_code: str | None, exclude_id: int | None = None) -> None:
+    """同じ案件でWBSコードが重複しないようにする（表示順・識別に使うため）。"""
+    if not wbs_code:
+        return
+    stmt = select(Task.id).where(
+        Task.project_id == project_id, Task.wbs_code == wbs_code, Task.deleted_at.is_(None)
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(Task.id != exclude_id)
+    if db.execute(stmt).first():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"WBS「{wbs_code}」は既に使われています")
+
 @router.post("/projects/{project_id}/tasks", response_model=TaskOut, status_code=status.HTTP_201_CREATED)
 def create_task(
     project_id: int,
@@ -90,6 +137,8 @@ def create_task(
     ensure_project_access(db, user, project_id)
     data = body.model_dump(exclude={"dependency_ids"})
     data["project_id"] = project_id
+    _check_parent(db, project_id, None, data.get("parent_task_id"))
+    _check_wbs_unique(db, project_id, data.get("wbs_code"))
     t = Task(**data)
     db.add(t)
     db.flush()
@@ -116,6 +165,10 @@ def update_task(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "工程が見つかりません")
     ensure_project_access(db, user, t.project_id)
     changes = body.model_dump(exclude_unset=True, exclude={"change_reason", "dependency_ids"})
+    if "parent_task_id" in changes:
+        _check_parent(db, t.project_id, t.id, changes["parent_task_id"])
+    if "wbs_code" in changes:
+        _check_wbs_unique(db, t.project_id, changes["wbs_code"], exclude_id=t.id)
     for field, new_value in changes.items():
         old_value = getattr(t, field)
         if old_value != new_value:

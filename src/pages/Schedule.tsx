@@ -131,7 +131,9 @@ function ScheduleBody({ projectId }: { projectId: number }) {
   // マイルストーンの予定日・実績日も範囲の根拠に入れる（描く対象を時間軸の外に置かない）。
   const range = useMemo(
     () => rangeForScale(scale, [
-      ...tasks.map((t) => ({ start: t.planStartAt, end: t.planEndAt })),
+      // 日程未設定の工程は表示範囲の根拠にしない（架空の日付を混ぜない）
+      ...tasks.filter((t) => t.planStartAt && t.planEndAt)
+        .map((t) => ({ start: t.planStartAt!, end: t.planEndAt! })),
       ...(milestoneData?.milestones ?? []).flatMap((m) => [
         { start: m.planned_at, end: m.planned_at },
         { start: m.actual_at, end: m.actual_at },
@@ -194,14 +196,20 @@ function ScheduleBody({ projectId }: { projectId: number }) {
 
   const visible = useMemo(() => {
     if (filterStatus !== 'all') return tasks.filter((t) => !t.isParent && t.status === filterStatus)
-    return tasks.filter((t) => {
-      if (t.level === 1) {
-        const parentWbs = t.wbs.split('.')[0]
-        const parent = tasks.find((p) => p.wbs === parentWbs && p.isParent)
-        if (parent && collapsed.has(parent.id)) return false
+    // 折りたたみは parent_task_id をたどって判定する（WBSの文字列では判定しない）。
+    // 階層は2段に限定せず、祖先のどこかが閉じていれば隠す。
+    const byId = new Map(tasks.map((t) => [t.id, t]))
+    const hiddenByAncestor = (t: WbsTask): boolean => {
+      let parent = t.parentId ? byId.get(t.parentId) : undefined
+      let guard = 0
+      while (parent && guard < 20) {
+        if (collapsed.has(parent.id)) return true
+        parent = parent.parentId ? byId.get(parent.parentId) : undefined
+        guard += 1
       }
-      return true
-    })
+      return false
+    }
+    return tasks.filter((t) => !hiddenByAncestor(t))
   }, [tasks, collapsed, filterStatus])
 
   const rowIndexById = useMemo(() => {
@@ -240,6 +248,8 @@ function ScheduleBody({ projectId }: { projectId: number }) {
   function startDrag(e: React.PointerEvent, t: WbsTask, mode: 'move' | 'resize') {
     e.stopPropagation()
     // 工程は名前に関係なくドラッグできる（マイルストーンはそもそも工程行に入らない）
+    // 日程未設定の工程はドラッグで動かせない（まず日程を登録する）
+    if (!t.planStartAt || !t.planEndAt) return
     dragRef.current = { id: t.id, mode, startX: e.clientX, s: t.planStartAt, e: t.planEndAt, precision: t.precision }
   }
 
@@ -305,6 +315,7 @@ function ScheduleBody({ projectId }: { projectId: number }) {
         const pr = rowIndexById.get(pred.id)!
         const sr = rowIndexById.get(t.id)!
         // 先行工程のバー右端（終了日の翌日0時）から、後続工程の開始位置へ引く
+        if (!pred.planStartAt || !pred.planEndAt || !t.planStartAt) continue
         const predBar = timeline.spanOf(pred.planStartAt, pred.planEndAt)
         const x1 = predBar.left + predBar.width
         const y1 = pr * ROW_H + 11
@@ -475,8 +486,8 @@ function ScheduleBody({ projectId }: { projectId: number }) {
                       <td className="border-r border-line px-2 text-ink-soft" style={{ width: 72 }}>{t.workType}</td>
                       <td className="border-r border-line px-2 text-ink-soft" style={{ width: 68 }}>{t.crew}</td>
                       <td className="border-r border-line px-2 text-ink-soft" style={{ width: 76 }}>{t.manager}</td>
-                      <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{edgeLabel(t.planStartAt, 'start', t.precision)}</td>
-                      <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{edgeLabel(t.planEndAt, 'end', t.precision)}</td>
+                      <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{t.planStartAt ? edgeLabel(t.planStartAt, 'start', t.precision) : '未設定'}</td>
+                      <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{t.planEndAt ? edgeLabel(t.planEndAt, 'end', t.precision) : '未設定'}</td>
                       <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{t.actualStartAt ? edgeLabel(t.actualStartAt, 'start', t.precision) : '—'}</td>
                       <td className="border-r border-line px-2 tabular-nums text-ink-soft" style={{ width: 82 }}>{t.actualEndAt ? edgeLabel(t.actualEndAt, 'end', t.precision) : '—'}</td>
                       <td className="border-r border-line px-2 text-center tabular-nums text-ink-soft" style={{ width: 44 }}>{t.planDays}</td>
@@ -572,7 +583,9 @@ function ScheduleBody({ projectId }: { projectId: number }) {
             <div className="grid grid-cols-2 gap-3 text-[13px]">
               <Info label="工種" value={progressModal.workType} />
               <Info label="担当班" value={progressModal.crew} />
-              <Info label="予定期間" value={formatPeriod(progressModal.planStartAt, progressModal.planEndAt, progressModal.precision)} />
+              <Info label="予定期間" value={progressModal.planStartAt && progressModal.planEndAt
+                ? formatPeriod(progressModal.planStartAt, progressModal.planEndAt, progressModal.precision)
+                : '未設定'} />
               <Info label="ステータス" value={progressModal.status} />
             </div>
             <div>
@@ -630,6 +643,14 @@ function periodFormOf(task?: WbsTask, parent?: WbsTask) {
       planEndDate: todayKey, planEndHalf: 'PM' as HalfDay,
     }
   }
+  // 日程未設定の工程を編集するときは、入力欄を空のままにする（今日で埋めない）
+  if (!src.planStartAt || !src.planEndAt) {
+    return {
+      unit: (src.precision === 'half_day' ? 'half' : 'day') as ScheduleUnit,
+      planStartDate: '', planStartHalf: 'AM' as HalfDay,
+      planEndDate: '', planEndHalf: 'PM' as HalfDay,
+    }
+  }
   const s0 = splitStartAt(src.planStartAt)
   const e0 = splitEndAt(src.planEndAt)
   return {
@@ -660,8 +681,10 @@ function TaskEditor({
 }) {
   const source = editor?.task
   const parent = editor?.parent
-  const nextRoot = Math.max(0, ...tasks.filter((t) => t.isParent).map((t) => Number(t.wbs) || 0)) + 1
-  const childCount = parent ? tasks.filter((t) => t.wbs.startsWith(`${parent.wbs}.`)).length : 0
+  // 次のWBS番号は「最上位の工程」から決める（isParent は子の有無なので使わない）
+  const nextRoot = Math.max(0, ...tasks.filter((t) => t.level === 0).map((t) => Number(t.wbs) || 0)) + 1
+  // 子の数は parent_task_id で数える（WBSの文字列では数えない）
+  const childCount = parent ? tasks.filter((t) => t.parentId === parent.id).length : 0
   const initial = () => ({
     wbs: source ? (editor?.mode === 'copy' ? `${source.wbs}-copy` : source.wbs) : parent ? `${parent.wbs}.${childCount + 1}` : String(nextRoot),
     name: source ? `${source.name}${editor?.mode === 'copy' ? '（コピー）' : ''}` : '',

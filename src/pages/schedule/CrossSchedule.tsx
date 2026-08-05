@@ -321,6 +321,7 @@ export default function CrossSchedule() {
         const pr = rowIndexByTaskId.get(depId)
         const pred = taskById.get(depId)
         if (pr === undefined || !pred?.planned_start_at || !pred.planned_finish_at) continue
+        if (!r.bar.planStartAt) continue  // 日程未設定の工程へは依存線を引かない
         const predBar = timeline.spanOf(pred.planned_start_at, pred.planned_finish_at)
         lines.push({
           x1: predBar.left + predBar.width,
@@ -388,6 +389,8 @@ export default function CrossSchedule() {
     const t = taskById.get(Number(bar.id))
     // 工程は名前に関係なくドラッグできる（マイルストーンは工程行に含めない）
     if (!t) return
+    // 日程未設定の工程はドラッグで動かせない（まず日程を登録する）
+    if (!bar.planStartAt || !bar.planEndAt) return
     dragRef.current = {
       taskId: t.id, projectId: t.project_id, mode: 'move', startX: e.clientX,
       s: bar.planStartAt, e: bar.planEndAt, precision: bar.precision,
