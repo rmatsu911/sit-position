@@ -250,8 +250,11 @@ const slotWidth = await page.evaluate(() => {
   return h.length ? h[0].getBoundingClientRect().width : 0
 })
 ok(slotWidth > 0, '日単位の列幅を実測できる', `${slotWidth}px`)
-const childCell = (i) => childRow().locator('td').nth(i).innerText()
-const startBefore = await childCell(5)
+// 列の位置は LEFT_COLS（src/pages/Schedule.tsx）に対応する。
+// 位置で数えると列を足したときに黙ってずれるため、名前から引く。
+const COL = { 開始予定: 5, 終了予定: 6, 余裕: 10, 進捗: 11 }
+const childCell = (name) => childRow().locator('td').nth(COL[name]).innerText()
+const startBefore = await childCell('開始予定')
 const bar = page.locator(`[title^="${TASK_CHILD_UPDATED} ｜ 予定"]`).first()
 const box = await bar.boundingBox()
 ok(!!box, 'ガントバーが描画されている', box ? `left=${Math.round(box.x)} w=${Math.round(box.width)}` : '')
@@ -261,7 +264,7 @@ await page.mouse.move(box.x + box.width / 2 + slotWidth, box.y + box.height / 2,
 await page.mouse.up()
 await page.waitForSelector('text=日程変更を保存しました', { timeout: 15000 })
 await page.waitForTimeout(1200)
-const startAfter = await childCell(5)
+const startAfter = await childCell('開始予定')
 ok(startBefore !== startAfter, 'ドラッグで予定開始日が変わる', `${startBefore} → ${startAfter}`)
 
 // =====================================================================
@@ -276,7 +279,7 @@ for (let i = 0; i < 12; i++) await range.press('ArrowRight')
 await modalSubmit().click()
 await page.waitForSelector('text=進捗を 60% に更新しました', { timeout: 15000 })
 await page.waitForTimeout(900)
-ok((await childCell(10)).trim() === '60%', '進捗が60%になる', (await childCell(10)).trim())
+ok((await childCell('進捗')).trim() === '60%', '進捗が60%になる', (await childCell('進捗')).trim())
 
 // =====================================================================
 section('Step 10: 工程画面を再読込しても維持')
@@ -284,8 +287,8 @@ await page.reload({ waitUntil: 'networkidle' })
 await page.waitForSelector('text=基準工程', { timeout: 20000 })
 await page.waitForTimeout(600)
 ok(await childRow().count() === 1, '再読込後も編集した工程名が残る')
-ok((await childCell(5)) === startAfter, '再読込後もドラッグ結果が残る', await childCell(5))
-ok((await childCell(10)).trim() === '60%', '再読込後も進捗が残る')
+ok((await childCell('開始予定')) === startAfter, '再読込後もドラッグ結果が残る', await childCell('開始予定'))
+ok((await childCell('進捗')).trim() === '60%', '再読込後も進捗が残る')
 
 // =====================================================================
 section('Step 11: 横断工程へ反映')

@@ -1,17 +1,46 @@
-# 回帰確認の基準（Ver.0.3）
+# 回帰確認の基準（Ver.0.5 時点）
 
 大きな改修（横断工程表・カレンダー・現場連絡など）の前後で、既存機能が
 壊れていないことを同じ手順で確認するための基準。
+
+## 0. まとめて実行する
+
+```bash
+scripts/dev-stack.sh start                    # PostgreSQL → migration → backend(:8000) → preview(:4173)
+PW_CHROME=<chromium> npm run verify:all       # 全ゲートを順に実行し、1枚にまとめて表示
+```
+
+`verify:all` は、スタックが起動していないとブラウザ回帰を **skipped** として残す。
+skipped は成功ではない。起動して実行し直すこと。
+
+Ver.0.5 時点の基準値（すべて 0 failed）:
+
+| ゲート | 基準値 |
+|---|---|
+| typecheck / build | 成功 |
+| ESLint | エラー 0（警告13件は react-refresh の既知） |
+| timeline | 130 passed |
+| cpm | 49 passed |
+| 固定案件参照の監査 | 残存 0 件 |
+| pytest | 144 passed |
+| Phase 4 回帰 | 172 passed |
+| Phase 5 工程フォーム | 59 passed |
+| Phase 5 状態表示 | 53 passed |
+| Phase 5 全画面監査 | 136 passed |
+
+CI（`.github/workflows/ci.yml`）は、このうち実行環境を用意せずに判定できるもの
+（typecheck / lint / build / timeline / cpm / 固定案件参照 / pytest / migration の往復）
+を PR ごとに動かす。ブラウザ回帰は含めていないので、手元で実行する。
 
 ## 1. 品質ゲート（コマンド）
 
 | ゲート | コマンド | 基準値（Phase 0 時点） |
 |---|---|---|
 | TypeScript | `npm run typecheck` | エラー 0（**`npx tsc --noEmit` はソリューション構成のため何も検査しない。必ず `-b` を使う**） |
-| ESLint | `npm run lint` | **エラー 0**（警告は Badge.tsx の HMR 警告 1件のみ） |
+| ESLint | `npm run lint` | **エラー 0**（警告13件は react-refresh の既知） |
 | production build | `npm run build` | 成功（bundle 500kB超の警告は既知） |
-| 時間軸エンジン | `npm run test:timeline` | **113 passed / 0 failed** |
-| Backend テスト | `cd backend && python -m pytest` | **102 passed**（Phase 3 で +46） |
+| 時間軸エンジン | `npm run test:timeline` | **130 passed / 0 failed**（Ver.0.5 で時間単位を追加） |
+| Backend テスト | `cd backend && python -m pytest` | **144 passed**（Ver.0.5 時点） |
 | 横断工程の座標実測 | `PW_CHROME=<chrome> node scripts/cross-schedule-measure.mjs` | **25 passed / 0 failed** |
 | 横断工程の完了確認 | `PW_CHROME=<chrome> node scripts/cross-schedule-final.mjs` | **39 passed / 0 failed** |
 | 表示単位の検証 | `PW_CHROME=<chrome> node scripts/scale-selector-verify.mjs` | **50 passed / 0 failed** |
@@ -20,6 +49,12 @@
 | 工程画面へのマイルストーン統合 | `PW_CHROME=<chrome> node scripts/milestone-integration-verify.mjs` | **71 passed / 0 failed** |
 | 表示名依存の監査 | `node scripts/milestone-source-audit.mjs` | 業務判定に表示名依存 0 件 |
 | カレンダー | `PW_CHROME=<chrome> node scripts/calendar-verify.mjs` | **61 passed / 0 failed** |
+| クリティカルパス | `npm run test:cpm` | **49 passed / 0 failed** |
+| Phase 4 回帰 | `PW_CHROME=<chrome> node scripts/phase4-verify.mjs` | **172 passed / 0 failed** |
+| Phase 5 工程フォーム | `PW_CHROME=<chrome> node scripts/phase5-task-form-verify.mjs` | **59 passed / 0 failed** |
+| Phase 5 状態表示 | `PW_CHROME=<chrome> node scripts/phase5-status-verify.mjs` | **53 passed / 0 failed** |
+| Phase 5 全画面監査 | `PW_CHROME=<chrome> node scripts/phase5-screen-audit.mjs` | **136 passed / 0 failed** |
+| 固定案件参照の監査 | `node scripts/fixed-project-audit.mjs` | 残存 0 件 |
 
 ## 2. 画面の回帰確認（実ブラウザ）
 
