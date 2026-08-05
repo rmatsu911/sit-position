@@ -6,6 +6,8 @@ import { Modal } from '../components/ui/Modal'
 import { StatusBadge } from '../components/ui/Badge'
 import { useApp } from '../context/AppContext'
 import { useLedger } from '../api/ledger'
+import { useProject } from '../api/projects'
+import { FixedProject, ProjectSelect, projectLabel, useSelectedProject } from '../components/ui/ProjectSelect'
 import { yen } from '../lib/format'
 
 const COLS = [
@@ -31,7 +33,10 @@ const COLS = [
 
 export default function Ledger() {
   const { toast } = useApp()
-  const { data: ledgerRows = [], isLoading, isError } = useLedger()
+  // 対象案件の正本は URL。案件配下ルートではその案件だけを取得する。
+  const { projectId, setProjectId, fixedByPath } = useSelectedProject()
+  const { data: project } = useProject(projectId)
+  const { data: ledgerRows = [], isLoading, isError } = useLedger(projectId)
   const [selectedCell, setSelectedCell] = useState<string | null>(null)
   const [selectedRow, setSelectedRow] = useState<string | null>(null)
   const [sortKey, setSortKey] = useState<string>('workNo')
@@ -77,6 +82,12 @@ export default function Ledger() {
         description="工事情報の一覧管理（Excel風）"
         actions={
           <>
+          <div className="flex items-center gap-2">
+            <span className="text-[12px] text-ink-soft">対象案件</span>
+            {fixedByPath
+              ? <FixedProject label={project ? projectLabel(project) : undefined} />
+              : <ProjectSelect projectId={projectId} onChange={setProjectId} />}
+          </div>
             <button className="btn-default" onClick={() => toast('この操作は現在準備中です')}><Filter size={15} />列固定</button>
             <button className="btn-default" onClick={() => toast('この操作は現在準備中です')}><Copy size={15} />コピー</button>
             <button className="btn-default" onClick={() => setOutput('工事台帳のCSV出力')}><FileDown size={15} />CSV出力</button>

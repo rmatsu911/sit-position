@@ -15,6 +15,7 @@ import { useTaskOptions } from '../api/tasks'
 import { useProject } from '../api/projects'
 import { usePhotos } from '../api/photos'
 import { FixedProject, NoProjectSelected, ProjectSelect, projectLabel, useSelectedProject } from '../components/ui/ProjectSelect'
+import { ProjectScope } from '../components/ui/ProjectScope'
 import type { DailyReport, ReportStatus } from '../types'
 
 /**
@@ -26,8 +27,12 @@ import type { DailyReport, ReportStatus } from '../types'
  */
 export default function DailyReportPage() {
   const { projectId, setProjectId } = useSelectedProject()
-  if (!projectId) {
-    return (
+  // 案件が変わる／未選択へ戻る間は、前の案件の内容を描かない（ProjectScope が伏せる）
+  return (
+    <ProjectScope projectId={projectId}>
+      {projectId
+        ? <DailyReportBody key={projectId} projectId={projectId} />
+        : (
       <div>
         <div className="mb-3 flex items-center gap-2 rounded border border-line bg-white px-3 py-2">
           <span className="text-[12px] text-ink-soft">対象案件</span>
@@ -35,9 +40,9 @@ export default function DailyReportPage() {
         </div>
         <Panel><NoProjectSelected what="現場日報" /></Panel>
       </div>
-    )
-  }
-  return <DailyReportBody key={projectId} projectId={projectId} />
+        )}
+    </ProjectScope>
+  )
 }
 
 function DailyReportBody({ projectId }: { projectId: number }) {
@@ -137,11 +142,13 @@ function DailyReportBody({ projectId }: { projectId: number }) {
     })
   }
 
-  // 案件を選ぶ手段は常に画面へ出す（未選択・読み込み中・エラーでも選び直せる）
+  // 対象案件の表示は常に画面へ出す。案件配下ルートでは固定表示（変更不可）。
   const selector = (
     <div className="mb-3 flex items-center gap-2 rounded border border-line bg-white px-3 py-2">
       <span className="text-[12px] text-ink-soft">対象案件</span>
-      <ProjectSelect projectId={projectId} onChange={setProjectId} />
+      {fixedByPath
+        ? <FixedProject label={project ? projectLabel(project) : undefined} />
+        : <ProjectSelect projectId={projectId} onChange={setProjectId} />}
     </div>
   )
   if (isLoading) return <div>{selector}<div className="rounded border border-line bg-white px-4 py-16 text-center text-[13px] text-ink-soft">日報を読み込んでいます…</div></div>

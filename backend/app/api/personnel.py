@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -76,8 +76,19 @@ def to_out(db: Session, w: Worker) -> WorkerOut:
 
 
 @router.get("", response_model=list[WorkerOut])
-def list_workers(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[WorkerOut]:
+def list_workers(
+    project_id: int | None = Query(None, description="案件に配置された要員だけに絞り込む"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[WorkerOut]:
+    """要員一覧。案件配下の画面からは project_id を渡し、その案件の配置だけを返す。"""
     stmt = select(Worker).where(Worker.deleted_at.is_(None)).order_by(Worker.id)
+    if project_id is not None:
+        # 案件スコープと権限はここで強制する（画面の絞り込みに任せない）
+        ensure_project_access(db, user, project_id)
+        stmt = stmt.where(Worker.id.in_(
+            select(WorkerAssignment.worker_id).where(WorkerAssignment.project_id == project_id)
+        ))
     return [to_out(db, w) for w in db.execute(stmt).scalars().all()]
 
 

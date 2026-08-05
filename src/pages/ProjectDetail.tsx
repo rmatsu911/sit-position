@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { ExternalLink, AlertTriangle, Clock, Loader2 } from 'lucide-react'
 import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel, EmptyState } from '../components/ui/common'
@@ -9,6 +9,7 @@ import { Modal } from '../components/ui/Modal'
 import { PhotoImage } from '../components/ui/PhotoImage'
 import { manYen } from '../lib/format'
 import { useAuth } from '../auth/AuthContext'
+import { useSelectedProject, projectLabel } from '../components/ui/ProjectSelect'
 import { useProject, useUpdateProject, type ApiProject } from '../api/projects'
 import { useProjectTasks } from '../api/tasks'
 import { formatPeriod } from '../lib/timeline'
@@ -20,15 +21,18 @@ import NotFound from './NotFound'
 const TABS = ['概要', '作業内容', '工程', '施工写真', '図面', '現場日報', '品質', '要員', '資材', '報告書', '操作履歴'] as const
 type Tab = (typeof TABS)[number]
 
+// 案件詳細の各タブは案件配下ルートへ移動する（対象案件はパスの :id が正本）
 const routeByTab: Partial<Record<Tab, string>> = {
-  工程: '/schedule', 施工写真: '/photos', 図面: '/drawings', 現場日報: '/daily-report', 品質: '/quality', 要員: '/personnel', 報告書: '/reports',
+  工程: 'schedule', 施工写真: 'photos', 図面: 'drawings', 現場日報: 'daily-report',
+  品質: 'quality', 要員: 'personnel', 報告書: 'reports',
 }
 
 export default function ProjectDetail() {
-  const { id } = useParams()
   const navigate = useNavigate()
   const { user } = useAuth()
-  const pid = Number(id)
+  // 案件IDの解決は共通コンテキストだけを正本にする（画面ごとの独自解析をしない）
+  const { projectId } = useSelectedProject()
+  const pid = projectId ?? NaN
   const { data: p, isLoading, isError, error } = useProject(Number.isNaN(pid) ? undefined : pid)
   const [tab, setTab] = useState<Tab>('概要')
   const [editOpen, setEditOpen] = useState(false)
@@ -57,9 +61,9 @@ export default function ProjectDetail() {
   return (
     <div>
       <PageHeader
-        breadcrumb={[{ label: '案件一覧', to: '/projects' }, { label: p.name }]}
+        breadcrumb={[{ label: '案件一覧', to: '/projects' }, { label: projectLabel(p) }]}
         title={p.name}
-        description={`${code} ／ ${client} ／ ${location}`}
+        description={`${projectLabel(p)} ／ ${client} ／ ${location}`}
         actions={<><StatusBadge status={p.status} />{canEdit && <button className="btn-default" data-edit-project onClick={() => setEditOpen(true)}>基本情報を編集</button>}<button className="btn-primary" onClick={() => navigate(`/projects/${p.id}/schedule`)}>工程管理を開く</button></>}
       />
 
@@ -97,7 +101,8 @@ export default function ProjectDetail() {
       {tab === '資材' && <Materials projectId={pid} />}
       {tab === '操作履歴' && <History />}
       {(['工程', '施工写真', '図面', '現場日報', '品質', '要員', '報告書'] as Tab[]).includes(tab) && (
-        <LinkTab tab={tab} to={tab === '工程' ? `/projects/${p.id}/schedule` : `${routeByTab[tab]!}?project_id=${p.id}`} onGo={() => navigate(tab === '工程' ? `/projects/${p.id}/schedule` : `${routeByTab[tab]!}?project_id=${p.id}`)} projectId={String(p.id)} />
+        <LinkTab tab={tab} to={`/projects/${p.id}/${routeByTab[tab]!}`}
+          onGo={() => navigate(`/projects/${p.id}/${routeByTab[tab]!}`)} projectId={String(p.id)} />
       )}
       <ProjectEditModal open={editOpen} onClose={() => setEditOpen(false)} project={p} />
     </div>

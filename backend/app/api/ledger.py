@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -33,9 +33,17 @@ def to_row(db: Session, p: Project, ledger: ProjectLedger | None) -> LedgerRowOu
 
 
 @router.get("", response_model=list[LedgerRowOut])
-def list_ledger(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[LedgerRowOut]:
+def list_ledger(
+    project_id: int | None = Query(None, description="1案件だけの台帳を取得する"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[LedgerRowOut]:
     allowed = accessible_project_ids(db, user)
     stmt = select(Project).where(Project.deleted_at.is_(None)).order_by(Project.id)
+    if project_id is not None:
+        # 案件スコープと権限はここで強制する
+        ensure_project_access(db, user, project_id)
+        stmt = stmt.where(Project.id == project_id)
     projects = db.execute(stmt).scalars().all()
     ledgers = {l.project_id: l for l in db.execute(select(ProjectLedger)).scalars().all()}
     rows = []

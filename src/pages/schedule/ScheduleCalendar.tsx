@@ -6,7 +6,8 @@
  * カレンダー専用のデータは持たず、選択すると元データの画面へ移動する。
  */
 import { useCallback, useMemo, useState } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSelectedProject } from '../../components/ui/ProjectSelect'
 import {
   AlertTriangle, ChevronLeft, ChevronRight, Filter, RotateCcw, Save, Trash2,
 } from 'lucide-react'
@@ -68,11 +69,13 @@ function paramsFromState(f: CalendarFilters, view: CalendarView, anchor: string)
 
 export default function ScheduleCalendar() {
   const navigate = useNavigate()
-  const { id } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
+  // 案件IDは共通コンテキスト（パスの :id → ?project_id=）だけを正本にする
+  const { projectId: scopedFromContext, fixedByPath } = useSelectedProject()
 
   // 案件詳細ルートではパスの案件IDを優先する（URLクエリで別案件へ広がらない）
-  const scopedProjectId = Number(id) > 0 ? Number(id) : undefined
+  // 案件配下ルートのときだけ案件で絞り込む（横断ルートでは undefined）
+  const scopedProjectId = fixedByPath ? scopedFromContext : undefined
 
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams])
   const view: CalendarView = searchParams.get('view') === 'week' ? 'week' : 'month'

@@ -6,7 +6,8 @@
  * PUT /api/tasks/{id} を使い、案件工程と同じ実装を共有する。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSelectedProject } from '../../components/ui/ProjectSelect'
 import {
   AlertTriangle, Building2, ChevronDown, ChevronRight, Crosshair, ExternalLink, Eye, FileDown,
   Filter, Printer, RotateCcw, Save, SlidersHorizontal, Trash2, TrendingUp, UserPlus,
@@ -132,11 +133,13 @@ function paramsFromFilters(f: CrossFilters, group: GroupKey, scale: TimeScale): 
 export default function CrossSchedule() {
   const { toast } = useApp()
   const navigate = useNavigate()
-  const { id } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
+  // 案件IDは共通コンテキスト（パスの :id → ?project_id=）だけを正本にする
+  const { projectId: scopedFromContext, fixedByPath } = useSelectedProject()
 
   // 案件指定つきルート（/projects/:id/schedule/cross）は対象案件で絞り込んだ状態で開く
-  const scopedProjectId = Number(id) > 0 ? Number(id) : undefined
+  // 案件配下ルートのときだけ案件で絞り込む（横断ルートでは undefined）
+  const scopedProjectId = fixedByPath ? scopedFromContext : undefined
 
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams])
   const group = (searchParams.get('group') as GroupKey) || 'project'

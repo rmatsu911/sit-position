@@ -10,6 +10,7 @@ import { useQualityChecks, useUpdateQualityCheck } from '../api/quality'
 import { useProject } from '../api/projects'
 import { usePhotos } from '../api/photos'
 import { FixedProject, NoProjectSelected, ProjectSelect, projectLabel, useSelectedProject } from '../components/ui/ProjectSelect'
+import { ProjectScope } from '../components/ui/ProjectScope'
 import { useTestRecords, useCreateTestRecord } from '../api/testRecords'
 import { useAssets } from '../api/sites'
 import { useTaskOptions } from '../api/tasks'
@@ -25,8 +26,12 @@ const flow = ['写真登録', 'AI画像認識', '品質確認', 'コメント入
  */
 export default function Quality() {
   const { projectId, setProjectId } = useSelectedProject()
-  if (!projectId) {
-    return (
+  // 案件が変わる／未選択へ戻る間は、前の案件の内容を描かない（ProjectScope が伏せる）
+  return (
+    <ProjectScope projectId={projectId}>
+      {projectId
+        ? <QualityBody key={projectId} projectId={projectId} />
+        : (
       <div>
         <PageHeader
           breadcrumb={[{ label: '品質管理' }]}
@@ -41,9 +46,9 @@ export default function Quality() {
         />
         <Panel><NoProjectSelected what="品質確認と試験記録" /></Panel>
       </div>
-    )
-  }
-  return <QualityBody key={projectId} projectId={projectId} />
+        )}
+    </ProjectScope>
+  )
 }
 
 function QualityBody({ projectId }: { projectId: number }) {

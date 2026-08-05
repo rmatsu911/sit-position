@@ -7,7 +7,8 @@
  * 件数はすべて /summary の確定計算を使い、画面側で数え直さない。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSelectedProject } from '../../components/ui/ProjectSelect'
 import {
   AlertTriangle, CalendarClock, Crosshair, FileDown, Filter, Pencil, Plus,
   Printer, RotateCcw, Save, Table2, Trash2,
@@ -119,12 +120,14 @@ export default function CrossMilestones() {
   const { toast, confirm } = useApp()
   const { user } = useAuth()
   const navigate = useNavigate()
-  const { id } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
+  // 案件IDは共通コンテキスト（パスの :id → ?project_id=）だけを正本にする
+  const { projectId: scopedFromContext, fixedByPath } = useSelectedProject()
 
   // 案件詳細ルートではパスの案件IDを優先し、APIにも project_id を渡す。
   // URLクエリや保存検索で別案件へ範囲が広がらない。
-  const scopedProjectId = Number(id) > 0 ? Number(id) : undefined
+  // 案件配下ルートのときだけ案件で絞り込む（横断ルートでは undefined）
+  const scopedProjectId = fixedByPath ? scopedFromContext : undefined
 
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams])
   const view: ViewKind = searchParams.get('view') === 'timeline' ? 'timeline' : 'table'

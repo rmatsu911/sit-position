@@ -35,10 +35,14 @@ export function toWorker(w: ApiWorker): Worker {
   }
 }
 
-export function useWorkers() {
+/** 要員一覧。案件を指定すると、その案件に配置された要員だけを取得する。 */
+export function useWorkers(projectId?: number) {
   return useQuery({
-    queryKey: ['workers'],
-    queryFn: async () => (await api<ApiWorker[]>('/workers')).map(toWorker),
+    queryKey: ['workers', projectId ?? 'all'],
+    queryFn: async () => {
+      const qs = projectId ? `?project_id=${projectId}` : ''
+      return (await api<ApiWorker[]>(`/workers${qs}`)).map(toWorker)
+    },
   })
 }
 

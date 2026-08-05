@@ -8,6 +8,7 @@
 import { useParams, useSearchParams } from 'react-router-dom'
 import { FolderOpen } from 'lucide-react'
 import { useProject, useProjects, type ApiProject } from '../../api/projects'
+import { beginProjectSwitch } from './ProjectScope'
 
 /**
  * 選択中の案件ID。
@@ -24,6 +25,10 @@ export function useSelectedProject() {
   const projectId = inPath ?? pick(Number(params.get('project_id')))
 
   const setProjectId = (id: number | undefined) => {
+    if (id !== projectId) {
+      // URLを変える前に内容を伏せる。前の案件が1フレームも残らないようにする。
+      beginProjectSwitch()
+    }
     const next = new URLSearchParams(params)
     if (id) next.set('project_id', String(id))
     else next.delete('project_id')

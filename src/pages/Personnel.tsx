@@ -5,14 +5,18 @@ import { Panel } from '../components/ui/common'
 import { StatusBadge, Badge } from '../components/ui/Badge'
 import { useApp } from '../context/AppContext'
 import { useWorkers, useAssignWorker } from '../api/personnel'
-import { useProjects } from '../api/projects'
+import { useProject, useProjects } from '../api/projects'
+import { FixedProject, ProjectSelect, projectLabel, useSelectedProject } from '../components/ui/ProjectSelect'
 import type { Worker } from '../types'
 
 const allLicenses = ['高所作業車', '酸素欠乏危険作業', '職長・安全衛生責任者', '光ファイバ融着', '電気工事士', '玉掛け', '小型移動式クレーン', '低圧電気取扱', 'フルハーネス特別教育', '交通誘導']
 
 export default function Personnel() {
   const { toast } = useApp()
-  const { data: workers = [], isLoading, isError } = useWorkers()
+  // 対象案件の正本は URL。案件配下ルートではその案件の配置だけを取得する。
+  const { projectId, setProjectId, fixedByPath } = useSelectedProject()
+  const { data: project } = useProject(projectId)
+  const { data: workers = [], isLoading, isError } = useWorkers(projectId)
   const { data: projectList = [] } = useProjects()
   const assignMut = useAssignWorker()
   const nameToId = useMemo(() => new Map(projectList.map((p) => [p.name, p.id])), [projectList])
@@ -46,11 +50,19 @@ export default function Personnel() {
         title="要員管理"
         description={`稼働 ${workers.filter((w) => w.status === '稼働').length}名 ／ 待機 ${workers.filter((w) => w.status === '待機').length}名 ／ 休暇 ${workers.filter((w) => w.status === '休暇').length}名`}
         actions={
+          <>
+          <div className="flex items-center gap-2">
+            <span className="text-[12px] text-ink-soft">対象案件</span>
+            {fixedByPath
+              ? <FixedProject label={project ? projectLabel(project) : undefined} />
+              : <ProjectSelect projectId={projectId} onChange={setProjectId} />}
+          </div>
           <div className="flex items-center gap-0.5 rounded border border-line p-0.5">
             {(['week', 'assign'] as const).map((v) => (
               <button key={v} onClick={() => setView(v)} className={`rounded px-2.5 py-1 text-xs font-medium ${view === v ? 'bg-sysken-500 text-white' : 'text-ink hover:bg-canvas'}`}>{v === 'week' ? '週別勤務' : '案件配置'}</button>
             ))}
           </div>
+          </>
         }
       />
 

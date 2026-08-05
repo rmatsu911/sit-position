@@ -8,6 +8,7 @@ import {
 import { PageHeader } from '../components/layout/Breadcrumb'
 import { Panel } from '../components/ui/common'
 import { FixedProject, NoProjectSelected, ProjectSelect, projectLabel, useSelectedProject } from '../components/ui/ProjectSelect'
+import { ProjectScope } from '../components/ui/ProjectScope'
 import { StatusBadge } from '../components/ui/Badge'
 import { Modal } from '../components/ui/Modal'
 import { ContextMenu, type MenuItem } from '../components/ui/ContextMenu'
@@ -58,8 +59,12 @@ const LEFT_COLS = [
  */
 export default function Schedule() {
   const { projectId, setProjectId } = useSelectedProject()
-  if (!projectId) {
-    return (
+  // 案件が変わる／未選択へ戻る間は、前の案件の内容を描かない（ProjectScope が伏せる）
+  return (
+    <ProjectScope projectId={projectId}>
+      {projectId
+        ? <ScheduleBody key={projectId} projectId={projectId} />
+        : (
       <div>
         <PageHeader
           breadcrumb={[{ label: '案件一覧', to: '/projects' }, { label: '工程管理' }]}
@@ -74,9 +79,9 @@ export default function Schedule() {
         />
         <Panel><NoProjectSelected what="この案件の工程（WBS・ガントチャート）" /></Panel>
       </div>
-    )
-  }
-  return <ScheduleBody key={projectId} projectId={projectId} />
+        )}
+    </ProjectScope>
+  )
 }
 
 function ScheduleBody({ projectId }: { projectId: number }) {

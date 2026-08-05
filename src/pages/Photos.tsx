@@ -18,6 +18,7 @@ import {
 import { useProject, useProjects } from '../api/projects'
 import { useSites, useAssets } from '../api/sites'
 import { FixedProject, NoProjectSelected, ProjectSelect, projectLabel, useSelectedProject } from '../components/ui/ProjectSelect'
+import { ProjectScope } from '../components/ui/ProjectScope'
 import { useTaskOptions } from '../api/tasks'
 import type { Photo } from '../types'
 
@@ -32,8 +33,12 @@ type ViewMode = 'thumb' | 'list' | 'process' | 'date' | 'equip'
  */
 export default function Photos() {
   const { projectId, setProjectId } = useSelectedProject()
-  if (!projectId) {
-    return (
+  // 案件が変わる／未選択へ戻る間は、前の案件の内容を描かない（ProjectScope が伏せる）
+  return (
+    <ProjectScope projectId={projectId}>
+      {projectId
+        ? <PhotosBody key={projectId} projectId={projectId} />
+        : (
       <div>
         <PageHeader
           breadcrumb={[{ label: '案件一覧', to: '/projects' }, { label: '施工写真' }]}
@@ -48,9 +53,9 @@ export default function Photos() {
         />
         <Panel><NoProjectSelected what="施工写真" /></Panel>
       </div>
-    )
-  }
-  return <PhotosBody key={projectId} projectId={projectId} />
+        )}
+    </ProjectScope>
+  )
 }
 
 function PhotosBody({ projectId }: { projectId: number }) {
