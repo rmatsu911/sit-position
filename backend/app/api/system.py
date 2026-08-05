@@ -30,8 +30,20 @@ def _commit() -> str:
     return os.environ.get("GIT_COMMIT") or os.environ.get("RENDER_GIT_COMMIT") or UNKNOWN
 
 
+# コンテナイメージを焼いた時刻（Dockerfile が書き出す）
+_BUILD_TIME_FILE = "/app/BUILD_TIME"
+
+
 def _built_at() -> str:
-    return os.environ.get("BUILD_TIME") or UNKNOWN
+    """稼働中のビルドがいつのものか。環境変数が無ければイメージの記録を読む。"""
+    from_env = os.environ.get("BUILD_TIME")
+    if from_env:
+        return from_env
+    try:
+        with open(_BUILD_TIME_FILE, encoding="utf-8") as f:
+            return f.read().strip() or UNKNOWN
+    except OSError:
+        return UNKNOWN
 
 
 def alembic_revision(db: Session) -> str:

@@ -21,6 +21,8 @@ const GATES = [
   { name: 'timeline', cmd: 'npm', args: ['run', 'test:timeline'] },
   { name: 'cpm', cmd: 'npm', args: ['run', 'test:cpm'] },
   { name: '固定案件参照の監査', cmd: 'node', args: ['scripts/fixed-project-audit.mjs'] },
+  { name: 'デプロイ設定の監査', cmd: 'node', args: ['scripts/deploy-config-audit.mjs'] },
+  { name: '初期投入（業務データ0件）', cmd: 'scripts/check-bootstrap.sh', args: [] },
   // cwd を backend にするので、python のパスもその中からの相対で指定する
   { name: 'pytest', cmd: '.venv/bin/python', args: ['-m', 'pytest', '-q', '-p', 'no:warnings'], cwd: 'backend' },
   { name: 'Phase 4 回帰', cmd: 'node', args: ['scripts/phase4-verify.mjs'], browser: true },

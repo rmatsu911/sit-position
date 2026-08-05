@@ -1,5 +1,10 @@
 # 本番公開手順（Render）
 
+> **手順の入口は [`docs/deploy-checklist.md`](./deploy-checklist.md)。**
+> 反映前に通すゲート、初期投入の方針（`--bootstrap`）、Xserver での配置、
+> 反映後の画面確認、中止条件をまとめてある。この文書は Render 固有の設定を扱う。
+
+
 React(静的) + FastAPI(Docker) + PostgreSQL を Render に公開する手順。
 アプリのコードは変更せず、`render.yaml`（Blueprint）と環境変数だけで動く。
 
@@ -56,10 +61,11 @@ Render の無料アカウント（https://render.com/）。
 
 ## 注意・制限
 
-- **初期データ**: 起動時に初期管理者と表示用の初期データ（Seed）を投入する。
-  実運用でクリーンな状態から始めたい場合は、`render.yaml` の `dockerCommand` から
-  `python -m app.seed.seed --force-production &&` を外して再デプロイする
-  （その場合、管理者ユーザーは別途作成が必要）。
+- **初期データ**: 起動時に `seed --bootstrap` が走り、**初期管理者と区分マスタだけ**を
+  作る。案件・工程・施工写真・現場日報などの業務データは作らない。
+  何度再デプロイしても同じ結果になる（既にあるものは作り直さない）。
+  デモ環境として架空の案件を入れたい場合だけ `--bootstrap` を `--force-production`
+  へ変える（全員が同じ既知パスワードの利用者10名も作られるため、公開環境では使わない）。
 - **アップロードファイル**: `STORAGE_BACKEND=local` はコンテナのローカルディスクに保存するため、
   無料プランの再デプロイで消える。写真・図面を永続化するなら Render の Persistent Disk（有料）か
   S3/MinIO（`STORAGE_BACKEND=s3` と `S3_*` を設定）に切り替える。

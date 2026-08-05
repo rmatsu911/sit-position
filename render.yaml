@@ -19,9 +19,15 @@ services:
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     healthCheckPath: /health
-    # 起動時に マイグレーション → 初期データ投入(冪等) → uvicorn。
-    # Seed は既存データがあればスキップされる。初期管理者と表示用データを用意する。
-    dockerCommand: sh -c "alembic upgrade head && python -m app.seed.seed --force-production && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    # 起動時に マイグレーション → 初期投入(冪等) → uvicorn。
+    #
+    # `--bootstrap` は **初期管理者と区分マスタだけ** を作る。案件・工程・写真・日報
+    # などの業務データは作らない（架空の案件を公開環境に出さないため）。
+    # 何度起動しても同じ結果になる。
+    #
+    # `--force-production` は開発用フィクスチャ（架空の案件8件と、全員が同じ既知
+    # パスワードの利用者10名）を投入する。公開環境では使わない。
+    dockerCommand: sh -c "alembic upgrade head && python -m app.seed.seed --bootstrap && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
     envVars:
       - key: APP_ENV
         value: production
@@ -41,6 +47,12 @@ services:
         sync: false                  # 例: https://sysken-backend.onrender.com
       - key: CORS_ORIGINS
         sync: false                  # 例: https://sysken-frontend.onrender.com
+      # サブパス配信をしないため空。/sysken/api のような構成のときだけ設定する。
+      - key: API_ROOT_PATH
+        value: ""
+      # 稼働中のコードSHAは Render が渡す RENDER_GIT_COMMIT をそのまま読む
+      # （app/api/system.py の _commit()）。ここで設定する必要はない。
+      # 他ホストへ置くときは GIT_COMMIT を明示的に渡す（docs/deploy-render.md）。
 
   # ---- Frontend (静的サイト) ----
   - type: web
@@ -58,3 +70,6 @@ services:
         value: production
       - key: VITE_API_BASE_URL
         sync: false                  # 例: https://sysken-backend.onrender.com/api
+      # ビルド時のコミットSHAは Render が渡す RENDER_GIT_COMMIT を vite.config.ts が
+      # そのまま読む。手元でビルドして他ホストへ置くときは GIT_COMMIT を渡すこと
+      # （渡さないと画面のSHAが unknown になり、稼働中のコードを確認できない）。

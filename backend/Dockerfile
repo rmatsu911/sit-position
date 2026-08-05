@@ -16,6 +16,10 @@ RUN pip install --no-cache-dir \
 
 COPY . .
 
+# イメージを焼いた時刻を残す。環境変数 BUILD_TIME が無いホストでも、
+# 画面の「システム情報」で稼働中のビルドがいつのものか分かるようにする。
+RUN date -u +%Y-%m-%dT%H:%M:%SZ > /app/BUILD_TIME
+
 # クラウド(Render等)は待受ポートを $PORT で渡す。未指定時は 8000。
 EXPOSE 8000
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

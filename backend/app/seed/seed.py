@@ -811,6 +811,72 @@ def run(reset_first: bool = False, allow_production: bool = False) -> None:
         print(f"  管理者ログイン: {settings.seed_admin_email} / {settings.seed_admin_password}")
 
 
+# 区分マスタ。案件・工程・写真を登録するのに必要な「設定」であり、業務データではない。
+# 本番の初期投入（bootstrap）でも入れる。
+_BOOTSTRAP_MASTERS: list[tuple[type, list[str]]] = [
+    (ConstructionType, CONSTRUCTION_TYPES),
+    (WorkType, WORK_TYPES),
+    (ProcessType, PROCESS_TYPES),
+    (AssetType, ASSET_TYPES),
+    (PhotoType, PHOTO_TYPES),
+    (MilestoneType, MILESTONE_TYPES),
+    (QualityRuleType, QUALITY_RULE_TYPES),
+]
+
+
+def bootstrap() -> None:
+    """本番の初期投入。**業務データは作らない。**
+
+    作るもの:
+      - 初期管理者（SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD）1名だけ
+      - 区分マスタ（工事区分・工種・工程種別・設備種別・写真種別・
+        マイルストーン種別・品質ルール種別）
+
+    作らないもの:
+      - 案件・工程・施工写真・品質確認・現場日報・要員・資材・試験記録・通知
+      - 管理者以外の利用者（開発用フィクスチャは全員が同じ既知パスワードのため、
+        公開環境に置くと不正ログインの入口になる）
+      - 支店・部署・会社（実在の組織名は利用者が登録する）
+
+    何度実行しても同じ結果になる（既にあるものは作り直さない）。
+    """
+    with SessionLocal() as s:
+        created_masters = 0
+        for model, names in _BOOTSTRAP_MASTERS:
+            for i, n in enumerate(names):
+                if s.execute(select(model).where(model.code == n)).scalar_one_or_none() is None:
+                    s.add(model(code=n, name=n, sort_order=i))
+                    created_masters += 1
+
+        admin = s.execute(
+            select(User).where(User.email == settings.seed_admin_email)
+        ).scalar_one_or_none()
+        created_admin = admin is None
+        if created_admin:
+            if not settings.seed_admin_password:
+                raise SystemExit("SEED_ADMIN_PASSWORD が未設定です。初期管理者を作成できません。")
+            s.add(User(
+                email=settings.seed_admin_email,
+                hashed_password=hash_password(settings.seed_admin_password),
+                name="管理者", role="ADMIN",
+            ))
+        s.commit()
+
+    print("初期投入（bootstrap）完了:")
+    print(f"  区分マスタ {created_masters}件を追加"
+          f"（既存はそのまま。合計 {sum(len(n) for _, n in _BOOTSTRAP_MASTERS)}件）")
+    print(f"  初期管理者: {'作成しました' if created_admin else '既に存在するため作成しませんでした'}"
+          f"（{settings.seed_admin_email}）")
+    print("  案件・工程・写真・日報などの業務データは作成していません。")
+
+
 if __name__ == "__main__":
-    run(reset_first="--reset" in sys.argv, allow_production="--force-production" in sys.argv)
+    # --bootstrap … 本番向け。初期管理者と区分マスタだけを作る（業務データなし）
+    # --force-production … 本番へ**開発用フィクスチャ**を入れる。
+    #   架空の案件8件と、全員が同じ既知パスワードの利用者10名が作られる。
+    #   公開環境では使わない（デモ環境を作るとき以外は指定しないこと）。
+    if "--bootstrap" in sys.argv:
+        bootstrap()
+    else:
+        run(reset_first="--reset" in sys.argv, allow_production="--force-production" in sys.argv)
     engine.dispose()

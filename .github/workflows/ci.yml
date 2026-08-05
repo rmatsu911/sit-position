@@ -39,6 +39,11 @@ jobs:
       - run: npm run test:cpm
       # 固定の案件名・案件IDが画面へ書き戻っていないかを機械的に見る
       - run: node scripts/fixed-project-audit.mjs
+      # 公開環境へ架空データ・既知パスワードの利用者を作る設定へ戻っていないか
+      - run: node scripts/deploy-config-audit.mjs
+      # 配布用ビルドが、そのまま置いて動く状態か（サブパス配信で検証）
+      - name: release build (subpath)
+        run: scripts/build-release.sh --base /sysken/ --api-url https://api.example.com/api
 
   backend:
     name: Backend (pytest)
@@ -105,3 +110,10 @@ jobs:
           python -m alembic downgrade -1
           python -m alembic upgrade head
           python -m alembic current
+      # 本番の初期投入が業務データを作らないこと（架空の案件を公開環境に出さない）
+      - name: bootstrap は業務データを作らない
+        env:
+          PGHOST: localhost
+          PGUSER: sysken
+          PGPASSWORD: sysken
+        run: scripts/check-bootstrap.sh

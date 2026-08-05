@@ -1,0 +1,36 @@
+# Apache（Xserver 等）で SPA を配信するための設定。
+#
+# scripts/build-release.sh が `__BASE_PATH__` を実際の配信パスへ置き換えて
+# dist/.htaccess として書き出す。手で置く場合は、この2か所を配信パスに合わせる。
+#
+# 役割は1つだけ: 実在しないパスへのアクセスを index.html へ渡し、
+# React Router に解決させる（/sysken/projects/12 を直接開いても 404 にしない）。
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase __BASE_PATH__
+
+  # 実在するファイル・ディレクトリはそのまま返す（JS/CSS/画像）
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # それ以外はすべて index.html（SPAのルーティング）
+  RewriteRule ^ __BASE_PATH__index.html [L]
+</IfModule>
+
+# index.html は毎回取りに行かせる。ここをキャッシュされると、
+# 新しいデプロイをしても古い画面が出続ける。
+<FilesMatch "index\.html$">
+  <IfModule mod_headers.c>
+    Header set Cache-Control "no-cache, must-revalidate"
+  </IfModule>
+</FilesMatch>
+
+# ハッシュ付きの資産（assets/index-XXXX.js など）は内容が変われば名前も変わるため、
+# 長期キャッシュしてよい。
+<IfModule mod_headers.c>
+  <FilesMatch "\.(js|css|woff2?|png|jpg|jpeg|svg|webp)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+</IfModule>
