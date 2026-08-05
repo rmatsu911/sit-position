@@ -718,6 +718,24 @@ class IdNameOut(BaseModel):
     name: str
 
 
+class AuditEntryOut(BaseModel):
+    """操作履歴の1件。表示文はサーバー側で組み立て、画面が文言を持たない。"""
+
+    at: datetime | None = None
+    user: str
+    summary: str
+    #: audit_log = 監査ログ / task_change = 工程の変更履歴
+    source: str
+    entity_type: str
+    entity_id: str | None = None
+
+
+class AuditLogOut(BaseModel):
+    entries: list[AuditEntryOut]
+    returned: int
+    limit: int
+
+
 class TaskFormOptions(BaseModel):
     """工程フォームの選択肢。画面が固定の一覧を持たないよう、実データから作る。
 

@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api import (
     ai,
     assets,
+    audit,
     auth,
     calendar,
     daily_reports,
@@ -48,3 +49,4 @@ api_router.include_router(materials.router, prefix="/materials", tags=["material
 api_router.include_router(test_records.router, prefix="/test-records", tags=["test-records"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(system.router, tags=["system"])
+api_router.include_router(audit.router, tags=["audit"])

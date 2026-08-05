@@ -12,9 +12,10 @@ import { useAuth } from '../auth/AuthContext'
 import { useSelectedProject, projectLabel } from '../components/ui/ProjectSelect'
 import { useProject, useUpdateProject, type ApiProject } from '../api/projects'
 import { useProjectTasks } from '../api/tasks'
-import { formatPeriod } from '../lib/timeline'
 import { usePhotos } from '../api/photos'
 import { useProjectMaterials, useCreateMaterial } from '../api/materials'
+import { useProjectAuditLogs } from '../api/audit'
+import { formatJst, formatPeriod } from '../lib/timeline'
 import { ApiError } from '../lib/apiClient'
 import NotFound from './NotFound'
 
@@ -99,7 +100,7 @@ export default function ProjectDetail() {
       {tab === '概要' && <Overview project={p} />}
       {tab === '作業内容' && <WorkContent projectId={pid} />}
       {tab === '資材' && <Materials projectId={pid} />}
-      {tab === '操作履歴' && <History />}
+      {tab === '操作履歴' && <History projectId={pid} />}
       {(['工程', '施工写真', '図面', '現場日報', '品質', '要員', '報告書'] as Tab[]).includes(tab) && (
         <LinkTab tab={tab} to={`/projects/${p.id}/${routeByTab[tab]!}`}
           onGo={() => navigate(`/projects/${p.id}/${routeByTab[tab]!}`)} projectId={String(p.id)} />
@@ -318,25 +319,46 @@ function Materials({ projectId }: { projectId: number }) {
   )
 }
 
-function History() {
-  const rows = [
-    { at: '2026/07/21 15:12', user: '高橋 誠', act: '接続損失測定の進捗を60%に更新' },
-    { at: '2026/07/21 11:00', user: 'システム', act: '写真未提出の通知を生成' },
-    { at: '2026/07/21 09:32', user: '品質 管理者', act: 'ONU設置写真に再撮影依頼' },
-    { at: '2026/07/20 16:40', user: '田中 一郎', act: 'クロージャ設置を完了に変更' },
-    { at: '2026/07/20 08:05', user: '伊藤 直樹', act: '切替手順図を更新' },
-  ]
+/**
+ * 操作履歴。`audit_logs`（誰が何を操作したか）と `task_change_history`
+ * （工程のどの項目がどう変わったか）に実際に記録されたものだけを出す。
+ * 記録が無ければ「まだありません」と出す（固定の履歴を出さない）。
+ */
+function History({ projectId }: { projectId: number }) {
+  const { data, isLoading, isError, error } = useProjectAuditLogs(projectId)
   return (
     <Panel title="操作履歴" bodyClassName="p-0">
-      <ul className="divide-y divide-line">
-        {rows.map((r, i) => (
-          <li key={i} className="flex items-center gap-3 px-4 py-2.5 text-[13px]">
-            <span className="w-36 shrink-0 tabular-nums text-ink-soft">{r.at}</span>
-            <span className="w-24 shrink-0 text-ink">{r.user}</span>
-            <span className="text-ink-soft">{r.act}</span>
-          </li>
-        ))}
-      </ul>
+      {isLoading && (
+        <p className="px-4 py-6 text-center text-[13px] text-ink-soft">操作履歴を読み込んでいます…</p>
+      )}
+      {isError && (
+        <p className="px-4 py-6 text-center text-[13px] text-ng">
+          {error instanceof ApiError ? error.message : '操作履歴の取得に失敗しました'}
+        </p>
+      )}
+      {data && data.entries.length === 0 && (
+        <p className="px-4 py-8 text-center text-[13px] text-ink-soft" data-audit-empty>
+          この案件の操作履歴はまだありません。
+        </p>
+      )}
+      {data && data.entries.length > 0 && (
+        <ul className="divide-y divide-line" data-audit-log>
+          {data.entries.map((r, i) => (
+            <li key={i} className="flex items-start gap-3 px-4 py-2.5 text-[13px]" data-audit-entry={r.source}>
+              <span className="w-36 shrink-0 tabular-nums text-ink-soft">
+                {r.at ? formatJst(r.at, 'yyyy/MM/dd HH:mm') : '—'}
+              </span>
+              <span className="w-28 shrink-0 truncate text-ink">{r.user}</span>
+              <span className="text-ink-soft">{r.summary}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {data && data.returned >= data.limit && (
+        <p className="border-t border-line px-4 py-2 text-[12px] text-ink-soft">
+          直近 {data.limit} 件を表示しています。
+        </p>
+      )}
     </Panel>
   )
 }

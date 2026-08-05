@@ -3142,3 +3142,53 @@ def test_p5_reversed_period_is_rejected(client, p4):
     # 日程未設定（片側だけ）は「まだ決まっていない」として許容する
     r = client.put(f"/api/tasks/{t['id']}", json={"planned_finish_at": None}, headers=head)
     assert r.status_code == 200, r.text
+
+
+def test_p5_audit_log_comes_from_real_records(client, p4):
+    """操作履歴が、実際に記録された監査ログ・工程変更履歴だけから作られること。"""
+    head = _p4_head(client, "pm@test.jp")
+    pid = client.post("/api/projects", json={"construction_number": _p4_number("P5AUD"), "name": "操作履歴"},
+                      headers=head).json()["id"]
+
+    # 登録直後は、この案件を作った記録だけがある（固定の履歴は出ない）
+    first = client.get(f"/api/projects/{pid}/audit-logs", headers=head)
+    assert first.status_code == 200, first.text
+    entries = first.json()["entries"]
+    assert len(entries) == 1, entries
+    assert entries[0]["summary"] == "案件を登録"
+    assert entries[0]["source"] == "audit_log"
+    assert entries[0]["user"] == "PM"
+
+    t = _p5_task(client, pid, head, name="工程A", wbs_code="1",
+                 planned_start_at="2026-08-10T00:00:00+09:00",
+                 planned_finish_at="2026-08-12T00:00:00+09:00").json()
+    r = client.put(f"/api/tasks/{t['id']}",
+                   json={"actual_progress": 50, "change_reason": "現地確認のため"}, headers=head)
+    assert r.status_code == 200, r.text
+
+    body = client.get(f"/api/projects/{pid}/audit-logs", headers=head).json()
+    summaries = [e["summary"] for e in body["entries"]]
+    # 工程の登録・更新と、変更された項目の履歴が両方出る
+    assert "工程を登録" in summaries, summaries
+    assert "工程を更新" in summaries, summaries
+    change = next(e for e in body["entries"] if e["source"] == "task_change")
+    assert "実績進捗" in change["summary"], change
+    assert "0 → 50" in change["summary"], change
+    assert "現地確認のため" in change["summary"], change
+    assert change["entity_type"] == "task" and change["entity_id"] == str(t["id"])
+
+    # 別案件の履歴は混ざらない
+    other = client.post("/api/projects", json={"construction_number": _p4_number("P5AUX"), "name": "別案件"},
+                        headers=head).json()["id"]
+    other_body = client.get(f"/api/projects/{other}/audit-logs", headers=head).json()
+    assert [e["summary"] for e in other_body["entries"]] == ["案件を登録"]
+
+    # 権限の無い案件は見られない
+    viewer = _p4_head(client, "partner@test.jp")
+    denied = client.get(f"/api/projects/{pid}/audit-logs", headers=viewer)
+    assert denied.status_code in (403, 404), denied.text
+
+    # 件数の上限を指定できる（新しい順）
+    limited = client.get(f"/api/projects/{pid}/audit-logs?limit=1", headers=head).json()
+    assert limited["returned"] == 1 and limited["limit"] == 1
+    assert limited["entries"][0]["at"] >= body["entries"][-1]["at"]
